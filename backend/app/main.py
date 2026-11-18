@@ -160,6 +160,18 @@ async def sanitized_validation_error(_request: Request, exc: RequestValidationEr
     return JSONResponse(status_code=422, content={"detail": safe_errors})
 
 
+@app.exception_handler(Exception)
+def unexpected_exception_response(_request: Request, exc: Exception):
+    """Return diagnostic exception details only in development mode."""
+    logger.error("Unhandled API exception type=%s", type(exc).__name__)
+    detail = (
+        f"{type(exc).__name__}: {exc}"
+        if settings.APP_ENV == "dev"
+        else "Internal server error."
+    )
+    return JSONResponse(status_code=500, content={"detail": detail})
+
+
 @app.middleware("http")
 async def require_analyst_token(request: Request, call_next):
     """Require a valid account token on every HTTP endpoint except login/health."""

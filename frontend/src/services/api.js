@@ -4,6 +4,17 @@
 
 const API_BASE = '/api';
 
+function errorMessageFromResponse(detail, fallback) {
+  if (typeof detail === 'string' && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    return detail.map((item) => (
+      typeof item === 'string' ? item : item?.msg || JSON.stringify(item)
+    )).join('; ');
+  }
+  if (detail && typeof detail === 'object') return JSON.stringify(detail);
+  return fallback;
+}
+
 async function fetchJson(endpoint, options = {}) {
   const url = `${API_BASE}${endpoint}`;
   const token = window.sessionStorage.getItem('cyberguardx_access_token');
@@ -30,7 +41,10 @@ async function fetchJson(endpoint, options = {}) {
           detail: errBody.detail || 'Your role does not have permission to do that.',
         }));
       }
-      throw new Error(errBody.detail || `HTTP Error ${res.status}: ${res.statusText}`);
+      throw new Error(errorMessageFromResponse(
+        errBody.detail,
+        `HTTP Error ${res.status}: ${res.statusText}`,
+      ));
     }
     return await res.json();
   } catch (err) {
@@ -129,7 +143,7 @@ export const api = {
           detail: errBody.detail || 'Your role does not have permission to do that.',
         }));
       }
-      throw new Error(errBody.detail || `Upload failed: ${res.statusText}`);
+      throw new Error(errorMessageFromResponse(errBody.detail, `Upload failed: ${res.statusText}`));
     }
     return await res.json();
   },

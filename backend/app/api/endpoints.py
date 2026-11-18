@@ -170,14 +170,39 @@ def load_demo_scenarios(
     from app.ingestion.scenarios import generate_demo_events
 
     events = generate_demo_events()
+    existing_count = db.query(func.count(SecurityEvent.event_id)).filter(
+        SecurityEvent.dataset == "synthetic_demo"
+    ).scalar() or 0
+    if existing_count:
+        record_analyst_activity(
+            db, analyst.username, "demo_load", "dataset", "synthetic_demo",
+            {"status": "already_loaded", "events": existing_count},
+        )
+        db.commit()
+        return {"status": "already_loaded", "events": existing_count}
+
+    user_ids = {event["user_id"] for event in events if event.get("user_id")}
+    device_ids = {event["device_id"] for event in events if event.get("device_id")}
+    existing_user_ids = set()
+    if user_ids:
+        existing_user_ids = {
+            row[0] for row in db.query(User.user_id).filter(User.user_id.in_(user_ids)).all()
+        }
+    existing_device_ids = set()
+    if device_ids:
+        existing_device_ids = {
+            row[0] for row in db.query(Device.device_id).filter(Device.device_id.in_(device_ids)).all()
+        }
+    for user_id in sorted(user_ids - existing_user_ids):
+        db.add(User(user_id=user_id, username=user_id, role="demo", privilege_level="standard"))
+    for device_id in sorted(device_ids - existing_device_ids):
+        db.add(Device(device_id=device_id, hostname=device_id, os="Synthetic demo", device_type="workstation"))
     for event_data in events:
-        user_id = event_data.get("user_id")
-        if user_id and not db.query(User).filter(User.user_id == user_id).first():
-            db.add(User(user_id=user_id, username=user_id, role="demo", privilege_level="standard"))
-        device_id = event_data.get("device_id")
-        if device_id and not db.query(Device).filter(Device.device_id == device_id).first():
-            db.add(Device(device_id=device_id, hostname=device_id, os="Synthetic demo", device_type="workstation"))
         db.add(SecurityEvent(**event_data))
+    record_analyst_activity(
+        db, analyst.username, "demo_load", "dataset", "synthetic_demo",
+        {"status": "loaded", "events": len(events)},
+    )
     db.commit()
     return {
         "status": "loaded",
@@ -185,6 +210,72 @@ def load_demo_scenarios(
         "events_inserted": len(events),
         "scenarios": sorted({event["scenario"] for event in events}),
         "message": "Synthetic demo events inserted. No detections, incidents, risk scores, or MITRE rows were created.",
+    }
+
+
+@router.delete("/demo/events")
+def delete_demo_events(
+    db: Session = Depends(get_db),
+    analyst: AnalystAccount = Depends(require_roles("admin")),
+):
+    """Remove labelled demo events and only their unreferenced demo entities."""
+    event_ids = [row[0] for row in db.query(SecurityEvent.event_id).filter(
+        SecurityEvent.dataset == "synthetic_demo"
+    ).all()]
+    events_deleted = 0
+    detections_deleted = 0
+    associations_deleted = 0
+    if event_ids:
+        detections_deleted = db.query(DetectionResult).filter(
+            DetectionResult.event_id.in_(event_ids)
+        ).delete(synchronize_session=False)
+        associations_deleted = db.query(IncidentEvent).filter(
+            IncidentEvent.event_id.in_(event_ids)
+        ).delete(synchronize_session=False)
+        events_deleted = db.query(SecurityEvent).filter(
+            SecurityEvent.event_id.in_(event_ids)
+        ).delete(synchronize_session=False)
+
+    users_deleted = 0
+    for user in db.query(User).filter(User.role == "demo").all():
+        has_other_events = db.query(SecurityEvent.event_id).filter(
+            SecurityEvent.user_id == user.user_id
+        ).first() is not None
+        has_incident_reference = db.query(Incident.incident_id).filter(
+            Incident.user_id == user.user_id
+        ).first() is not None
+        if not has_other_events and not has_incident_reference:
+            db.delete(user)
+            users_deleted += 1
+
+    devices_deleted = 0
+    for device in db.query(Device).filter(Device.os == "Synthetic demo").all():
+        has_other_events = db.query(SecurityEvent.event_id).filter(
+            SecurityEvent.device_id == device.device_id
+        ).first() is not None
+        has_incident_reference = db.query(Incident.incident_id).filter(
+            Incident.device_id == device.device_id
+        ).first() is not None
+        if not has_other_events and not has_incident_reference:
+            db.delete(device)
+            devices_deleted += 1
+
+    record_analyst_activity(
+        db, analyst.username, "demo_reset", "dataset", "synthetic_demo",
+        {
+            "events_deleted": events_deleted,
+            "detections_deleted": detections_deleted,
+            "incident_event_links_deleted": associations_deleted,
+            "users_deleted": users_deleted,
+            "devices_deleted": devices_deleted,
+        },
+    )
+    db.commit()
+    return {
+        "status": "deleted",
+        "events": events_deleted,
+        "users": users_deleted,
+        "devices": devices_deleted,
     }
 
 
