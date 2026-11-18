@@ -102,6 +102,7 @@ async def test_viewer_gets_forbidden_for_every_write_route(api_clients):
     cases = {
         ("POST", "/api/auth/users"): {"json": {"username": "other", "password": "new-password-123", "role": "viewer"}},
         ("POST", "/api/demo/load"): {},
+        ("DELETE", "/api/demo/events"): {},
         ("POST", "/api/demo/replay"): {"json": {"n": 1, "speed": 0}},
         ("POST", "/api/demo/replay/stop"): {},
         ("POST", "/api/correlation/run"): {},
@@ -133,6 +134,7 @@ async def test_analyst_is_forbidden_from_admin_operations(api_clients):
     admin_routes = [
         ("POST", "/api/auth/users", {"json": {"username": "other", "password": "new-password-123", "role": "viewer"}}),
         ("POST", "/api/demo/load", {}),
+        ("DELETE", "/api/demo/events", {}),
         ("POST", "/api/demo/replay", {"json": {"n": 1, "speed": 0}}),
         ("POST", "/api/demo/replay/stop", {}),
         ("POST", "/api/correlation/run", {}),
