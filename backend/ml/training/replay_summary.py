@@ -62,6 +62,21 @@ def stratified_sample(frame, n: int, seed: int):
     return pd.concat(parts).sample(frac=1, random_state=seed)
 
 
+def replay_metadata(bundle: dict, pipeline: dict, row_count: int, seed: int) -> dict:
+    """Describe the saved replay sample and the model/pipeline used to score it."""
+    profile = bundle.get("profile", bundle.get("profile_name"))
+    if isinstance(profile, dict):
+        profile = profile.get("name")
+    return {
+        "model_version": bundle.get("model_version", "not recorded"),
+        "profile": profile or "not recorded",
+        "n_replayed": row_count,
+        "split_type": pipeline.get("split_type", "not recorded"),
+        "seed": seed,
+        "sampling_method": "sampled stratified by family",
+    }
+
+
 def create_summary(n: int = 5000, seed: int = 42) -> dict:
     if n < 1:
         raise ValueError("N must be positive")
@@ -122,11 +137,9 @@ def create_summary(n: int = 5000, seed: int = 42) -> dict:
     benign_total = family_totals.get("BENIGN", 0)
     benign_unknown = confusion_counts[("BENIGN", "UNKNOWN_CANDIDATE")]
     return {
-        "model_version": bundle["model_version"],
+        **replay_metadata(bundle, pipeline, len(selected), seed),
         "score_name": bundle["score_name"],
         "n_requested": n,
-        "n_replayed": len(selected),
-        "seed": seed,
         "ground_truth_vs_verdict_counts": [
             {"ground_truth": family, "verdict": verdict, "count": count}
             for (family, verdict), count in sorted(verdict_counts.items())

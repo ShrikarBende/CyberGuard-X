@@ -221,6 +221,12 @@ def test_results_markdown_uses_only_json_files_in_final_manifest(tmp_path, monke
                     "threshold_percentile": 95,
                 }},
             })
+        for family in run["per_family"]:
+            family["detectors"]["union_conf_mahalanobis"] = {
+                "AUROC": auroc,
+                "unknown_rejection_rate": family["detectors"]["confidence"]["unknown_rejection_rate"],
+                "threshold_percentile": 97.5,
+            }
         _write_json(tmp_path / name, run)
         entries.append({"file": name, "kind": "open_set", "profile": "medium"})
     known_name = "known.json"
@@ -287,6 +293,7 @@ def test_results_markdown_uses_only_json_files_in_final_manifest(tmp_path, monke
     assert "Lowest-F1 known class from these results: BENIGN" in markdown
     assert "With 3 seeds, detectors whose mean ± sd ranges overlap are not ranked." in markdown
     assert "Metric definitions" in markdown
+    assert "union_conf_mahalanobis` uses the 97.5th percentile of each component; every other detector uses the 95th percentile" in markdown
 
 
 def test_generated_markdown_tables_have_consistent_column_counts():
@@ -322,6 +329,41 @@ def test_generated_markdown_tables_have_consistent_column_counts():
             f"table {table_number} row widths differ: {cell_counts}"
         )
     assert table_number > 0
+
+
+def test_report_reads_replay_fields_and_marks_missing_fields_as_not_recorded():
+    import importlib.util
+
+    script_path = BACKEND_DIR.parent / "scripts" / "make_results_md.py"
+    spec = importlib.util.spec_from_file_location("make_results_md_replay_metadata", script_path)
+    module = importlib.util.module_from_spec(spec)
+    assert spec and spec.loader
+    spec.loader.exec_module(module)
+    markdown = module.render()
+    assert "Replay metadata: model_version=cicids2017-medium-v1; profile=not recorded; rows=20000; split_type=not recorded; seed=42; sampling_method=not recorded." in markdown
+    assert "| BENIGN | 16589 | No | false-alert rate: 0.0310 | specificity: 0.9690 |" in markdown
+    assert "| WebAttack | confidence | 0.9894 ± 0.0058 | 0.9599 ± 0.0134 | 42: 216; 43: 216; 44: 216 | Borderline support |" in markdown
+    assert "Bootstrap intervals, where shown, reflect test-sampling noise only." in markdown
+    assert "whether they have run in CI" not in markdown
+
+
+def test_replay_summary_metadata_is_written_for_future_runs():
+    from ml.training.replay_summary import replay_metadata
+
+    actual = replay_metadata(
+        {"model_version": "test-version", "profile": {"name": "medium"}},
+        {"split_type": "stratified_random"},
+        row_count=123,
+        seed=42,
+    )
+    assert actual == {
+        "model_version": "test-version",
+        "profile": "medium",
+        "n_replayed": 123,
+        "split_type": "stratified_random",
+        "seed": 42,
+        "sampling_method": "sampled stratified by family",
+    }
 
 
 def test_results_table_values_have_listed_json_provenance():

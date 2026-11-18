@@ -83,7 +83,7 @@ def render() -> str:
             families.setdefault(fam, {"support": {}, "detectors": {}})
             families[fam]["support"][seed] = {
                 "n": int(row["n_test_unknown"]),
-                "low": str(row.get("unknown_support", "")).lower().replace("_", " ") == "low support",
+                "label": str(row.get("unknown_support", "")).lower().replace("_", " "),
             }
             for detector, values in row.get("detectors", {}).items():
                 families[fam]["detectors"].setdefault(detector, {})[seed] = values
@@ -99,15 +99,40 @@ def render() -> str:
     for fam, values in sorted(families.items()):
         support = values["support"]
         count_text = "; ".join(f"{seed}: {support[seed]['n']}" for seed in SEEDS)
-        low = any(support[seed]["low"] for seed in SEEDS)
+        unknown_counts = [support[seed]["n"] for seed in SEEDS]
+        if any(count < 200 for count in unknown_counts):
+            support_label = "Low support"
+        elif any(200 <= count <= 300 for count in unknown_counts):
+            support_label = "Borderline support"
+        else:
+            support_label = "No"
         for detector, per_seed in sorted(values["detectors"].items()):
             rows = [per_seed[seed] for seed in SEEDS]
             lines.append(f"| {fam} | {detector} | {mean_sd([r['AUROC'] for r in rows])} | "
-                         f"{mean_sd([r['unknown_rejection_rate'] for r in rows])} | {count_text} | {'Yes' if low else 'No'} |")
+                         f"{mean_sd([r['unknown_rejection_rate'] for r in rows])} | {count_text} | {support_label} |")
 
     report_facts = manifest.get("report_facts", {})
-    lines += ["", "### How to read the open-set tables", "",
-              f"With {len(open_runs)} seeds, detectors whose mean ± sd ranges overlap are not ranked.", ""]
+    percentiles_by_detector = {}
+    for run in open_runs:
+        for family in run.get("per_family", []):
+            for detector, metric in family.get("detectors", {}).items():
+                if "threshold_percentile" in metric:
+                    percentiles_by_detector.setdefault(detector, set()).add(float(metric["threshold_percentile"]))
+    union_percentiles = percentiles_by_detector.get("union_conf_mahalanobis", set())
+    other_percentiles = {
+        value for detector, values in percentiles_by_detector.items()
+        if detector != "union_conf_mahalanobis" for value in values
+    }
+    if len(union_percentiles) != 1 or len(other_percentiles) != 1:
+        raise RuntimeError("Saved open-set JSONs do not contain one consistent percentile for union and other detectors")
+    union_percentile = next(iter(union_percentiles))
+    other_percentile = next(iter(other_percentiles))
+    medium_fraction_for_seed = float(medium42[0]["sample_fraction"])
+    lines += ["",
+              f"`union_conf_mahalanobis` uses the {union_percentile:g}th percentile of each component; every other detector uses the {other_percentile:g}th percentile of known validation scores.",
+              f"The {medium_fraction_for_seed:.0%} sample is selected by feature-row hash and is identical across seeds; the seed changes the stratified per-source train/validation/test split and seeded model randomness.",
+              "", "### How to read the open-set tables", "",
+              f"With {len(open_runs)} seeds, detectors whose mean ± sd ranges overlap are not ranked. Bootstrap intervals, where shown, reflect test-sampling noise only.", ""]
 
     # Sample-size sensitivity compares common detector outputs in matched seed-42 runs.
     light = family_map(light_rows[0][1])
@@ -133,19 +158,40 @@ def render() -> str:
     lines += ["",
               f"Confidence-based AUROC differed strongly between the light ({light_fraction:.0%} sample, {light_cap:,}-row cap) and medium ({medium_fraction:.0%}, {medium_cap:,}-row cap) profiles on DosDDoS and PortScan; anomaly detectors changed little. The cause was not isolated.", ""]
 
+    replay_profile = replay.get("profile")
+    if isinstance(replay_profile, dict):
+        replay_profile = replay_profile.get("name")
+    replay_metadata = {
+        "model_version": replay.get("model_version"),
+        "profile": replay_profile,
+        "rows": replay.get("n_replayed"),
+        "split_type": replay.get("split_type"),
+        "seed": replay.get("seed"),
+        "sampling_method": replay.get("sampling_method"),
+    }
+    replay_metadata = {key: ("not recorded" if value in (None, "") else value)
+                       for key, value in replay_metadata.items()}
     matrix = replay["predicted_class_confusion_matrix"]
-    lines += ["## Replay summary", "", "### Confusion matrix", "",
+    lines += ["## Replay summary", "",
+              "Replay metadata: " + "; ".join(f"{key}={value}" for key, value in replay_metadata.items()) + ".", "",
+              "### Confusion matrix", "",
               "| Ground truth / verdict | " + " | ".join(matrix["columns"]) + " |",
               "|---|" + "---:|" * len(matrix["columns"])]
     for name, row in zip(matrix["rows"], matrix["counts"]):
         lines.append(f"| {name} | " + " | ".join(str(value) for value in row) + " |")
     replay_family_alignments = ("left", "right", "left", "right", "right")
     lines += ["", "### Per-family replay metrics", "",
-              "| Family | Support | Low support | Alerted rate | Correct-class recall |",
+              "| Family | Support | Low support | Alerted / false-alert rate | Correct-class recall / specificity |",
               markdown_separator(replay_family_alignments)]
     for fam, metric in replay["per_family_metrics"].items():
         low = str(metric.get("support_label", "")).lower() == "low support"
-        lines.append(f"| {fam} | {metric['support']} | {'Yes' if low else 'No'} | {float(metric['alerted_rate']):.4f} | {float(metric['correct_class_recall']):.4f} |")
+        if fam == "BENIGN":
+            alerted_text = f"false-alert rate: {float(metric['alerted_rate']):.4f}"
+            recall_text = f"specificity: {float(metric['correct_class_recall']):.4f}"
+        else:
+            alerted_text = f"alerted rate: {float(metric['alerted_rate']):.4f}"
+            recall_text = f"correct-class recall: {float(metric['correct_class_recall']):.4f}"
+        lines.append(f"| {fam} | {metric['support']} | {'Yes' if low else 'No'} | {alerted_text} | {recall_text} |")
 
     lines += ["", "## RAG retrieval", "", "20 developer-written questions, indicative only.", "",
               f"- Questions: {rag['question_count']}", f"- Model: `{rag['model_name']}`",
@@ -223,7 +269,7 @@ def render() -> str:
         "- correlation scenarios and thresholds are developer-written demo values",
         "- the user and endpoint layers have no trained model",
         "- TFT and GAT are not implemented",
-        "- API authorization tests ran only on Linux CI; whether they have run in CI is not confirmed", ""]
+        ""]
     return "\n".join(lines)
 
 
