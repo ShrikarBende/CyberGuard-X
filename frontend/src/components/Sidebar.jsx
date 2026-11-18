@@ -8,9 +8,10 @@ import {
   Bot,
   Database,
   Layers,
+  BarChart3,
 } from 'lucide-react';
 
-export default function Sidebar({ activePage, setActivePage }) {
+export default function Sidebar({ activePage, setActivePage, role }) {
   const navItems = [
     { id: 'overview', label: 'Overview Dashboard', icon: Activity },
     { id: 'live', label: 'Live Monitoring', icon: Radar },
@@ -19,7 +20,12 @@ export default function Sidebar({ activePage, setActivePage }) {
     { id: 'explain', label: 'SHAP Explainability', icon: Sparkles },
     { id: 'assistant', label: 'AI Security Assistant', icon: Bot },
     { id: 'data', label: 'Data & Model Training', icon: Database },
+    { id: 'evaluation', label: 'Evaluation Summary', icon: BarChart3 },
   ];
+
+  const visibleItems = navItems.filter((item) => (
+    role !== 'viewer' || item.id !== 'assistant'
+  ));
 
   return (
     <aside className="w-64 bg-[#0D1527] border-r border-[#1E293B] flex flex-col justify-between shrink-0">
@@ -37,7 +43,7 @@ export default function Sidebar({ activePage, setActivePage }) {
 
         {/* Navigation Items */}
         <nav className="p-3 space-y-1">
-          {navItems.map((item) => {
+          {visibleItems.map((item) => {
             const Icon = item.icon;
             const isActive = activePage === item.id;
             return (

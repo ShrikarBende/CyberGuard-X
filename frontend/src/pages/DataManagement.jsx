@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
-  Upload, Database, Cpu, CheckCircle2, Play, Activity,
-  AlertCircle, Loader2, FlaskConical, BarChart2, ChevronDown, ChevronUp
+  Upload, Database, CheckCircle2, Activity,
+  AlertCircle, Loader2, FlaskConical, BarChart2, ChevronDown, ChevronUp, Play
 } from 'lucide-react';
 import { api } from '../services/api';
 
@@ -208,17 +208,23 @@ function OpenSetPanel({ data }) {
 
 
 // ─── Main page ─────────────────────────────────────────────────────────────
-export default function DataManagement() {
+export default function DataManagement({ role = 'viewer' }) {
+  const canAnalyze = role === 'analyst' || role === 'admin';
+  const isAdmin = role === 'admin';
   const [modelStatus,    setModelStatus]    = useState(null);
   const [uploadStatus,   setUploadStatus]   = useState(null);
-  const [trainingStatus, setTrainingStatus] = useState(null);
   const [isUploading,    setIsUploading]    = useState(false);
-  const [isTraining,     setIsTraining]     = useState(false);
 
   const [cicidsInfo,     setCicidsInfo]     = useState(null);
   const [evalResults,    setEvalResults]    = useState(null);
   const [evalRunning,    setEvalRunning]    = useState(false);
   const [evalError,      setEvalError]      = useState(null);
+  const [demoLoading,    setDemoLoading]    = useState(false);
+  const [demoMessage,    setDemoMessage]    = useState(null);
+  const [replayStatus,   setReplayStatus]   = useState(null);
+  const [replayN,        setReplayN]        = useState(3000);
+  const [replaySpeed,    setReplaySpeed]    = useState(10);
+  const [replayError,    setReplayError]    = useState(null);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -236,6 +242,25 @@ export default function DataManagement() {
   }, []);
 
   useEffect(() => { fetchStatus(); }, [fetchStatus]);
+
+  useEffect(() => {
+    let mounted = true;
+    const poll = () => api.getDemoReplayStatus().then((status) => mounted && setReplayStatus(status)).catch(() => {});
+    poll();
+    const timer = setInterval(poll, 2000);
+    return () => { mounted = false; clearInterval(timer); };
+  }, []);
+
+  const startReplay = async () => {
+    setReplayError(null);
+    try { await api.startDemoReplay(Number(replayN), Number(replaySpeed)); }
+    catch (error) { setReplayError(error.message); }
+  };
+
+  const stopReplay = async () => {
+    try { setReplayStatus(await api.stopDemoReplay()); }
+    catch (error) { setReplayError(error.message); }
+  };
 
   const handleRunEvaluation = async () => {
     setEvalRunning(true);
@@ -271,51 +296,17 @@ export default function DataManagement() {
     }
   };
 
-  const handleTrainModels = async () => {
-    setIsTraining(true);
-    setTrainingStatus(null);
+  const handleLoadDemo = async () => {
+    setDemoLoading(true);
+    setDemoMessage(null);
     try {
-      const res = await api.trainModels('all', 1000);
-      setTrainingStatus({ success: true, metrics: res.metrics });
-      fetchStatus();
+      const result = await api.loadDemoScenarios();
+      setDemoMessage(result.message);
+      window.dispatchEvent(new Event('synthetic-demo-updated'));
     } catch (err) {
-      setTrainingStatus({ success: false, message: err.message || 'Training failed' });
+      setDemoMessage(err.message || 'Failed to load synthetic demo data.');
     } finally {
-      setIsTraining(false);
-    }
-  };
-
-  const handleInjectSimulatedEvent = async (type) => {
-    try {
-      let simPayload = {
-        event_type: 'login', event_category: 'auth', status: 'success',
-        user_id: 'usr_alice', device_id: 'dev_ws_alice', bytes_transferred: 1024,
-      };
-      if (type === 'brute_force') {
-        simPayload = {
-          event_type: 'failed_login_burst', event_category: 'auth', status: 'failure',
-          user_id: 'usr_bob', device_id: 'dev_fin_srv', source_ip: '198.51.100.44',
-          raw_payload: { failed_login_count: 12, login_failure_ratio: 0.95 },
-        };
-      } else if (type === 'lolbas') {
-        simPayload = {
-          event_type: 'process_create', event_category: 'endpoint', status: 'success',
-          user_id: 'usr_alice', device_id: 'dev_ws_alice', process_name: 'powershell.exe',
-          command_line: 'powershell.exe -Enc SQBFAFgA...',
-          raw_payload: { powershell_encoded_flag: 1, process_entropy: 7.9 },
-        };
-      } else if (type === 'novel_attack') {
-        simPayload = {
-          event_type: 'novel_covert_stream', event_category: 'network', status: 'blocked',
-          user_id: 'usr_david', device_id: 'dev_dc01', destination_ip: '198.51.100.200',
-          bytes_transferred: 150000000,
-          raw_payload: { travel_velocity_kmh: 4500.0, beacon_periodicity: 0.98, outbound_bytes_ratio: 0.99 },
-        };
-      }
-      await api.analyzeEvent(simPayload);
-      alert(`Simulated '${type}' event injected.`);
-    } catch (err) {
-      alert(`Simulation error: ${err.message}`);
+      setDemoLoading(false);
     }
   };
 
@@ -331,14 +322,6 @@ export default function DataManagement() {
             Upload telemetry, run CICIDS2017 evaluation pipeline, inspect rigorous multi-class + open-set metrics
           </p>
         </div>
-        <button
-          onClick={handleTrainModels}
-          disabled={isTraining}
-          className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold transition-all flex items-center gap-2 shadow-lg shadow-blue-600/20"
-        >
-          {isTraining ? <Loader2 className="w-4 h-4 animate-spin" /> : <Cpu className="w-4 h-4" />}
-          <span>{isTraining ? 'Training...' : 'Retrain All ML Models'}</span>
-        </button>
       </div>
 
       {/* CICIDS2017 Evaluation Runner */}
@@ -369,14 +352,16 @@ export default function DataManagement() {
             >
               <Activity className="w-4 h-4" /> Reload Results
             </button>
-            <button
-              onClick={handleRunEvaluation}
-              disabled={evalRunning}
-              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-semibold transition-all flex items-center gap-2 shadow-lg shadow-emerald-600/20"
-            >
-              {evalRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-              <span>{evalRunning ? 'Evaluation running...' : 'Run Full Evaluation (5–30 min)'}</span>
-            </button>
+            {isAdmin && (
+              <button
+                onClick={handleRunEvaluation}
+                disabled={evalRunning}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-semibold transition-all flex items-center gap-2 shadow-lg shadow-emerald-600/20"
+              >
+                {evalRunning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+                <span>{evalRunning ? 'Evaluation running...' : 'Run Full Evaluation (5–30 min)'}</span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -390,9 +375,10 @@ export default function DataManagement() {
           <div className="p-6 rounded-xl bg-[#0D1527] border border-dashed border-[#1E293B] text-center">
             <BarChart2 className="w-8 h-8 text-slate-600 mx-auto mb-2" />
             <p className="text-xs text-slate-400">No evaluation results yet.</p>
-            <p className="text-[11px] text-slate-500 mt-1">
-              Click <strong>"Run Full Evaluation"</strong> above, or run:<br />
+              <p className="text-[11px] text-slate-500 mt-1">
+              {isAdmin ? <>Click <strong>"Run Full Evaluation"</strong> above, or run:<br />
               <code className="font-mono text-blue-400">python backend/ml/run_cicids_eval.py</code>
+              </> : 'Evaluation results are available to your role when runs have been saved.'}
             </p>
           </div>
         ) : (
@@ -419,8 +405,40 @@ export default function DataManagement() {
         )}
       </div>
 
-      {/* File Upload + Simulation side-by-side */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      {/* File Upload */}
+      <div className="grid grid-cols-1 gap-6">
+        <div className="bg-[#10182E] border border-blue-500/30 rounded-2xl p-6">
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <h4 className="text-sm font-bold text-slate-200">Held-out CICIDS replay</h4>
+              <p className="text-xs text-slate-500 mt-1">Streams prepared rows through the live detector and WebSocket.</p>
+              <p className="text-xs text-blue-200 mt-2">{replayStatus?.status || 'idle'} · {replayStatus?.processed || 0} / {replayStatus?.total || 0} rows</p>
+              {replayError && <p className="text-xs text-rose-300 mt-2">{replayError}</p>}
+              {replayStatus?.error && <p className="text-xs text-rose-300 mt-2">{replayStatus.error}</p>}
+            </div>
+            {isAdmin && <div className="flex flex-wrap items-end gap-2">
+              <label className="text-[10px] text-slate-400">Rows<input type="number" min="1" value={replayN} onChange={(e) => setReplayN(e.target.value)} className="mt-1 block w-24 rounded-lg bg-[#0D1527] border border-[#1E293B] px-2 py-2 text-xs text-white" /></label>
+              <label className="text-[10px] text-slate-400">Rows / sec<input type="number" min="0" value={replaySpeed} onChange={(e) => setReplaySpeed(e.target.value)} className="mt-1 block w-24 rounded-lg bg-[#0D1527] border border-[#1E293B] px-2 py-2 text-xs text-white" /></label>
+              <button onClick={startReplay} disabled={['queued', 'running', 'stopping'].includes(replayStatus?.status)} className="px-4 py-2 rounded-xl bg-blue-600 disabled:opacity-40 text-xs font-semibold text-white">Start replay</button>
+              <button onClick={stopReplay} disabled={!['queued', 'running'].includes(replayStatus?.status)} className="px-4 py-2 rounded-xl bg-rose-700 disabled:opacity-40 text-xs font-semibold text-white">Stop replay</button>
+            </div>}
+          </div>
+        </div>
+        <div className="bg-[#10182E] border border-amber-500/30 rounded-2xl p-6 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h4 className="text-sm font-bold text-slate-200">Synthetic correlation scenarios</h4>
+            <p className="text-xs text-slate-500 mt-1">Loads labelled events only. Run correlation separately from Incident Management.</p>
+            {demoMessage && <p className="text-xs text-amber-200 mt-2">{demoMessage}</p>}
+          </div>
+          {isAdmin && <button
+            onClick={handleLoadDemo}
+            disabled={demoLoading}
+            className="px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-2"
+          >
+            {demoLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FlaskConical className="w-4 h-4" />}
+            {demoLoading ? 'Loading demo events…' : 'Load demo events'}
+          </button>}
+        </div>
         {/* Upload */}
         <div className="bg-[#10182E] border border-[#1E293B] rounded-2xl p-6">
           <div className="flex items-center gap-3 mb-4">
@@ -432,14 +450,14 @@ export default function DataManagement() {
               <p className="text-xs text-slate-500">Supports CSV &amp; JSON (Auth, Sysmon, Network flows)</p>
             </div>
           </div>
-          <div className="border-2 border-dashed border-[#1E293B] hover:border-blue-500/50 rounded-2xl p-8 text-center transition-all bg-[#0D1527]/50">
+          {canAnalyze ? <div className="border-2 border-dashed border-[#1E293B] hover:border-blue-500/50 rounded-2xl p-8 text-center transition-all bg-[#0D1527]/50">
             <input type="file" id="file-upload" accept=".csv,.json" onChange={handleFileUpload} className="hidden" />
             <label htmlFor="file-upload" className="cursor-pointer flex flex-col items-center">
               <Upload className="w-8 h-8 text-slate-500 mb-2" />
               <span className="text-xs font-bold text-slate-200">Click to upload security logs</span>
               <span className="text-[11px] text-slate-500 mt-1">.CSV or .JSON format</span>
             </label>
-          </div>
+          </div> : <p className="text-xs text-slate-500">Telemetry upload is available to analysts and admins.</p>}
           {isUploading && (
             <div className="flex items-center gap-2 text-xs text-blue-400 mt-3">
               <Loader2 className="w-4 h-4 animate-spin" /> Ingesting and normalizing...
@@ -457,38 +475,6 @@ export default function DataManagement() {
           )}
         </div>
 
-        {/* Scenario Injection */}
-        <div className="bg-[#10182E] border border-[#1E293B] rounded-2xl p-6">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2.5 rounded-xl bg-purple-500/10 border border-purple-500/20 text-purple-400">
-              <Play className="w-5 h-5" />
-            </div>
-            <div>
-              <h4 className="text-sm font-bold text-slate-200">Synthetic Scenario Injection</h4>
-              <p className="text-xs text-slate-500">Inject live attack events to verify ML inference</p>
-            </div>
-          </div>
-          <div className="space-y-3">
-            {[
-              { key: 'brute_force', label: 'Brute Force Login Burst', desc: '12 consecutive auth failures (T1110)', color: 'hover:bg-blue-600' },
-              { key: 'lolbas',      label: 'PowerShell LOLBAS Execution', desc: 'Obfuscated Base64 process creation (T1059)', color: 'hover:bg-amber-600' },
-              { key: 'novel_attack', label: 'Unseen Novel Zero-Day Threat', desc: 'Open-Set anomaly triggering high latent distance', color: 'bg-purple-600 hover:bg-purple-700' },
-            ].map(({ key, label, desc, color }) => (
-              <div key={key} className={`p-3.5 rounded-xl bg-[#0D1527] border ${key === 'novel_attack' ? 'border-purple-500/30' : 'border-[#1E293B]'} flex items-center justify-between`}>
-                <div>
-                  <p className={`text-xs font-bold ${key === 'novel_attack' ? 'text-purple-300' : 'text-slate-200'}`}>{label}</p>
-                  <p className="text-[11px] text-slate-500">{desc}</p>
-                </div>
-                <button
-                  onClick={() => handleInjectSimulatedEvent(key)}
-                  className={`px-3 py-1.5 rounded-lg ${color} border border-[#1E293B] text-xs font-semibold text-white transition-colors shadow-md`}
-                >
-                  Inject
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
       </div>
 
       {/* Model Weights Grid */}

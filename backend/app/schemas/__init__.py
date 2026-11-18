@@ -10,8 +10,6 @@ from app.schemas.schemas import (
     DashboardStatsResponse,
     RAGChatRequest,
     RAGChatResponse,
-    TrainModelRequest,
-    TrainModelResponse,
 )
 
 __all__ = [
@@ -26,7 +24,5 @@ __all__ = [
     "DashboardStatsResponse",
     "RAGChatRequest",
     "RAGChatResponse",
-    "TrainModelRequest",
-    "TrainModelResponse",
 ]
 

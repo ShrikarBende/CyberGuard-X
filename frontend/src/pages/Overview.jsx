@@ -60,24 +60,28 @@ export default function Overview({ onSelectIncident }) {
     );
   }
 
+  if (stats?.total_detections === 0) {
+    return <div className="rounded-2xl border border-[#1E293B] bg-[#10182E] p-8 text-center text-slate-300">No detections yet. Ingest an event and run it through the detector to populate this view.</div>;
+  }
+
   const kpis = [
     {
       label: 'Total Events Analyzed',
-      value: stats?.total_events ?? 0,
+      value: stats?.total_events ?? '—',
       icon: Activity,
       color: 'text-blue-400',
       bg: 'bg-blue-500/10 border-blue-500/20',
     },
     {
       label: 'Known Threats Detected',
-      value: stats?.known_threats ?? 0,
+      value: stats?.known_threats ?? '—',
       icon: ShieldAlert,
       color: 'text-amber-400',
       bg: 'bg-amber-500/10 border-amber-500/20',
     },
     {
-      label: 'Unknown / Novel Threats',
-      value: stats?.unknown_threats ?? 0,
+      label: 'Unknown Candidates',
+      value: stats?.unknown_candidates ?? '—',
       icon: AlertTriangle,
       color: 'text-purple-400',
       bg: 'bg-purple-500/10 border-purple-500/20',
@@ -85,7 +89,7 @@ export default function Overview({ onSelectIncident }) {
     },
     {
       label: 'Critical Incidents',
-      value: stats?.critical_incidents ?? 0,
+      value: stats?.critical_incidents ?? '—',
       icon: ShieldAlert,
       color: 'text-rose-400',
       bg: 'bg-rose-500/10 border-rose-500/20',
@@ -131,10 +135,10 @@ export default function Overview({ onSelectIncident }) {
           <div className="flex items-center justify-between mb-6">
             <div>
               <h3 className="text-sm font-bold text-slate-200">Enterprise Risk Score Trend (Last 60 Min)</h3>
-              <p className="text-xs text-slate-500">Temporal Fusion & Multi-Layer Behavioral Drift</p>
+              <p className="text-xs text-slate-500">Stored incident risk scores over time</p>
             </div>
             <span className="flex items-center gap-1 text-xs text-emerald-400 font-mono">
-              <TrendingUp className="w-3.5 h-3.5" /> Calibrated Platt Scaling
+              <TrendingUp className="w-3.5 h-3.5" /> API data
             </span>
           </div>
 
@@ -226,9 +230,9 @@ export default function Overview({ onSelectIncident }) {
             <Users className="w-5 h-5" />
           </div>
           <div>
-            <p className="text-xs text-slate-400">User / Identity Layer (TFT)</p>
+            <p className="text-xs text-slate-400">User / Identity Layer</p>
             <p className="text-lg font-bold text-slate-100">
-              {stats?.layer_detection_stats?.user_identity ?? 0} Anomaly Flags
+              {stats?.layer_detection_stats?.user_identity ?? '—'} Anomaly Flags
             </p>
             <span className="text-[11px] text-slate-500">Impossible travel, auth bursts, off-hours</span>
           </div>
@@ -241,7 +245,7 @@ export default function Overview({ onSelectIncident }) {
           <div>
             <p className="text-xs text-slate-400">Endpoint / Device (Autoencoder + iForest)</p>
             <p className="text-lg font-bold text-slate-100">
-              {stats?.layer_detection_stats?.endpoint_device ?? 0} Process Anomalies
+              {stats?.layer_detection_stats?.endpoint_device ?? '—'} Process Anomalies
             </p>
             <span className="text-[11px] text-slate-500">LOLBAS, memory inject, high entropy</span>
           </div>
@@ -252,9 +256,9 @@ export default function Overview({ onSelectIncident }) {
             <Network className="w-5 h-5" />
           </div>
           <div>
-            <p className="text-xs text-slate-400">Network Layer (GAT Graph + Flows)</p>
+            <p className="text-xs text-slate-400">Network Layer (Flows)</p>
             <p className="text-lg font-bold text-slate-100">
-              {stats?.layer_detection_stats?.network_traffic ?? 0} Flow Detections
+              {stats?.layer_detection_stats?.network_traffic ?? '—'} Flow Detections
             </p>
             <span className="text-[11px] text-slate-500">Lateral SMB, covert C2, port scans</span>
           </div>
@@ -265,8 +269,8 @@ export default function Overview({ onSelectIncident }) {
       <div className="bg-[#10182E] border border-[#1E293B] rounded-2xl p-6">
         <div className="flex items-center justify-between mb-4">
           <div>
-            <h3 className="text-sm font-bold text-slate-200">Recent Critical Threat Detections</h3>
-            <p className="text-xs text-slate-500">Real-time open-set inference and anomaly scores</p>
+            <h3 className="text-sm font-bold text-slate-200">Recent Detection Results</h3>
+            <p className="text-xs text-slate-500">Real-time open-set inference scores and attack probabilities</p>
           </div>
         </div>
 
@@ -277,20 +281,21 @@ export default function Overview({ onSelectIncident }) {
                 <th className="pb-3">Verdict</th>
                 <th className="pb-3">Threat Category</th>
                 <th className="pb-3">Layer</th>
-                <th className="pb-3">Confidence</th>
+                <th className="pb-3">Score</th>
+                <th className="pb-3">Attack Probability</th>
                 <th className="pb-3">Open-Set Distance</th>
                 <th className="pb-3">Timestamp</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[#1E293B]/60 text-slate-300">
               {recentAlerts.map((alert) => {
-                const isUnknown = alert.verdict === 'UNKNOWN_NOVEL_THREAT';
+                const isCandidate = alert.verdict === 'UNKNOWN_CANDIDATE';
                 return (
                   <tr key={alert.detection_id} className="hover:bg-[#131D38]/50 transition-colors">
                     <td className="py-3">
                       <span
                         className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold ${
-                          isUnknown
+                          isCandidate
                             ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
                             : alert.verdict === 'KNOWN_THREAT'
                             ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
@@ -302,10 +307,11 @@ export default function Overview({ onSelectIncident }) {
                     </td>
                     <td className="py-3 font-medium text-slate-200">{alert.predicted_class}</td>
                     <td className="py-3 uppercase text-slate-400 font-mono">{alert.layer}</td>
-                    <td className="py-3 font-mono">{(alert.confidence * 100).toFixed(0)}%</td>
+                    <td className="py-3 font-mono">{alert.score == null ? '—' : alert.score.toFixed(2)}</td>
+                    <td className="py-3 font-mono">{alert.attack_probability == null ? '—' : `${(alert.attack_probability * 100).toFixed(1)}%`}</td>
                     <td className="py-3 font-mono">
-                      <span className={alert.open_set_distance > 4.0 ? 'text-purple-400 font-bold' : 'text-slate-400'}>
-                        {alert.open_set_distance.toFixed(2)}
+                      <span className="text-slate-400">
+                        {alert.open_set_distance == null ? '—' : alert.open_set_distance.toFixed(2)}
                       </span>
                     </td>
                     <td className="py-3 text-slate-500 font-mono">

@@ -9,6 +9,7 @@ from app.models.entities import (
     InvestigationNote,
     MitreTechnique,
     AnalystActivity,
+    AnalystAccount,
 )
 
 __all__ = [
@@ -22,5 +23,6 @@ __all__ = [
     "InvestigationNote",
     "MitreTechnique",
     "AnalystActivity",
+    "AnalystAccount",
 ]
 

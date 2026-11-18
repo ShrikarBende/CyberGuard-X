@@ -26,8 +26,10 @@ from sklearn.metrics import (
     confusion_matrix,
     f1_score,
 )
+from ml.evaluation.provenance import working_tree_is_dirty
+from ml.evaluation.output_paths import get_results_dir
 
-RESULTS_DIR = Path(__file__).resolve().parent / "results"
+RESULTS_DIR = get_results_dir()
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 SEED = 42
@@ -189,6 +191,7 @@ def run_known_classifier(pipeline: dict, include_xgboost: bool = True) -> Tuple[
         "train_row_cap_per_fold": pipeline.get("train_row_cap_per_fold"),
         "bootstrap_resamples": pipeline.get("bootstrap_resamples", 1000),
         "git_hash": pipeline.get("git_hash"),
+        "git_dirty": pipeline.get("git_dirty", working_tree_is_dirty()),
         "flags": pipeline.get("flags", {}),
         "profile_warning": pipeline.get("reduced_profile_warning"),
         "training_time_seconds": elapsed,

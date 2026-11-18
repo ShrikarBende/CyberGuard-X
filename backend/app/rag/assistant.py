@@ -1,162 +1,197 @@
-"""
-RAG-Based Cybersecurity Investigation Assistant:
-Implements Section 10:
-- Local SentenceTransformer / Vector Embeddings
-- FAISS Vector Index
-- MITRE ATT&CK and Incident Response Knowledge Base
-- Grounded citations without evidence fabrication
-- Zero-API-key template fallback
-"""
-from typing import Dict, Any, List, Optional
-import os
-from pathlib import Path
+"""Evidence-grounded investigation answers from stored incidents and retrieved docs."""
+from __future__ import annotations
+
 import json
-import numpy as np
-import faiss
+import re
+from typing import Any
+
+import httpx
 from sqlalchemy.orm import Session
-from app.models.entities import Incident
 
-KNOWLEDGE_BASE = [
-    {
-        "id": "KB-T1110",
-        "title": "MITRE ATT&CK T1110 - Brute Force",
-        "tactic": "Credential Access",
-        "content": "Adversaries may use brute force techniques to attempt authentication credentials through credential guessing or credential stuffing. Containment: Enforce account lockout, rotate exposed passwords, and implement mandatory multi-factor authentication (MFA).",
-        "recommended_steps": ["Check authentication logs for target usernames", "Enforce temporary account lockout", "Invalidate active session tokens", "Verify whether any attempt succeeded"]
-    },
-    {
-        "id": "KB-T1078",
-        "title": "MITRE ATT&CK T1078 - Valid Accounts & Impossible Travel",
-        "tactic": "Defense Evasion / Initial Access",
-        "content": "Adversaries may obtain and abuse credentials of existing legitimate accounts. When logins occur across incompatible physical locations within a brief timeframe (>900 km/h), session hijacking or credential theft has likely occurred. Containment: Revoke all active sessions, force password reset, and verify VPN/proxy logs.",
-        "recommended_steps": ["Correlate IP geolocations across last 24 hours", "Revoke OAuth and Kerberos ticket-granting tokens", "Verify MFA device registration timestamp", "Audit access privileges assumed during anomalous session"]
-    },
-    {
-        "id": "KB-T1059",
-        "title": "MITRE ATT&CK T1059.001 - Command and Scripting Interpreter: PowerShell",
-        "tactic": "Execution",
-        "content": "Adversaries may abuse PowerShell commands and scripts for execution. Obfuscated Base64 strings (-Enc / -EncodedCommand) often conceal memory-only payload loaders. Containment: Kill anomalous child processes, isolate endpoint host, and inspect ScriptBlockLogging Event ID 4104.",
-        "recommended_steps": ["Inspect parent process tree (e.g., winword.exe -> powershell.exe)", "Decode Base64 command line string", "Extract any dropped DLL or payload hashes", "Isolate endpoint from local network"]
-    },
-    {
-        "id": "KB-T1021",
-        "title": "MITRE ATT&CK T1021.002 - Remote Services: SMB / Windows Admin Shares",
-        "tactic": "Lateral Movement",
-        "content": "Adversaries may use SMB to interact with remote network systems using administrative shares (ADMIN$, C$). This allows staging and executing binaries on internal targets. Containment: Restrict SMB port 445 cross-subnet routing, disable SMBv1, and isolate compromised source host.",
-        "recommended_steps": ["Identify all internal targets contacted by source host", "Check Security Event ID 5140 (network share object accessed)", "Audit local administrator password changes", "Apply microsegmentation to isolate subnet"]
-    },
-    {
-        "id": "KB-T1048",
-        "title": "MITRE ATT&CK T1048 - Exfiltration Over Alternative Protocol",
-        "tactic": "Exfiltration",
-        "content": "Adversaries may steal data by transferring it through an alternative channel or protocol such as high-volume DNS tunneling or encrypted HTTPS egress to unfamiliar infrastructure. Containment: Block external destination IP/domain at perimeter firewall, inspect egress volume, and verify DLP logs.",
-        "recommended_steps": ["Calculate total outbound byte volume over last 2 hours", "Identify external destination IP ASN and reputation", "Block destination IP on perimeter firewall", "Preserve memory dump of sending process for forensic analysis"]
-    },
-    {
-        "id": "KB-UNKNOWN",
-        "title": "Open-Set Threat Investigation - Novel / Previously Unseen Anomaly",
-        "tactic": "Unknown / Novel Attack Pattern",
-        "content": "The system detected statistically significant anomalous behavior with high reconstruction error and large Mahalanobis distance from all known training attack centroids. The model refrains from forcing this into a known category. Containment: Isolate the affected host, preserve memory and disk forensics, and conduct deep manual triage.",
-        "recommended_steps": ["Isolate endpoint host immediately", "Dump memory and running process list", "Capture live network packet trace", "Submit unfamiliar binaries to sandbox analysis"]
-    }
-]
+from app.core.config import settings
+from app.models.entities import DetectionResult, Incident, IncidentEvent
+from app.rag.indexer import get_retriever
 
-# Simple embedding and FAISS index
-_INDEX = None
-_EMBEDDINGS = None
+NOT_ENOUGH_DOCUMENTATION = "I don't have enough documentation to answer this."
 
 
-def init_rag_index():
-    global _INDEX, _EMBEDDINGS
-    if _INDEX is not None:
-        return
-
-    # Deterministic local vectorizer + FAISS vector search index
-    texts = [f"{item['title']} {item['tactic']} {item['content']}" for item in KNOWLEDGE_BASE]
-
-    try:
-        from sklearn.feature_extraction.text import TfidfVectorizer
-        vectorizer = TfidfVectorizer(max_features=64)
-        vectors = vectorizer.fit_transform(texts).toarray().astype(np.float32)
-
-        dimension = vectors.shape[1]
-        index = faiss.IndexFlatL2(dimension)
-        index.add(vectors)
-
-        _INDEX = index
-        _EMBEDDINGS = vectorizer
-    except Exception as e:
-        _INDEX = "fallback"
+def _is_remediation_execution_request(query: str) -> bool:
+    text = query.lower()
+    asks_to_execute = re.search(r"\b(run|execute|perform|carry out|apply|do)\b", text)
+    remediation = re.search(
+        r"\b(remediation|containment|isolate|block|disable|revoke|reset|kill|quarantine)\b", text
+    )
+    return bool(asks_to_execute and remediation)
 
 
-def query_rag_assistant(query: str, incident: Optional[Incident], db: Session) -> Dict[str, Any]:
-    """Search knowledge base and synthesize a grounded response with citations."""
-    init_rag_index()
+def _stored_incident_evidence(incident: Incident | None, db: Session) -> tuple[list[dict], str, str]:
+    if incident is None:
+        return [], "", ""
 
-    q_lower = query.lower()
-    citations = []
-    matched_docs = []
+    event_ids = [
+        row.event_id for row in db.query(IncidentEvent)
+        .filter(IncidentEvent.incident_id == incident.incident_id)
+        .order_by(IncidentEvent.order.asc(), IncidentEvent.id.asc()).all()
+    ]
+    sequence = incident.attack_sequence or []
+    if not event_ids:
+        event_ids = list(dict.fromkeys(
+            event_id for item in sequence for event_id in item.get("event_ids", [])
+        ))
 
-    # Retrieve relevant KB items
-    for item in KNOWLEDGE_BASE:
-        relevance = 0
-        for word in q_lower.split():
-            if len(word) > 3 and (word in item["title"].lower() or word in item["content"].lower() or word in item["tactic"].lower()):
-                relevance += 1
+    detections = []
+    if event_ids:
+        detections = db.query(DetectionResult).filter(DetectionResult.event_id.in_(event_ids)).all()
+    indicator_rows = (incident.evidence or {}).get("indicators", [])
+    if not indicator_rows:
+        indicator_rows = sequence
+    indicators = []
+    for item in indicator_rows:
+        name = item.get("name") or item.get("indicator") or item.get("stage")
+        if name:
+            indicators.append({
+                "name": name,
+                "event_ids": item.get("event_ids", []),
+                "evidence": item.get("evidence", {}),
+            })
 
-        # Check incident alignment
-        if incident:
-            if incident.threat_classification == "UNKNOWN_NOVEL_THREAT" and item["id"] == "KB-UNKNOWN":
-                relevance += 5
-            elif "powershell" in incident.title.lower() and item["id"] == "KB-T1059":
-                relevance += 5
-            elif "brute" in incident.title.lower() and item["id"] == "KB-T1110":
-                relevance += 5
-            elif "travel" in incident.title.lower() and item["id"] == "KB-T1078":
-                relevance += 5
-
-        if relevance > 0:
-            matched_docs.append((relevance, item))
-
-    matched_docs.sort(key=lambda x: x[0], reverse=True)
-    top_docs = [doc for _, doc in matched_docs[:2]] if matched_docs else [KNOWLEDGE_BASE[0], KNOWLEDGE_BASE[-1]]
-
-    for doc in top_docs:
-        citations.append({
-            "doc_id": doc["id"],
-            "title": doc["title"],
-            "tactic": doc["tactic"]
-        })
-
-    # Grounded synthesis
-    inc_context = ""
-    if incident:
-        inc_context = (
-            f"Incident #{incident.incident_id[:8]} ('{incident.title}') is classified as '{incident.threat_classification}' "
-            f"with Risk Score {incident.overall_risk_score:.1f}/100 (Severity: {incident.severity}). "
-            f"Target User: {incident.user_id or 'Unknown'}, Target Device: {incident.device_id or 'Unknown'}. "
-        )
-
-    doc_text = " ".join([d["content"] for d in top_docs])
-    containment_steps = top_docs[0]["recommended_steps"] if top_docs else [
-        "Isolate target host from network",
-        "Revoke compromised session credentials",
-        "Inspect active process tree"
+    mitre_rows = [
+        {
+            "tactic": row.tactic,
+            "technique_id": row.technique_id,
+            "technique_name": row.technique_name,
+            "confidence": row.confidence,
+            "is_verified": row.is_verified,
+        }
+        for row in incident.mitre_mappings
+    ]
+    verdicts = [row.verdict for row in detections]
+    predicted_classes = list(dict.fromkeys(
+        row.predicted_class for row in detections if row.predicted_class
+    ))
+    scores = [
+        {
+            "event_id": row.event_id,
+            "score": row.score if row.score is not None else row.confidence,
+            "probability": row.probability,
+            "attack_probability": row.attack_probability if row.attack_probability is not None else row.anomaly_score,
+            "open_set_distance": row.open_set_distance,
+            "tau": row.tau,
+            "score_name": (row.details or {}).get("score_name"),
+        }
+        for row in detections
     ]
 
-    answer = (
-        f"{inc_context}\n\n"
-        f"**Threat Analysis & Knowledge Base Evidence:**\n"
-        f"{doc_text}\n\n"
-        f"**SOC Analyst Guidance:**\n"
-        f"Based on verified telemetry evidence, review the recommended investigation and containment checklist below. "
-        f"Remediation is presented for analyst authorization."
-    )
+    values = [
+        {"field": "incident_id", "value": incident.incident_id},
+        {"field": "verdict", "value": verdicts or [incident.threat_classification]},
+        {"field": "predicted_class", "value": predicted_classes},
+        {"field": "risk_score", "value": incident.overall_risk_score},
+        {"field": "scores", "value": scores},
+        {"field": "tau", "value": [row.tau for row in detections if row.tau is not None]},
+        {"field": "indicators", "value": indicators},
+        {"field": "event_ids", "value": event_ids},
+        {"field": "mitre", "value": mitre_rows},
+    ]
+    query_terms = [*predicted_classes, *[row["name"] for row in indicators],
+                   *[row["technique_id"] for row in mitre_rows]]
+    retrieval_suffix = " ".join(dict.fromkeys(query_terms))
+    return values, retrieval_suffix, json.dumps(values, ensure_ascii=False, default=str)
 
+
+def _llm_answer(query: str, evidence_json: str, chunks: list[dict[str, Any]]) -> str:
+    system_prompt = (
+        "You are a read-only cybersecurity investigation assistant. Use only the supplied incident evidence "
+        "and retrieved documentation chunks. Cite chunk ids exactly as [chunk_id]. Never state that an attack "
+        "is confirmed. Never claim that you executed or will execute an action. Say plainly when evidence is "
+        "missing. Containment or remediation may only be recommended for analyst approval. If asked to run "
+        "remediation, refuse. Do not add outside facts or infer missing evidence."
+    )
+    user_content = json.dumps({
+        "question": query,
+        "incident_evidence": json.loads(evidence_json) if evidence_json else [],
+        "retrieved_chunks": [
+            {"chunk_id": row["chunk_id"], "title": row["title"], "section_title": row["section_title"], "text": row["text"]}
+            for row in chunks
+        ],
+    }, ensure_ascii=False)
+    response = httpx.post(
+        settings.LLM_API_URL,
+        headers={"Authorization": f"Bearer {settings.LLM_API_KEY}"},
+        json={
+            "model": settings.LLM_MODEL,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content},
+            ],
+            "temperature": 0,
+        },
+        timeout=45,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    answer = (payload.get("choices", [{}])[0].get("message", {}).get("content")
+              or payload.get("output_text") or payload.get("answer"))
+    if not isinstance(answer, str) or not answer.strip():
+        raise ValueError("Configured LLM returned no answer text.")
+    return answer.strip()
+
+
+def _extractive_answer(evidence_values: list[dict], chunks: list[dict[str, Any]], incident: Incident | None) -> str:
+    parts = []
+    if incident is not None:
+        parts.append("Stored incident evidence:\n" + "\n".join(
+            f"{row['field']}: {json.dumps(row['value'], ensure_ascii=False, default=str)}"
+            for row in evidence_values
+        ))
+        indicators = next((row["value"] for row in evidence_values if row["field"] == "indicators"), [])
+        if not indicators:
+            parts.append("Evidence is missing: this incident has no stored indicators.")
+    parts.extend(f"[{row['chunk_id']}] {row['text']}" for row in chunks)
+    return "\n\n".join(parts)
+
+
+def query_rag_assistant(query: str, incident: Incident | None, db: Session) -> dict:
+    """Retrieve semantic knowledge chunks and answer from chunks plus stored DB evidence."""
+    evidence_values, incident_terms, evidence_json = _stored_incident_evidence(incident, db)
+    if _is_remediation_execution_request(query):
+        return {
+            "answer": "I cannot run remediation or take containment actions. I can only provide recommendations for analyst approval.",
+            "mode": "extractive",
+            "sources": [],
+            "evidence_used": evidence_values,
+            "confidence": None,
+        }
+
+    retrieval_query = f"{query} {incident_terms}".strip()
+    retriever = get_retriever()
+    retrieved = retriever.search(retrieval_query, settings.RAG_TOP_K)
+    if not retrieved or retrieved[0]["score"] < settings.RAG_MIN_RETRIEVAL_SCORE:
+        return {
+            "answer": NOT_ENOUGH_DOCUMENTATION,
+            "mode": "extractive",
+            "sources": [],
+            "evidence_used": evidence_values,
+            "confidence": None,
+        }
+
+    sources = [
+        {"chunk_id": row["chunk_id"], "title": row["title"], "score": round(float(row["score"]), 6)}
+        for row in retrieved
+    ]
+    if settings.LLM_API_URL and settings.LLM_API_KEY:
+        answer = _llm_answer(query, evidence_json, retrieved)
+        source_ids = ", ".join(f"[{source['chunk_id']}]" for source in sources)
+        if source_ids and not any(source["chunk_id"] in answer for source in sources):
+            answer = f"{answer}\n\nSources: {source_ids}"
+        mode = "llm"
+    else:
+        answer = _extractive_answer(evidence_values, retrieved, incident)
+        mode = "extractive"
     return {
         "answer": answer,
-        "citations": citations,
-        "retrieved_context_count": len(top_docs),
-        "confidence": 0.92,
-        "recommended_containment": containment_steps
+        "mode": mode,
+        "sources": sources,
+        "evidence_used": evidence_values,
+        "confidence": None,
     }

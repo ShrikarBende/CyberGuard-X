@@ -1,98 +1,361 @@
-"""
-AI/ML Detection Engine:
-Orchestrates:
-1. Feature extraction
-2. Isolation Forest anomaly scoring
-3. XGBoost known-threat classification
-4. PyTorch Denoising Autoencoder reconstruction
-5. Open-Set latent Mahalanobis distance
-6. Open-Set decision logic
-7. WebSocket event streaming
-"""
-from typing import Dict, Any, Tuple
-from datetime import datetime, timezone
+"""CICIDS2017 LightGBM inference for supported network flow events."""
+from __future__ import annotations
+
+import logging
+import hashlib
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any, Dict, Optional
+
 import joblib
 import numpy as np
-import torch
-import xgboost as xgb
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models.entities import SecurityEvent, DetectionResult, Incident, RiskScore, MitreTechnique
+from app.core.config import settings
+from app.detection.risk import compute_risk
+from app.models.entities import (
+    DetectionResult,
+    Incident,
+    IncidentEvent,
+    MitreTechnique,
+    RiskScore,
+    SecurityEvent,
+)
 from app.schemas.schemas import SecurityEventCreate
 from app.services.websocket_manager import ws_manager
-from ml.training.train import DenoisingAutoencoder, FEATURE_NAMES, KNOWN_CLASSES
+from ml.preprocessing.cicids_pipeline import apply_log1p_columns
 
-SAVED_MODELS_DIR = Path(__file__).resolve().parent.parent.parent / "saved_models"
-
-# Global model cache
-_MODELS_CACHE = {}
-
-
-def load_cached_models():
-    """Load and cache trained ML artifacts."""
-    if "iso_forest" not in _MODELS_CACHE and (SAVED_MODELS_DIR / "isolation_forest.pkl").exists():
-        _MODELS_CACHE["iso_forest"] = joblib.load(SAVED_MODELS_DIR / "isolation_forest.pkl")
-
-    if "xgb_clf" not in _MODELS_CACHE and (SAVED_MODELS_DIR / "xgboost_threats.json").exists():
-        clf = xgb.XGBClassifier()
-        clf.load_model(str(SAVED_MODELS_DIR / "xgboost_threats.json"))
-        _MODELS_CACHE["xgb_clf"] = clf
-
-    if "dae" not in _MODELS_CACHE and (SAVED_MODELS_DIR / "autoencoder.pt").exists():
-        dae = DenoisingAutoencoder(input_dim=len(FEATURE_NAMES), latent_dim=6)
-        dae.load_state_dict(torch.load(SAVED_MODELS_DIR / "autoencoder.pt", map_location="cpu", weights_only=True))
-        dae.eval()
-        _MODELS_CACHE["dae"] = dae
-
-    if "open_set" not in _MODELS_CACHE and (SAVED_MODELS_DIR / "open_set_centroids.pkl").exists():
-        _MODELS_CACHE["open_set"] = joblib.load(SAVED_MODELS_DIR / "open_set_centroids.pkl")
+logger = logging.getLogger(__name__)
+MODEL_BUNDLE_PATH = Path(settings.MODEL_BUNDLE_PATH)
+_MODEL_BUNDLE_CACHE: Optional[Dict[str, Any]] = None
 
 
-def extract_features_from_event(event: SecurityEventCreate) -> np.ndarray:
-    """Extract a 12-dimensional feature vector from an incoming event."""
-    payload = event.raw_payload or {}
+def _upsert_grouped_flow_incident(event: SecurityEvent, prediction: Dict[str, Any], bundle: Dict[str, Any],
+                                 risk_result: Dict[str, Any], attack_probability: float,
+                                 db: Session) -> str:
+    """Create or update a deterministic class/source/time-window incident."""
+    verdict = prediction["verdict"]
+    predicted_class = prediction["predicted_class"]
+    source_ip = event.source_ip or "unknown"
+    window_minutes = max(1, int(settings.INCIDENT_WINDOW_MINUTES))
+    event_time = event.timestamp
+    if event_time.tzinfo is None:
+        event_time = event_time.replace(tzinfo=timezone.utc)
+    else:
+        event_time = event_time.astimezone(timezone.utc)
+    window_bucket = int(event_time.timestamp() // (window_minutes * 60))
+    group_material = f"{verdict}|{predicted_class}|{source_ip}|{window_minutes}|{window_bucket}"
+    group_key = hashlib.sha256(group_material.encode("utf-8")).hexdigest()
+    incident = db.query(Incident).filter(Incident.group_key == group_key).first()
+    is_new = incident is None
+    risk_score = float(risk_result["score"])
+    severity = "CRITICAL" if risk_score >= settings.RISK_CRITICAL_THRESHOLD else (
+        "HIGH" if risk_score >= settings.RISK_HIGH_THRESHOLD else "MEDIUM"
+    )
+    score_value = float(prediction["score"])
+    if is_new:
+        unknown = verdict == "UNKNOWN_CANDIDATE"
+        incident = Incident(
+            incident_id=f"inc_{uuid.uuid4().hex[:12]}",
+            group_key=group_key,
+            title=(f"CICIDS2017 {predicted_class} review" if unknown else f"CICIDS2017 {predicted_class} detection"),
+            description=("Low model margin; not a confirmed novel attack." if unknown else
+                         f"LightGBM {bundle['model_version']} classified network flows as {predicted_class}."),
+            severity=severity,
+            status="NEEDS_REVIEW" if unknown else "OPEN",
+            threat_classification=verdict,
+            overall_risk_score=risk_score,
+            user_id=event.user_id,
+            device_id=event.device_id,
+            attack_sequence=None,
+            evidence={
+                "source_ip": source_ip,
+                "predicted_class": predicted_class,
+                "window_minutes": window_minutes,
+                "window_bucket": window_bucket,
+                "review_text": "Low model margin; not a confirmed novel attack." if unknown else None,
+                "risk_breakdown": risk_result["breakdown"],
+                "score_summary": {"count": 1, "min": score_value, "max": score_value, "mean": score_value},
+                "sample_event_count": 0,
+            },
+            flow_count=1,
+            first_detected_at=event_time,
+            last_updated_at=event_time,
+        )
+        db.add(incident)
+        db.flush()
+        db.add(RiskScore(
+            incident_id=incident.incident_id,
+            score=risk_score,
+            category=severity,
+            anomaly_factor=attack_probability,
+            top_contributing_features=None,
+            explanation_summary=None,
+            risk_breakdown=risk_result["breakdown"],
+        ))
+    else:
+        evidence = dict(incident.evidence or {})
+        summary = dict(evidence.get("score_summary") or {"count": 0, "min": score_value, "max": score_value, "mean": 0.0})
+        old_count = int(summary.get("count", 0))
+        new_count = old_count + 1
+        summary["min"] = min(float(summary.get("min", score_value)), score_value)
+        summary["max"] = max(float(summary.get("max", score_value)), score_value)
+        summary["mean"] = (float(summary.get("mean", 0.0)) * old_count + score_value) / new_count
+        summary["count"] = new_count
+        evidence["score_summary"] = summary
+        evidence["risk_breakdown"] = risk_result["breakdown"]
+        incident.evidence = evidence
+        incident.flow_count = int(incident.flow_count or 0) + 1
+        if risk_score > float(incident.overall_risk_score):
+            incident.overall_risk_score = risk_score
+            incident.severity = severity
+        first_time = incident.first_detected_at
+        if first_time.tzinfo is None:
+            first_time = first_time.replace(tzinfo=timezone.utc)
+        if event_time < first_time:
+            incident.first_detected_at = event_time
+        last_time = incident.last_updated_at
+        if last_time.tzinfo is None:
+            last_time = last_time.replace(tzinfo=timezone.utc)
+        if event_time > last_time:
+            incident.last_updated_at = event_time
+        risk_detail = db.query(RiskScore).filter(RiskScore.incident_id == incident.incident_id).first()
+        if risk_detail:
+            risk_detail.score = max(float(risk_detail.score), risk_score)
+            risk_detail.category = incident.severity
+            risk_detail.anomaly_factor = max(float(risk_detail.anomaly_factor or 0.0), attack_probability)
+            risk_detail.risk_breakdown = risk_result["breakdown"]
 
-    failed_count = float(payload.get("failed_login_count") or (1.0 if event.status == "failure" and "login" in event.event_type else 0.0))
-    fail_ratio = float(payload.get("login_failure_ratio") or (1.0 if event.status == "failure" else 0.0))
-    travel_velocity = float(payload.get("travel_velocity_kmh") or payload.get("impossible_travel_kmh") or 0.0)
+    sample_count = db.query(func.count(IncidentEvent.id)).filter(
+        IncidentEvent.incident_id == incident.incident_id
+    ).scalar() or 0
+    if sample_count < 200:
+        db.add(IncidentEvent(
+            incident_id=incident.incident_id,
+            event_id=event.event_id,
+            stage="classification",
+            order=sample_count,
+        ))
+        evidence = dict(incident.evidence or {})
+        evidence["sample_event_count"] = sample_count + 1
+        incident.evidence = evidence
 
-    # Off-hours: before 7 AM or after 7 PM
-    hour = event.timestamp.hour if hasattr(event.timestamp, "hour") else 12
-    off_hours = 1.0 if (hour < 7 or hour >= 19) else 0.0
+    mitre_mapping = {
+        "BruteForce": ("Credential Access", "T1110"),
+        "PortScan": ("Discovery", "T1046"),
+        "DosDDoS": ("Impact", "T1498"),
+    }.get(predicted_class)
+    if verdict == "KNOWN_THREAT" and mitre_mapping and prediction["probability"] >= settings.MITRE_MIN_PROBABILITY:
+        existing_mapping = db.query(MitreTechnique).filter(
+            MitreTechnique.incident_id == incident.incident_id,
+            MitreTechnique.technique_id == mitre_mapping[1],
+        ).first()
+        if not existing_mapping:
+            db.add(MitreTechnique(
+                incident_id=incident.incident_id,
+                tactic=mitre_mapping[0],
+                technique_id=mitre_mapping[1],
+                technique_name=predicted_class,
+                confidence=prediction["probability"],
+                is_verified=False,
+            ))
+    db.flush()
+    return incident.incident_id
 
-    ps_encoded = 1.0 if ("-enc" in str(event.command_line or "").lower() or payload.get("powershell_encoded_flag")) else 0.0
-    suspicious_proc = 1.0 if any(p in str(event.process_name or "").lower() for p in ["powershell", "mimikatz", "vssadmin", "certutil", "rundll32", "whoami"]) else 0.0
-    proc_entropy = float(payload.get("process_entropy") or (7.8 if ps_encoded else 3.2))
-    file_rate = float(payload.get("file_mod_rate") or 0.0)
-    unique_ports = float(payload.get("unique_dst_ports") or (45.0 if "scan" in event.event_type.lower() else 1.0))
-    egress_mb = float(event.bytes_transferred or 0) / (1024.0 * 1024.0)
-    outbound_ratio = float(payload.get("outbound_bytes_ratio") or 0.3)
-    periodicity = float(payload.get("beacon_periodicity") or 0.0)
 
-    vec = [
-        failed_count,
-        fail_ratio,
-        travel_velocity,
-        off_hours,
-        ps_encoded,
-        suspicious_proc,
-        proc_entropy,
-        file_rate,
-        unique_ports,
-        egress_mb,
-        outbound_ratio,
-        periodicity
-    ]
-    return np.array(vec, dtype=np.float32)
+def load_model_bundle() -> Optional[Dict[str, Any]]:
+    """Load the configured real-data model bundle once per process."""
+    global _MODEL_BUNDLE_CACHE
+    if _MODEL_BUNDLE_CACHE is None:
+        if not MODEL_BUNDLE_PATH.is_file():
+            raise FileNotFoundError(
+                f"Configured CICIDS model bundle was not found: {MODEL_BUNDLE_PATH}. "
+                "Set MODEL_BUNDLE_PATH to an existing bundle; no alternate bundle is loaded."
+            )
+        bundle = joblib.load(MODEL_BUNDLE_PATH)
+        required = {
+            "model", "scaler", "feature_names", "log1p_columns", "class_names",
+            "tau", "score_name", "model_version", "data_hash", "seed", "training_date",
+            "evaluation_json_path", "profile",
+        }
+        missing = required.difference(bundle)
+        if missing:
+            raise ValueError(f"Model bundle is missing fields: {sorted(missing)}")
+        _MODEL_BUNDLE_CACHE = bundle
+    return _MODEL_BUNDLE_CACHE
+
+
+def _event_payload(event_in: SecurityEventCreate, event_id: str, verdict: str, **extra):
+    return {
+        "type": "SECURITY_EVENT",
+        "event_id": event_id,
+        "timestamp": event_in.timestamp.isoformat(),
+        "user_id": event_in.user_id,
+        "device_id": event_in.device_id,
+        "category": event_in.event_category,
+        "event_type": event_in.event_type,
+        "dataset": event_in.dataset,
+        "verdict": verdict,
+        "incident_id": None,
+        "risk_score": None,
+        "risk_breakdown": None,
+        "mitre_mappings": [],
+        **extra,
+    }
+
+
+def predict_flow(flow: Dict[str, Any], bundle: Dict[str, Any]) -> Dict[str, Any]:
+    """Score a CICIDS flow without persistence or side effects."""
+    names = bundle["feature_names"]
+    missing = [name for name in names if name not in flow]
+    if missing:
+        raise ValueError(f"CICIDS2017 flow features missing: {', '.join(missing[:5])}")
+    raw = np.asarray([[flow[name] for name in names]], dtype=np.float32)
+    if not np.isfinite(raw).all():
+        raise ValueError("CICIDS2017 flow features must be finite")
+    transformed = apply_log1p_columns(raw, np.asarray(bundle["log1p_columns"], dtype=bool))
+    scaled = bundle["scaler"].transform(transformed)
+    raw_scores = np.asarray(bundle["model"].predict(scaled, raw_score=True)[0], dtype=float)
+    probabilities = np.asarray(bundle["model"].predict_proba(scaled)[0], dtype=float)
+    names = list(bundle["class_names"])
+    if "BENIGN" not in names:
+        raise ValueError("Configured CICIDS model bundle must include the BENIGN class to compute attack_probability.")
+    if raw_scores.size != len(names) or probabilities.size != len(names):
+        raise ValueError("Model output columns do not match bundle class_names.")
+    index = int(np.argmax(raw_scores))
+    predicted_class = names[index]
+    score = float(np.max(raw_scores) - np.partition(raw_scores, -2)[-2])
+    probability = float(probabilities[index])
+    tau = float(bundle["tau"])
+    verdict = "UNKNOWN_CANDIDATE" if score < tau else (
+        "BENIGN" if predicted_class == "BENIGN" else "KNOWN_THREAT"
+    )
+    return {
+        "class_names": names, "probabilities": probabilities,
+        "probability_by_class": {name: float(probabilities[i]) for i, name in enumerate(names)},
+        "predicted_class": predicted_class, "score": score, "probability": probability,
+        "tau": tau, "verdict": verdict,
+    }
+
+
+def score_batch(frame, bundle: Dict[str, Any]) -> list[Dict[str, Any]]:
+    """Score CICIDS flows together while preserving ``predict_flow`` semantics."""
+    feature_names = list(bundle["feature_names"])
+    class_names = list(bundle["class_names"])
+    if "BENIGN" not in class_names:
+        raise ValueError("Configured CICIDS model bundle must include the BENIGN class.")
+    missing = [name for name in feature_names if name not in frame.columns]
+    if missing:
+        raise ValueError(f"CICIDS2017 flow features missing: {', '.join(missing[:5])}")
+    raw = np.asarray(frame[feature_names], dtype=np.float32)
+    if raw.ndim != 2 or raw.shape[1] != len(feature_names):
+        raise ValueError("CICIDS2017 batch has an invalid feature shape.")
+    if not np.isfinite(raw).all():
+        raise ValueError("CICIDS2017 flow features must be finite")
+    transformed = apply_log1p_columns(raw, np.asarray(bundle["log1p_columns"], dtype=bool))
+    scaled = bundle["scaler"].transform(transformed)
+    raw_scores = np.asarray(bundle["model"].predict(scaled, raw_score=True), dtype=float)
+    probabilities = np.asarray(bundle["model"].predict_proba(scaled), dtype=float)
+    expected_shape = (len(frame), len(class_names))
+    if raw_scores.shape != expected_shape or probabilities.shape != expected_shape:
+        raise ValueError("Model output columns do not match batch rows and bundle class_names.")
+    best_indexes = np.argmax(raw_scores, axis=1)
+    sorted_scores = np.sort(raw_scores, axis=1)
+    margins = sorted_scores[:, -1] - sorted_scores[:, -2]
+    tau = float(bundle["tau"])
+    results = []
+    for row_index, best_index in enumerate(best_indexes):
+        predicted_class = class_names[int(best_index)]
+        probability = float(probabilities[row_index, best_index])
+        score = float(margins[row_index])
+        verdict = "UNKNOWN_CANDIDATE" if score < tau else (
+            "BENIGN" if predicted_class == "BENIGN" else "KNOWN_THREAT"
+        )
+        row_probabilities = probabilities[row_index]
+        results.append({
+            "class_names": class_names,
+            "probabilities": row_probabilities,
+            "probability_by_class": {
+                name: float(row_probabilities[index]) for index, name in enumerate(class_names)
+            },
+            "predicted_class": predicted_class,
+            "score": score,
+            "probability": probability,
+            "tau": tau,
+            "verdict": verdict,
+        })
+    return results
+
+
+def persist_scored_batch(events: list[SecurityEvent], predictions: list[Dict[str, Any]], bundle: Dict[str, Any], db: Session) -> Dict[str, int]:
+    """Persist detections in a batch and group threat/review incidents."""
+    if len(events) != len(predictions):
+        raise ValueError("Batch events and predictions must have the same number of rows.")
+    detection_rows = []
+    counts: Dict[str, int] = {}
+    grouped_incident_ids = {}
+    for event, prediction in zip(events, predictions):
+        verdict = prediction["verdict"]
+        counts[verdict] = counts.get(verdict, 0) + 1
+        class_names = prediction["class_names"]
+        probabilities = prediction["probabilities"]
+        score = float(prediction["score"])
+        probability = float(prediction["probability"])
+        attack_probability = float(1.0 - probabilities[class_names.index("BENIGN")])
+        risk_result = compute_risk(attack_probability, probability, verdict)
+        detection_id = f"det_{uuid.uuid4().hex[:12]}"
+        flow = (event.raw_payload or {}).get("cicids_features", {})
+        detection_rows.append(DetectionResult(
+            detection_id=detection_id,
+            event_id=event.event_id,
+            verdict=verdict,
+            predicted_class=prediction["predicted_class"],
+            probability=probability,
+            score=score,
+            attack_probability=attack_probability,
+            open_set_distance=None,
+            reconstruction_error=None,
+            layer="network",
+            details={
+                "cicids_features": {name: float(flow[name]) for name in bundle["feature_names"]},
+                "class_probabilities": prediction["probability_by_class"],
+                "score_name": bundle["score_name"],
+                "score": score,
+                "risk_breakdown": risk_result["breakdown"],
+            },
+            model_version=bundle["model_version"],
+            tau=prediction["tau"],
+        ))
+        if verdict in {"KNOWN_THREAT", "UNKNOWN_CANDIDATE"}:
+            grouped_incident_ids[event.event_id] = (prediction, risk_result, attack_probability)
+    db.add_all(detection_rows)
+    db.flush()
+    for event in events:
+        grouped = grouped_incident_ids.get(event.event_id)
+        if grouped:
+            prediction, risk_result, attack_probability = grouped
+            _upsert_grouped_flow_incident(event, prediction, bundle, risk_result, attack_probability, db)
+    return counts
+
+
+async def _save_and_broadcast_unscored(
+    event_in: SecurityEventCreate,
+    db: Session,
+    db_event: SecurityEvent,
+    event_id: str,
+    reason: str,
+    verdict: str = "NOT_COVERED",
+) -> Dict[str, Any]:
+    db.commit()
+    result = _event_payload(event_in, event_id, verdict, reason=reason)
+    await ws_manager.broadcast(result)
+    return result
 
 
 async def process_single_event(event_in: SecurityEventCreate, db: Session) -> Dict[str, Any]:
-    """Execute the complete AI detection pipeline for a single event."""
-    load_cached_models()
-
-    # 1. Save Event
+    """Persist every event; score only network events with named CICIDS features."""
     event_id = f"evt_{uuid.uuid4().hex[:12]}"
     db_event = SecurityEvent(
         event_id=event_id,
@@ -109,162 +372,110 @@ async def process_single_event(event_in: SecurityEventCreate, db: Session) -> Di
         command_line=event_in.command_line,
         bytes_transferred=event_in.bytes_transferred,
         location=event_in.location,
-        raw_payload=event_in.raw_payload
+        raw_payload=event_in.raw_payload,
+        dataset=event_in.dataset,
     )
     db.add(db_event)
 
-    # 2. Extract Features
-    features = extract_features_from_event(event_in)
-    features_batch = features.reshape(1, -1)
+    if event_in.event_category != "network":
+        return await _save_and_broadcast_unscored(
+            event_in, db, db_event, event_id, "no trained model for this layer"
+        )
 
-    # 3. Model Inferences
-    iso_forest = _MODELS_CACHE.get("iso_forest")
-    xgb_clf = _MODELS_CACHE.get("xgb_clf")
-    dae = _MODELS_CACHE.get("dae")
-    open_set = _MODELS_CACHE.get("open_set")
+    payload = event_in.raw_payload or {}
+    flow = payload.get("cicids_features")
+    if not isinstance(flow, dict):
+        return await _save_and_broadcast_unscored(
+            event_in, db, db_event, event_id, "CICIDS2017 flow features are required"
+        )
 
-    anomaly_score = 0.1
-    if iso_forest:
-        # decision_function gives negative score for outliers
-        raw_iso = iso_forest.decision_function(features_batch)[0]
-        anomaly_score = float(round(max(0.0, min(1.0, 0.5 - raw_iso)), 3))
+    bundle = load_model_bundle()
+    if bundle is None:
+        logger.warning("CICIDS2017 LightGBM model bundle loader returned no bundle: %s", MODEL_BUNDLE_PATH)
+        return await _save_and_broadcast_unscored(
+            event_in, db, db_event, event_id, "CICIDS2017 model bundle is not ready",
+            verdict="MODEL_NOT_READY",
+        )
 
-    pred_class = "Benign"
-    confidence = 0.95
-    if xgb_clf:
-        probs = xgb_clf.predict_proba(features_batch)[0]
-        class_idx = int(np.argmax(probs))
-        pred_class = KNOWN_CLASSES[class_idx]
-        confidence = float(round(probs[class_idx], 3))
+    feature_names = bundle["feature_names"]
+    missing_features = [name for name in feature_names if name not in flow]
+    if missing_features:
+        return await _save_and_broadcast_unscored(
+            event_in, db, db_event, event_id,
+            f"CICIDS2017 flow features missing: {', '.join(missing_features[:5])}",
+        )
 
-    reconstruction_error = 0.02
-    latent_distance = 1.2
-    if dae and open_set:
-        with torch.no_grad():
-            tensor_x = torch.tensor(features_batch, dtype=torch.float32)
-            recon, latent = dae(tensor_x)
-            reconstruction_error = float(round(float(torch.mean((recon - tensor_x) ** 2)), 3))
-            latent_vec = latent.numpy()[0]
+    try:
+        prediction = predict_flow(flow, bundle)
+    except ValueError as exc:
+        return await _save_and_broadcast_unscored(event_in, db, db_event, event_id, str(exc))
+    class_names = prediction["class_names"]
+    predicted_class = prediction["predicted_class"]
+    score = prediction["score"]
+    probability = prediction["probability"]
+    tau = prediction["tau"]
+    verdict = prediction["verdict"]
 
-            centroids = open_set["centroids"]
-            inv_cov = open_set["inv_cov"]
-            dists = [np.sqrt(np.dot(np.dot(latent_vec - mu, inv_cov), latent_vec - mu)) for mu in centroids.values()]
-            latent_distance = float(round(min(dists), 2))
-
-    # 4. Open-Set Decision Logic
-    # Section 6:
-    # IF event is normal -> BENIGN
-    # ELSE IF event matches known threat with sufficient confidence -> KNOWN_THREAT
-    # ELSE IF event is anomalous and outside known-class boundaries -> UNKNOWN_NOVEL_THREAT
-    # ELSE -> SUSPICIOUS
-    is_anomaly = (anomaly_score > 0.45 or reconstruction_error > 0.12 or features[2] > 900.0)
-
-    if not is_anomaly and pred_class == "Benign":
-        verdict = "BENIGN"
-    elif is_anomaly and latent_distance > 4.2:
-        verdict = "UNKNOWN_NOVEL_THREAT"
-        pred_class = "Unknown / Novel Attack Pattern"
-    elif is_anomaly and confidence >= 0.70 and pred_class != "Benign":
-        verdict = "KNOWN_THREAT"
-    elif is_anomaly:
-        verdict = "SUSPICIOUS"
-    else:
-        verdict = "BENIGN"
-
-    # Save Detection Result
+    benign_index = class_names.index("BENIGN") if "BENIGN" in class_names else None
+    probabilities = prediction["probabilities"]
+    attack_probability = float(1.0 - probabilities[benign_index])
+    risk_result = compute_risk(attack_probability, probability, verdict)
+    probability_by_class = prediction["probability_by_class"]
     detection_id = f"det_{uuid.uuid4().hex[:12]}"
-    det = DetectionResult(
+    details = {
+        "cicids_features": {name: float(flow[name]) for name in feature_names},
+        "class_probabilities": probability_by_class,
+        "score_name": bundle["score_name"],
+        "score": score,
+        "risk_breakdown": risk_result["breakdown"],
+    }
+    detection = DetectionResult(
         detection_id=detection_id,
         event_id=event_id,
         verdict=verdict,
-        predicted_class=pred_class,
-        confidence=confidence,
-        anomaly_score=anomaly_score,
-        open_set_distance=latent_distance,
-        reconstruction_error=reconstruction_error,
-        layer=event_in.event_category,
-        details={"features": features.tolist()}
+        predicted_class=predicted_class,
+        probability=probability,
+        score=score,
+        attack_probability=attack_probability,
+        open_set_distance=None,
+        reconstruction_error=None,
+        layer="network",
+        details=details,
+        model_version=bundle["model_version"],
+        tau=tau,
     )
-    db.add(det)
+    db.add(detection)
 
-    # 5. If Threat Detected, create / correlate an Incident
+    mitre_mapping = {
+        "BruteForce": ("Credential Access", "T1110"),
+        "PortScan": ("Discovery", "T1046"),
+        "DosDDoS": ("Impact", "T1498"),
+    }.get(predicted_class)
     incident_id = None
-    if verdict in ("KNOWN_THREAT", "UNKNOWN_NOVEL_THREAT", "SUSPICIOUS"):
-        incident_id = f"inc_{uuid.uuid4().hex[:12]}"
-        risk = 92.0 if verdict == "UNKNOWN_NOVEL_THREAT" else (78.0 if verdict == "KNOWN_THREAT" else 55.0)
-        sev = "CRITICAL" if risk >= 80.0 else ("HIGH" if risk >= 60.0 else "MEDIUM")
-
-        inc = Incident(
-            incident_id=incident_id,
-            title=f"{verdict.replace('_', ' ')}: {pred_class} on {event_in.device_id or 'Endpoint'}",
-            description=f"Automated threat detection in {event_in.event_category} layer. Open-set distance: {latent_distance}.",
-            severity=sev,
-            status="OPEN",
-            threat_classification=verdict,
-            overall_risk_score=risk,
-            user_id=event_in.user_id,
-            device_id=event_in.device_id,
-            first_detected_at=datetime.now(timezone.utc),
-            last_updated_at=datetime.now(timezone.utc)
+    if verdict in {"KNOWN_THREAT", "UNKNOWN_CANDIDATE"}:
+        incident_id = _upsert_grouped_flow_incident(
+            db_event, prediction, bundle, risk_result, attack_probability, db
         )
-        db.add(inc)
-
-        # Risk score component
-        risk_score_obj = RiskScore(
-            incident_id=incident_id,
-            score=risk,
-            category=sev,
-            user_risk_component=0.88 if event_in.event_category == "auth" else 0.20,
-            endpoint_risk_component=0.92 if event_in.event_category == "endpoint" else 0.25,
-            network_risk_component=0.85 if event_in.event_category == "network" else 0.20,
-            anomaly_factor=anomaly_score,
-            correlation_multiplier=1.2,
-            top_contributing_features=[
-                {"feature": "latent_space_distance", "importance": 0.42, "contribution": "open_set_anomaly"},
-                {"feature": "reconstruction_residual", "importance": 0.35, "contribution": "autoencoder_error"},
-                {"feature": "process_entropy", "importance": 0.28, "contribution": "command_obfuscation"}
-            ],
-            explanation_summary=f"Event exhibited significant deviation from baseline. Open-set distance {latent_distance} exceeds threshold."
-        )
-        db.add(risk_score_obj)
-
-        # MITRE Mapping
-        tactic_map = {
-            "Brute Force": ("Credential Access", "T1110"),
-            "Port Scan": ("Discovery", "T1046"),
-            "LOLBAS Execution": ("Execution", "T1059.001"),
-            "Lateral Movement": ("Lateral Movement", "T1021.002"),
-            "Unknown / Novel Attack Pattern": ("Command and Control", "T1071")
-        }
-        tactic, tech_id = tactic_map.get(pred_class, ("Initial Access", "T1078"))
-        db.add(MitreTechnique(
-            incident_id=incident_id,
-            tactic=tactic,
-            technique_id=tech_id,
-            technique_name=pred_class,
-            confidence=0.88,
-            is_verified=True
-        ))
 
     db.commit()
-
-    # 6. Broadcast over WebSocket live stream
-    broadcast_payload = {
-        "type": "SECURITY_EVENT",
-        "event_id": event_id,
-        "timestamp": event_in.timestamp.isoformat() if hasattr(event_in.timestamp, "isoformat") else str(event_in.timestamp),
-        "user_id": event_in.user_id,
-        "device_id": event_in.device_id,
-        "category": event_in.event_category,
-        "event_type": event_in.event_type,
-        "verdict": verdict,
-        "predicted_class": pred_class,
-        "confidence": confidence,
-        "anomaly_score": anomaly_score,
-        "open_set_distance": latent_distance,
-        "incident_id": incident_id
-    }
-    await ws_manager.broadcast(broadcast_payload)
-
-    return broadcast_payload
-
+    result = _event_payload(
+        event_in,
+        event_id,
+        verdict,
+        detection_id=detection_id,
+        predicted_class=predicted_class,
+        probability=probability,
+        score=score,
+        score_name=bundle["score_name"],
+        attack_probability=attack_probability,
+        model_version=bundle["model_version"],
+        tau=tau,
+        probabilities=probability_by_class,
+        incident_id=incident_id,
+        risk_score=risk_result["score"],
+        risk_breakdown=risk_result["breakdown"],
+        mitre_mappings=[{"tactic": mitre_mapping[0], "technique_id": mitre_mapping[1]}]
+        if incident_id and verdict == "KNOWN_THREAT" and mitre_mapping and probability >= settings.MITRE_MIN_PROBABILITY else [],
+    )
+    await ws_manager.broadcast(result)
+    return result

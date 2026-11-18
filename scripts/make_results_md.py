@@ -1,0 +1,236 @@
+"""Generate docs/RESULTS.md exclusively from JSON files listed in FINAL.json."""
+from __future__ import annotations
+
+import json
+import statistics
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+RESULTS = ROOT / "backend" / "ml" / "evaluation" / "results"
+OUTPUT = ROOT / "docs" / "RESULTS.md"
+SEEDS = (42, 43, 44)
+
+
+def read(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def mean_sd(values) -> str:
+    values = [float(value) for value in values]
+    return f"{statistics.mean(values):.4f} ± {statistics.stdev(values):.4f}"
+
+
+def manifest_entries() -> tuple[dict, list[dict]]:
+    manifest = read(RESULTS / "FINAL.json")
+    entries = manifest.get("results")
+    if not isinstance(entries, list):
+        raise RuntimeError("FINAL.json must contain a results list")
+    for entry in entries:
+        filename = Path(entry.get("file", ""))
+        if (filename.suffix.lower() != ".json" or filename.is_absolute() or
+                any(part in {"", ".", ".."} for part in filename.parts) or
+                len(filename.parts) > 2 or (len(filename.parts) == 2 and filename.parts[0] != "archive")):
+            raise RuntimeError(f"Invalid result filename in FINAL.json: {entry.get('file')!r}")
+    return manifest, entries
+
+
+def listed_files(entries: list[dict], kind: str) -> list[tuple[dict, dict]]:
+    return [(entry, read(RESULTS / entry["file"])) for entry in entries if entry.get("kind") == kind]
+
+
+def family_map(run: dict) -> dict:
+    return {row["family"]: row for row in run.get("per_family", [])}
+
+
+def markdown_separator(alignments: tuple[str, ...]) -> str:
+    """Build one separator cell per declared table column."""
+    tokens = {"left": "---", "center": ":---:", "right": "---:"}
+    if any(alignment not in tokens for alignment in alignments):
+        raise ValueError("Unknown Markdown table alignment")
+    return "|" + "|".join(tokens[alignment] for alignment in alignments) + "|"
+
+
+def render() -> str:
+    manifest, entries = manifest_entries()
+    open_rows = listed_files(entries, "open_set")
+    open_runs = [data for _entry, data in open_rows if data.get("profile_name") == "medium"]
+    open_runs.sort(key=lambda run: int(run["seed"]))
+    if [int(run["seed"]) for run in open_runs] != list(SEEDS):
+        raise RuntimeError("FINAL.json must list medium open-set runs for seeds 42, 43, and 44")
+    light_rows = [(entry, data) for entry, data in open_rows
+                  if entry.get("role") == "sample_size_sensitivity" and
+                  data.get("profile_name") == "light" and int(data.get("seed", -1)) == 42]
+    medium42 = [run for run in open_runs if int(run["seed"]) == 42]
+    if len(light_rows) != 1 or len(medium42) != 1:
+        raise RuntimeError("FINAL.json must list exactly one light and medium seed-42 open-set run")
+    known_rows = listed_files(entries, "known_classifier")
+    known_rows = [(entry, data) for entry, data in known_rows
+                  if data.get("profile_name") == "medium" and int(data.get("seed", -1)) in SEEDS]
+    known_rows.sort(key=lambda row: int(row[1]["seed"]))
+    if [int(data["seed"]) for _, data in known_rows] != list(SEEDS):
+        raise RuntimeError("FINAL.json must list known-classifier medium runs for seeds 42, 43, and 44")
+    replay_rows = listed_files(entries, "replay")
+    rag_rows = listed_files(entries, "rag_retrieval")
+    if len(replay_rows) != 1 or len(rag_rows) != 1:
+        raise RuntimeError("FINAL.json must list exactly one replay and RAG report")
+    replay, rag = replay_rows[0][1], rag_rows[0][1]
+
+    families = {}
+    for run in open_runs:
+        seed = int(run["seed"])
+        for row in run.get("per_family", []):
+            fam = row["family"]
+            families.setdefault(fam, {"support": {}, "detectors": {}})
+            families[fam]["support"][seed] = {
+                "n": int(row["n_test_unknown"]),
+                "low": str(row.get("unknown_support", "")).lower().replace("_", " ") == "low support",
+            }
+            for detector, values in row.get("detectors", {}).items():
+                families[fam]["detectors"].setdefault(detector, {})[seed] = values
+
+    lines = [
+        "# Evaluation results", "",
+        "Generated only from saved JSON files listed in `backend/ml/evaluation/results/FINAL.json`; this report does not run evaluation.", "",
+        "## Medium open-set results", "",
+        "AUROC and unknown rejection are mean ± sample standard deviation over saved medium seeds.", "",
+        "| Family | Detector | AUROC mean ± sd | Unknown rejection mean ± sd | Unknown test rows by seed | Low support |",
+        "|---|---|---:|---:|---|---|",
+    ]
+    for fam, values in sorted(families.items()):
+        support = values["support"]
+        count_text = "; ".join(f"{seed}: {support[seed]['n']}" for seed in SEEDS)
+        low = any(support[seed]["low"] for seed in SEEDS)
+        for detector, per_seed in sorted(values["detectors"].items()):
+            rows = [per_seed[seed] for seed in SEEDS]
+            lines.append(f"| {fam} | {detector} | {mean_sd([r['AUROC'] for r in rows])} | "
+                         f"{mean_sd([r['unknown_rejection_rate'] for r in rows])} | {count_text} | {'Yes' if low else 'No'} |")
+
+    report_facts = manifest.get("report_facts", {})
+    lines += ["", "### How to read the open-set tables", "",
+              f"With {len(open_runs)} seeds, detectors whose mean ± sd ranges overlap are not ranked.", ""]
+
+    # Sample-size sensitivity compares common detector outputs in matched seed-42 runs.
+    light = family_map(light_rows[0][1])
+    med = family_map(medium42[0])
+    light_metadata = light_rows[0][1]
+    medium_metadata = medium42[0]
+    light_fraction = float(light_metadata["sample_fraction"])
+    medium_fraction = float(medium_metadata["sample_fraction"])
+    light_cap = int(light_metadata["train_row_cap_per_fold"])
+    medium_cap = int(medium_metadata["train_row_cap_per_fold"])
+    detector_names = ("confidence", "isolation_forest", "mahalanobis", "confidence_mahalanobis_rank_average")
+    lines += ["## Sample-size sensitivity", "",
+              "AUROC and unknown rejection are shown side by side for the light and medium seed-42 runs.", "",
+              "| Family | Detector | Light AUROC | Medium AUROC | Light unknown rejection | Medium unknown rejection |",
+              "|---|---|---:|---:|---:|---:|"]
+    for fam in sorted(set(light) & set(med)):
+        for detector in detector_names:
+            if detector not in light[fam].get("detectors", {}) or detector not in med[fam].get("detectors", {}):
+                continue
+            lval, mval = light[fam]["detectors"][detector], med[fam]["detectors"][detector]
+            lines.append(f"| {fam} | {detector} | {float(lval['AUROC']):.4f} | {float(mval['AUROC']):.4f} | "
+                         f"{float(lval['unknown_rejection_rate']):.4f} | {float(mval['unknown_rejection_rate']):.4f} |")
+    lines += ["",
+              f"Confidence-based AUROC differed strongly between the light ({light_fraction:.0%} sample, {light_cap:,}-row cap) and medium ({medium_fraction:.0%}, {medium_cap:,}-row cap) profiles on DosDDoS and PortScan; anomaly detectors changed little. The cause was not isolated.", ""]
+
+    matrix = replay["predicted_class_confusion_matrix"]
+    lines += ["## Replay summary", "", "### Confusion matrix", "",
+              "| Ground truth / verdict | " + " | ".join(matrix["columns"]) + " |",
+              "|---|" + "---:|" * len(matrix["columns"])]
+    for name, row in zip(matrix["rows"], matrix["counts"]):
+        lines.append(f"| {name} | " + " | ".join(str(value) for value in row) + " |")
+    replay_family_alignments = ("left", "right", "left", "right", "right")
+    lines += ["", "### Per-family replay metrics", "",
+              "| Family | Support | Low support | Alerted rate | Correct-class recall |",
+              markdown_separator(replay_family_alignments)]
+    for fam, metric in replay["per_family_metrics"].items():
+        low = str(metric.get("support_label", "")).lower() == "low support"
+        lines.append(f"| {fam} | {metric['support']} | {'Yes' if low else 'No'} | {float(metric['alerted_rate']):.4f} | {float(metric['correct_class_recall']):.4f} |")
+
+    lines += ["", "## RAG retrieval", "", "20 developer-written questions, indicative only.", "",
+              f"- Questions: {rag['question_count']}", f"- Model: `{rag['model_name']}`",
+              f"- FAISS backend: `{rag['faiss_backend']}`", f"- Knowledge-file hash: `{rag['knowledge_file_hash']}`",
+              f"- Hit@1: {float(rag['hit_at_1']):.4f}", f"- Hit@3: {float(rag['hit_at_3']):.4f}", "",
+              "Missed questions and top retrieved source:", ""]
+    for item in rag.get("missed_questions", []):
+        lines.append(f"- {item['question']} — expected `{item['expected_source_file']}`, top source `{item.get('top_retrieved_source') or 'none'}`.")
+    if not rag.get("missed_questions"):
+        lines.append("- None recorded.")
+
+    model_names = sorted({name for _, run in known_rows for name, value in run.items()
+                          if isinstance(value, dict) and "macro_f1" in value})
+    lines += ["", "## Known-class classifier metrics", "",
+              "Mean ± sample standard deviation over the medium seeds.", "",
+              "| Model | Macro-F1 mean ± sd | Accuracy mean ± sd |",
+              "|---|---:|---:|"]
+    for model in model_names:
+        metrics = [run[model] for _, run in known_rows]
+        lines.append(f"| {metrics[0].get('model', model)} | {mean_sd([x['macro_f1'] for x in metrics])} | {mean_sd([x['accuracy'] for x in metrics])} |")
+    lines += ["", "### Per-class metrics", "",
+              "| Model | Class | Precision mean ± sd | Recall mean ± sd | F1 mean ± sd | Support by seed |",
+              "|---|---|---:|---:|---:|---|"]
+    classes = sorted({cls for _, run in known_rows for model in model_names for cls in run[model].get("per_class", {})})
+    class_f1_means = {}
+    for model in model_names:
+        for cls in classes:
+            metrics = [run[model]["per_class"][cls] for _, run in known_rows]
+            class_f1_means[(model, cls)] = statistics.mean(float(x["f1"]) for x in metrics)
+            lines.append(f"| {model} | {cls} | {mean_sd([x['precision'] for x in metrics])} | "
+                         f"{mean_sd([x['recall'] for x in metrics])} | {mean_sd([x['f1'] for x in metrics])} | "
+                         + "; ".join(f"{run['seed']}: {run[model]['per_class'][cls]['support']}" for _, run in known_rows) + " |")
+    lowest_model, lowest_class = min(class_f1_means, key=class_f1_means.get)
+    lowest_class_mean = class_f1_means[(lowest_model, lowest_class)]
+    lines += [f"", f"Lowest-F1 known class from these results: {lowest_class} ({lowest_model}).", "",
+              "Accuracy is shown last in the summary table because benign flows dominate the test set.", ""]
+
+    limits = report_facts.get("limitations", {})
+    medium_bot = med.get("Bot", {}).get("n_test_unknown", 0)
+    medium_web = med.get("WebAttack", {}).get("n_test_unknown", 0)
+    portscan_rates = {}
+    for fam, values in families.items():
+        detector_names_for_family = values["detectors"]
+        portscan_rates[fam] = max(
+            float(per_seed[seed]["unknown_rejection_rate"])
+            for per_seed in detector_names_for_family.values()
+            for seed in SEEDS
+        )
+    max_portscan_rejection = portscan_rates["PortScan"]
+    weakest_family = min(portscan_rates, key=portscan_rates.get)
+    if weakest_family != "PortScan":
+        raise RuntimeError("Saved medium results do not support PortScan as weakest by maximum unknown rejection")
+    threshold_percentile = next(
+        int(metric["threshold_percentile"])
+        for row in open_runs[0]["per_family"]
+        for metric in row["detectors"].values()
+        if "threshold_percentile" in metric
+    )
+    known_false_reject_target = 1 - threshold_percentile / 100
+    lines += ["", "## Metric definitions", "",
+        "- AUROC: how well the detector score ranks held-out unknown rows above known rows.",
+        f"- Unknown rejection: the fraction of held-out unknown rows rejected at the {known_false_reject_target:.0%} known false-reject threshold selected using known validation data.",
+        "- Alerted rate: the fraction of replay rows that produced an alert.",
+        "- Correct-class recall: the fraction of rows in a family assigned that correct family verdict.",
+        "", "## Limitations", "",
+        f"- stratified random split with no timestamps (near-duplicate flows can sit in both train and test, so results are optimistic)",
+        f"- single dataset, CICIDS{limits.get('dataset_year')}, from a {limits.get('dataset_year')} testbed with known labelling problems",
+        f"- {report_facts.get('sample_fractions', {}).get('light') * 100:g}% and {report_facts.get('sample_fractions', {}).get('medium') * 100:g}% hash samples",
+        f"- {len(SEEDS)} seeds only",
+        f"- Bot ({medium_bot} rows) and WebAttack ({medium_web} rows) have few unknown test rows",
+        f"- PortScan is the weakest family for open-set rejection; the maximum observed unknown rejection across its detectors and seeds was {max_portscan_rejection:.4f}",
+        f"- {lowest_class} is the weakest known class (mean F1 {lowest_class_mean:.4f})",
+        f"- replay families with under {limits.get('replay_low_support_flows')} flows are not interpretable",
+        f"- the RAG test is {rag['question_count']} developer-written questions",
+        "- correlation scenarios and thresholds are developer-written demo values",
+        "- the user and endpoint layers have no trained model",
+        "- TFT and GAT are not implemented",
+        "- API authorization tests ran only on Linux CI; whether they have run in CI is not confirmed", ""]
+    return "\n".join(lines)
+
+
+if __name__ == "__main__":
+    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+    OUTPUT.write_text(render(), encoding="utf-8")
+    print(f"Wrote {OUTPUT}")
+    print("Read JSON files:")
+    for entry in manifest_entries()[1]:
+        print(f"- {entry['file']}")

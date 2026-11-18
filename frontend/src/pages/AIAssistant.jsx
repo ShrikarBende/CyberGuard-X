@@ -1,20 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Bot, Send, Sparkles, BookOpen, ShieldCheck, AlertCircle, User, Loader2 } from 'lucide-react';
+import { Bot, Send, BookOpen, AlertCircle, User, Loader2 } from 'lucide-react';
 import { api } from '../services/api';
 
 export default function AIAssistant({ initialIncidentId }) {
   const [incidents, setIncidents] = useState([]);
   const [selectedIncidentId, setSelectedIncidentId] = useState(initialIncidentId || '');
-  const [messages, setMessages] = useState([
-    {
-      sender: 'assistant',
-      text: 'Hello, I am CyberGuard X Assistant. I am grounded in your enterprise incident evidence and the MITRE ATT&CK framework. Select an incident or ask an investigative query below.',
-      citations: [],
-      containment: [],
-    },
-  ]);
+  const [messages, setMessages] = useState([]);
   const [inputQuery, setInputQuery] = useState('');
   const [loading, setLoading] = useState(false);
+  const [retrievalError, setRetrievalError] = useState('');
+  const [incidentLoadError, setIncidentLoadError] = useState('');
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
@@ -27,6 +22,7 @@ export default function AIAssistant({ initialIncidentId }) {
         }
       } catch (err) {
         console.error(err);
+        setIncidentLoadError(err.message || 'Could not load incidents.');
       }
     }
     loadIncidents();
@@ -44,26 +40,20 @@ export default function AIAssistant({ initialIncidentId }) {
     setMessages((prev) => [...prev, userMsg]);
     setInputQuery('');
     setLoading(true);
+    setRetrievalError('');
 
     try {
       const response = await api.ragChat(q, selectedIncidentId || null);
       const assistantMsg = {
         sender: 'assistant',
         text: response.answer,
-        citations: response.citations || [],
-        containment: response.recommended_containment || [],
+        mode: response.mode,
+        sources: response.sources || [],
+        evidenceUsed: response.evidence_used || [],
       };
       setMessages((prev) => [...prev, assistantMsg]);
     } catch (err) {
-      setMessages((prev) => [
-        ...prev,
-        {
-          sender: 'assistant',
-          text: 'Encountered an error while querying knowledge base. Please ensure backend is running.',
-          citations: [],
-          containment: [],
-        },
-      ]);
+      setRetrievalError(err.message || 'Retrieval failed. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -108,7 +98,22 @@ export default function AIAssistant({ initialIncidentId }) {
       </div>
 
       {/* Messages Scroll Area */}
+      {!incidents.length ? (
+        <div className="flex-1 flex flex-col items-center justify-center text-center p-8 text-slate-400">
+          <AlertCircle className="w-8 h-8 text-slate-600 mb-3" />
+          <p className="text-sm font-semibold">No incident selected.</p>
+          <p className="text-xs mt-2">Load or select an incident to ask evidence-grounded investigation questions.</p>
+          {incidentLoadError && <p role="alert" className="text-xs text-rose-300 mt-3">{incidentLoadError}</p>}
+        </div>
+      ) : !selectedIncidentId ? (
+        <div className="flex-1 flex items-center justify-center text-slate-400 text-xs">Select an incident to begin.</div>
+      ) : (
       <div className="flex-1 overflow-y-auto p-6 space-y-4">
+        {retrievalError && (
+          <div role="alert" className="p-3 rounded-xl border border-rose-500/30 bg-rose-500/10 text-xs text-rose-200 flex items-center gap-2">
+            <AlertCircle className="w-4 h-4" /> Retrieval error: {retrievalError}
+          </div>
+        )}
         {messages.map((msg, idx) => {
           const isUser = msg.sender === 'user';
           return (
@@ -133,35 +138,34 @@ export default function AIAssistant({ initialIncidentId }) {
               >
                 <div className="whitespace-pre-wrap">{msg.text}</div>
 
-                {/* Citations */}
-                {!isUser && msg.citations && msg.citations.length > 0 && (
+                {!isUser && msg.mode && (
+                  <span className="inline-flex rounded-full border border-purple-500/30 bg-purple-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-purple-300">
+                    {msg.mode}
+                  </span>
+                )}
+
+                {/* Retrieved sources */}
+                {!isUser && msg.sources && msg.sources.length > 0 && (
                   <div className="pt-2 border-t border-[#1E293B] flex flex-wrap gap-2">
                     <span className="text-[10px] font-bold text-slate-400 flex items-center gap-1 uppercase">
-                      <BookOpen className="w-3 h-3 text-purple-400" /> Grounded Citations:
+                      <BookOpen className="w-3 h-3 text-purple-400" /> Retrieved Sources:
                     </span>
-                    {msg.citations.map((c, cIdx) => (
+                    {msg.sources.map((source, cIdx) => (
                       <span
                         key={cIdx}
                         className="px-2 py-0.5 rounded bg-purple-500/10 border border-purple-500/20 text-[10px] font-mono text-purple-300"
                       >
-                        {c.doc_id}: {c.title}
+                        {source.chunk_id}: {source.title} · {Number(source.score).toFixed(3)}
                       </span>
                     ))}
                   </div>
                 )}
 
-                {/* Containment Steps */}
-                {!isUser && msg.containment && msg.containment.length > 0 && (
-                  <div className="p-3 rounded-xl bg-[#10182E] border border-emerald-500/20">
-                    <span className="text-[10px] font-bold text-emerald-400 flex items-center gap-1 uppercase mb-1">
-                      <ShieldCheck className="w-3.5 h-3.5" /> Recommended Remediation (Analyst Action Required):
-                    </span>
-                    <ul className="list-disc list-inside space-y-1 text-slate-300 text-[11px]">
-                      {msg.containment.map((step, sIdx) => (
-                        <li key={sIdx}>{step}</li>
-                      ))}
-                    </ul>
-                  </div>
+                {!isUser && msg.evidenceUsed?.length > 0 && (
+                  <details className="pt-2 border-t border-[#1E293B]">
+                    <summary className="cursor-pointer text-[10px] font-bold uppercase text-slate-400">Stored evidence used</summary>
+                    <pre className="mt-2 whitespace-pre-wrap break-all text-[10px] text-slate-400">{JSON.stringify(msg.evidenceUsed, null, 2)}</pre>
+                  </details>
                 )}
               </div>
             </div>
@@ -175,6 +179,7 @@ export default function AIAssistant({ initialIncidentId }) {
         )}
         <div ref={messagesEndRef} />
       </div>
+      )}
 
       {/* Quick Prompts Bar */}
       <div className="px-6 py-2 bg-[#0D1527] border-t border-[#1E293B] flex items-center gap-2 overflow-x-auto no-scrollbar">
@@ -183,6 +188,7 @@ export default function AIAssistant({ initialIncidentId }) {
           <button
             key={idx}
             onClick={() => handleSend(p)}
+            disabled={!selectedIncidentId || loading}
             className="px-2.5 py-1 rounded-lg bg-[#10182E] hover:bg-[#1E293B] border border-[#1E293B] text-[11px] text-slate-300 whitespace-nowrap transition-colors"
           >
             {p}
@@ -201,7 +207,7 @@ export default function AIAssistant({ initialIncidentId }) {
         />
         <button
           type="submit"
-          disabled={loading || !inputQuery.trim()}
+          disabled={loading || !inputQuery.trim() || !selectedIncidentId}
           className="px-5 py-3 rounded-xl bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-xs font-semibold transition-all flex items-center gap-2 shadow-lg shadow-purple-600/20"
         >
           <Send className="w-4 h-4" /> Send

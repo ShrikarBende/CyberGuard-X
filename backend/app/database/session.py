@@ -2,16 +2,32 @@
 SQLAlchemy Database setup with session lifecycle management.
 """
 from typing import Generator
+from pathlib import Path
 from sqlalchemy import create_engine
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
-from app.core.config import settings
+from app.core.config import BACKEND_DIR, settings
 
+def resolve_database_url(database_url: str):
+    """Resolve relative SQLite database paths from the backend directory."""
+    url = make_url(database_url)
+    if url.get_backend_name() == "sqlite" and url.database not in (None, "", ":memory:"):
+        path = Path(url.database).expanduser()
+        if not path.is_absolute():
+            path = BACKEND_DIR / path
+        path = path.resolve()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        url = url.set(database=str(path))
+    return url
+
+
+database_url = resolve_database_url(settings.DATABASE_URL)
 connect_args = {}
-if settings.DATABASE_URL.startswith("sqlite"):
+if database_url.get_backend_name() == "sqlite":
     connect_args["check_same_thread"] = False
 
 engine = create_engine(
-    settings.DATABASE_URL,
+    database_url,
     connect_args=connect_args,
     pool_pre_ping=True
 )

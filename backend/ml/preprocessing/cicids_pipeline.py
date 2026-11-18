@@ -22,7 +22,10 @@ LABEL FAMILIES
 from __future__ import annotations
 
 import hashlib
+import gc
+import json
 import os
+import sys
 import warnings
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -108,7 +111,78 @@ def _file_md5(path: Path, chunk: int = 1 << 20) -> str:
 
 
 def _parquet_cache_path(csv_path: Path) -> Path:
-    return CACHE_DIR / (csv_path.stem + ".clean-v2.parquet")
+    return CACHE_DIR / (csv_path.stem + ".clean-v4.parquet")
+
+
+def _remove_stale_cache_versions(current_path: Path, pattern: str) -> None:
+    """Remove prior cache-version files only after the current file is durable."""
+    for stale_path in CACHE_DIR.glob(pattern):
+        if stale_path == current_path:
+            continue
+        stale_path.unlink(missing_ok=True)
+        print(f"  [stale cache removed] {stale_path.name}")
+
+
+def _combined_cache_paths(profile: str, sample: float) -> Tuple[Path, Path]:
+    sample_key = f"{sample:.6f}".rstrip("0").rstrip(".")
+    stem = f"cicids_{profile}_sample_{sample_key}_dedup-v4"
+    return CACHE_DIR / f"{stem}.parquet", CACHE_DIR / f"{stem}.json"
+
+
+def _row_hashes(df: pd.DataFrame, feature_cols: List[str], chunk_size: int = 200_000) -> np.ndarray:
+    """Hash feature columns in bounded chunks."""
+    hashes = np.empty(len(df), dtype=np.uint64)
+    for start in range(0, len(df), chunk_size):
+        block = df.iloc[start:start + chunk_size]
+        hashes[start:start + len(block)] = pd.util.hash_pandas_object(
+            block[feature_cols], index=False
+        ).to_numpy(dtype=np.uint64, copy=False)
+        del block
+    return hashes
+
+
+def _hash_sample_mask(df: pd.DataFrame, sample: float, chunk_size: int = 200_000) -> np.ndarray:
+    """Select rows by the same feature hash used for deduplication."""
+    feature_cols = [column for column in df.columns if column not in {LABEL_COL, "_source_file"}]
+    hashes = _row_hashes(df, feature_cols, chunk_size=chunk_size)
+    mask = hashes % np.uint64(100) < int(sample * 100)
+    del hashes
+    return mask
+
+
+def _peak_memory_mb() -> float:
+    """Return the process peak resident memory in MiB."""
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+            _fields_ = [
+                ("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t),
+            ]
+
+        counters = PROCESS_MEMORY_COUNTERS()
+        counters.cb = ctypes.sizeof(counters)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        psapi = ctypes.WinDLL("psapi", use_last_error=True)
+        psapi.GetProcessMemoryInfo.argtypes = [
+            wintypes.HANDLE, ctypes.POINTER(PROCESS_MEMORY_COUNTERS), wintypes.DWORD
+        ]
+        psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+        if not psapi.GetProcessMemoryInfo(
+            kernel32.GetCurrentProcess(), ctypes.byref(counters), counters.cb
+        ):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return counters.PeakWorkingSetSize / (1024 * 1024)
+    import resource
+
+    peak = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return peak / (1024 if sys.platform != "darwin" else 1024 * 1024)
 
 
 def _load_one_csv(csv_path: Path, force_reload: bool = False) -> pd.DataFrame:
@@ -116,7 +190,7 @@ def _load_one_csv(csv_path: Path, force_reload: bool = False) -> pd.DataFrame:
     Load, clean, and cache one CICIDS2017 CSV as Parquet.
     - Strip column-name whitespace
     - Replace inf / -inf with NaN, drop NaN rows
-    - Drop exact duplicate rows
+    - Preserve duplicates for profile-aware cross-file deduplication
     - Map labels; drop excluded & unmapped labels
     """
     cache_path = _parquet_cache_path(csv_path)
@@ -126,7 +200,19 @@ def _load_one_csv(csv_path: Path, force_reload: bool = False) -> pd.DataFrame:
         return pd.read_parquet(cache_path)
 
     print(f"  [csv read ] Reading {csv_path.name} ...")
-    df = pd.read_csv(csv_path, low_memory=False)
+    probe = pd.read_csv(csv_path, nrows=1000, low_memory=False)
+    dtype_map = {}
+    for raw_column, dtype in probe.dtypes.items():
+        column = raw_column.strip()
+        if column == LABEL_COL:
+            dtype_map[raw_column] = str
+        elif pd.api.types.is_float_dtype(dtype):
+            dtype_map[raw_column] = np.float32
+        elif pd.api.types.is_integer_dtype(dtype):
+            dtype_map[raw_column] = dtype
+    del probe
+    gc.collect()
+    df = pd.read_csv(csv_path, low_memory=False, dtype=dtype_map)
 
     # 1. Strip column whitespace
     df.columns = df.columns.str.strip()
@@ -137,12 +223,7 @@ def _load_one_csv(csv_path: Path, force_reload: bool = False) -> pd.DataFrame:
     df.dropna(inplace=True)
     print(f"    NaN drop : {before_nan} -> {len(df)}")
 
-    # 3. Drop exact duplicate rows
-    before_dup = len(df)
-    df.drop_duplicates(inplace=True)
-    print(f"    Dedup    : {before_dup} -> {len(df)}")
-
-    # 4. Map labels; handle unicode hyphen variants
+    # 3. Map labels; handle unicode hyphen variants
     raw_col = df[LABEL_COL].astype(str).str.strip()
     mapped = raw_col.map(LABEL_MAP)
     web_mask = raw_col.str.startswith("Web Attack ")
@@ -158,63 +239,98 @@ def _load_one_csv(csv_path: Path, force_reload: bool = False) -> pd.DataFrame:
     if n_before != n_after:
         print(f"    Label drop (excluded/unmapped): {n_before} -> {n_after}")
 
-    # 6. Downcast numerics to float32 to reduce memory
-    num_cols = df.select_dtypes(include=[np.number]).columns
-    df[num_cols] = df[num_cols].astype(np.float32)
+    # Preserve float32 and integer dtypes; do not allow float64 columns.
+    float_cols = df.select_dtypes(include=[np.float64]).columns
+    if len(float_cols):
+        df[float_cols] = df[float_cols].astype(np.float32)
+    for column in df.select_dtypes(include=[np.integer]).columns:
+        df[column] = pd.to_numeric(df[column], downcast="integer")
 
     # 7. Cache as Parquet
     df.to_parquet(cache_path, index=False)
+    _remove_stale_cache_versions(cache_path, f"{csv_path.stem}.clean-v*.parquet")
     print(f"    Cached -> {cache_path.name}")
     return df
 
 
-def load_all_cicids(force_reload: bool = False) -> pd.DataFrame:
+def load_all_cicids(force_reload: bool = False, sample: float = 1.0) -> pd.DataFrame:
     """
     Assert all 8 CSVs exist, load + clean each, return concatenated DataFrame.
     If any file is missing, raises FileNotFoundError and stops.
     """
+    if not 0 < sample <= 1:
+        raise ValueError("sample must be in (0, 1]")
+    profile = "light" if sample < 1 else "full"
+    cache_path, metadata_path = _combined_cache_paths(profile, sample)
+    if not force_reload and cache_path.exists() and metadata_path.exists():
+        print(f"[cache hit] Loading {cache_path.name}")
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        cached = pd.read_parquet(cache_path)
+        print(f"Deduplication: exact duplicate rows dropped={metadata['exact_dropped']:,}; "
+              f"conflicting-label feature rows dropped={metadata['conflicts_dropped']:,}")
+        print(f"Peak memory after step: {_peak_memory_mb():.1f} MiB")
+        return cached
+
     missing = [f for f in CICIDS_FILES if not (DATASETS_DIR / f).exists()]
     if missing:
         raise FileNotFoundError(
             f"Missing CICIDS2017 files in {DATASETS_DIR}:\n" + "\n".join(missing)
         )
 
-    combined = None
+    parts = []
     for fname in CICIDS_FILES:
         csv_path = DATASETS_DIR / fname
         df = _load_one_csv(csv_path, force_reload=force_reload)
         df["_source_file"] = fname   # keep provenance
-        combined = df if combined is None else pd.concat([combined, df], axis=0, ignore_index=True)
+        if sample < 1:
+            keep = _hash_sample_mask(df, sample)
+            sampled = df.iloc[np.flatnonzero(keep)]
+            del df, keep
+            df = sampled
+        parts.append(df)
         del df
+        gc.collect()
+    combined = pd.concat(parts, axis=0, ignore_index=True)
+    del parts
+    gc.collect()
     combined, exact_dropped, conflicts_dropped = deduplicate_flows(combined)
     print(f"Deduplication: exact duplicate rows dropped={exact_dropped:,}; "
           f"conflicting-label feature rows dropped={conflicts_dropped:,}")
     print(f"\nTotal rows after cleaning: {len(combined):,}")
     print("Label distribution:")
     print(combined[LABEL_COL].value_counts().to_string())
+    combined.to_parquet(cache_path, index=False)
+    metadata_path.write_text(json.dumps({
+        "profile": profile, "sample_fraction": sample,
+        "exact_dropped": exact_dropped, "conflicts_dropped": conflicts_dropped,
+    }, indent=2) + "\n", encoding="utf-8")
+    cache_prefix = cache_path.stem.rsplit("dedup-v", 1)[0]
+    _remove_stale_cache_versions(cache_path, f"{cache_prefix}dedup-v*.parquet")
+    _remove_stale_cache_versions(metadata_path, f"{cache_prefix}dedup-v*.json")
+    print(f"[cache write] {cache_path.name}")
+    print(f"Peak memory after step: {_peak_memory_mb():.1f} MiB")
     return combined
 
 
 def deduplicate_flows(df: pd.DataFrame) -> Tuple[pd.DataFrame, int, int]:
     """Drop exact duplicates, then all feature-identical groups with label conflicts."""
     feature_cols = [c for c in df.columns if c not in {LABEL_COL, "_source_file"}]
-    feature_parts, exact_parts = [], []
-    for start in range(0, len(df), 100_000):
-        block = df.iloc[start:start + 100_000]
-        feature_parts.append(pd.util.hash_pandas_object(block[feature_cols], index=False))
-        exact_parts.append(pd.util.hash_pandas_object(block[feature_cols + [LABEL_COL]], index=False))
-    feature_hash = pd.concat(feature_parts, ignore_index=True)
-    exact_hash = pd.concat(exact_parts, ignore_index=True)
-    exact_mask = ~exact_hash.duplicated(keep="first")
-    exact = df.loc[exact_mask]
-    unique_feature_hash = feature_hash.loc[exact_mask]
-    exact_dropped = len(df) - len(exact)
-    labels_per_flow = pd.DataFrame({"flow": unique_feature_hash.to_numpy(), "label": exact[LABEL_COL].to_numpy()})
-    conflict_hashes = labels_per_flow.groupby("flow", sort=False)["label"].nunique()
-    conflicts = set(conflict_hashes[conflict_hashes > 1].index)
-    conflict_index = unique_feature_hash.isin(conflicts).to_numpy()
-    conflicts_dropped = int(conflict_index.sum())
-    return exact.loc[~conflict_index].reset_index(drop=True), exact_dropped, conflicts_dropped
+    feature_hash = _row_hashes(df, feature_cols)
+    labels = df[LABEL_COL].to_numpy(copy=False)
+    pairs = pd.DataFrame({"feature_hash": feature_hash, "label": labels})
+    exact_duplicate = pairs.duplicated(keep="first").to_numpy(dtype=bool, copy=False)
+    exact_dropped = int(exact_duplicate.sum())
+    unique_pairs = pairs.iloc[np.flatnonzero(~exact_duplicate)]
+    conflict_counts = unique_pairs.groupby("feature_hash", sort=False)["label"].nunique()
+    conflict_hashes = conflict_counts.index[conflict_counts > 1].to_numpy(dtype=np.uint64, copy=False)
+    conflicting = np.isin(feature_hash, conflict_hashes, assume_unique=False)
+    conflicts_dropped = int((~exact_duplicate & conflicting).sum())
+    keep_mask = ~exact_duplicate & ~conflicting
+    result = df.iloc[np.flatnonzero(keep_mask)]
+    del feature_hash, labels, pairs, exact_duplicate, unique_pairs, conflict_counts
+    del conflict_hashes, conflicting, keep_mask
+    gc.collect()
+    return result, exact_dropped, conflicts_dropped
 
 
 def build_splits(
@@ -238,8 +354,12 @@ def build_splits(
 
     train_frames, val_frames, test_frames = [], [], []
 
-    for source_file, group in df.groupby("_source_file"):
+    # Iterating sorted provenance values matches groupby's default key order,
+    # while avoiding groupby materializing a sorted copy of the full table.
+    for source_file in sorted(df["_source_file"].unique()):
+        group = df.loc[df["_source_file"] == source_file]
         labels = group[LABEL_COL]
+        X_tv = None
         # First split off test
         try:
             X_tv, X_test = train_test_split(
@@ -265,6 +385,8 @@ def build_splits(
         print(
             f"  {source_file}: train={len(X_train)}, val={len(X_val)}, test={len(X_test)}"
         )
+        del group, labels, X_tv, X_test, X_train, X_val
+        gc.collect()
 
     train_df = pd.concat(train_frames, ignore_index=True)
     val_df = pd.concat(val_frames, ignore_index=True)
@@ -286,14 +408,34 @@ def fit_log1p_columns(X_train: np.ndarray) -> np.ndarray:
 
 def apply_log1p_columns(X: np.ndarray, columns: np.ndarray) -> np.ndarray:
     """Apply log1p to selected non-negative values, preserving any negatives."""
-    result = np.asarray(X, dtype=np.float32).copy()
     selected = np.flatnonzero(columns)
-    if selected.size:
-        values = result[:, selected]
-        nonnegative = values >= 0
-        values[nonnegative] = np.log1p(values[nonnegative])
-        result[:, selected] = values
+    if not selected.size:
+        return np.asarray(X, dtype=np.float32)
+    result = np.asarray(X, dtype=np.float32).copy()
+    values = result[:, selected]
+    nonnegative = values >= 0
+    values[nonnegative] = np.log1p(values[nonnegative])
+    result[:, selected] = values
     return result
+
+
+def _fit_transform_scaler_in_chunks(
+    scaler: StandardScaler, X: np.ndarray, chunk_size: int = 100_000
+) -> np.ndarray:
+    """Fit and transform without a full-matrix float64 temporary."""
+    for start in range(0, len(X), chunk_size):
+        scaler.partial_fit(X[start:start + chunk_size])
+    for start in range(0, len(X), chunk_size):
+        end = min(start + chunk_size, len(X))
+        X[start:end] = scaler.transform(X[start:end])
+    return X
+
+
+def _transform_scaler_in_chunks(scaler: StandardScaler, X: np.ndarray, chunk_size: int = 100_000) -> np.ndarray:
+    for start in range(0, len(X), chunk_size):
+        end = min(start + chunk_size, len(X))
+        X[start:end] = scaler.transform(X[start:end])
+    return X
 
 
 def get_feature_matrices(
@@ -316,9 +458,9 @@ def get_feature_matrices(
     """
     feat_cols = _get_feature_cols(train_df)
 
-    X_train_raw = train_df[feat_cols].values.astype(np.float32)
-    X_val_raw   = val_df[feat_cols].values.astype(np.float32)
-    X_test_raw  = test_df[feat_cols].values.astype(np.float32)
+    X_train_raw = train_df[feat_cols].to_numpy(dtype=np.float32, copy=True)
+    X_val_raw   = val_df[feat_cols].to_numpy(dtype=np.float32, copy=True)
+    X_test_raw  = test_df[feat_cols].to_numpy(dtype=np.float32, copy=True)
 
     log1p_columns = fit_log1p_columns(X_train_raw) if log1p else np.zeros(X_train_raw.shape[1], dtype=bool)
     X_train_raw = apply_log1p_columns(X_train_raw, log1p_columns)
@@ -327,9 +469,9 @@ def get_feature_matrices(
 
     # Fit scaler on train only
     scaler = StandardScaler()
-    X_train = scaler.fit_transform(X_train_raw)
-    X_val   = scaler.transform(X_val_raw)
-    X_test  = scaler.transform(X_test_raw)
+    X_train = _fit_transform_scaler_in_chunks(scaler, X_train_raw)
+    X_val   = _transform_scaler_in_chunks(scaler, X_val_raw)
+    X_test  = _transform_scaler_in_chunks(scaler, X_test_raw)
 
     # Fit label encoder on train only
     le = LabelEncoder()
@@ -360,15 +502,17 @@ def build_full_pipeline(
     """
     Load, clean, split, scale — returns a dict with everything downstream needs.
     """
-    df = load_all_cicids(force_reload=force_reload)
     if not 0 < sample <= 1:
         raise ValueError("sample must be in (0, 1]")
-    if sample < 1:
-        sampled, _ = train_test_split(df, train_size=sample, random_state=seed, stratify=df[LABEL_COL])
-        df = sampled.reset_index(drop=True)
+    df = load_all_cicids(force_reload=force_reload, sample=sample)
     data_hash = get_data_hash(df)
 
+    # Downstream stages need split frames, and callers only use full_df for
+    # label/provenance checks. Retain those columns instead of the full feature table.
+    full_df = df[[LABEL_COL, "_source_file"]].copy()
     train_df, val_df, test_df = build_splits(df, seed=seed)
+    del df
+    gc.collect()
 
     (
         X_train, y_train,
@@ -392,7 +536,7 @@ def build_full_pipeline(
         "train_df":    train_df,
         "val_df":      val_df,
         "test_df":     test_df,
-        "full_df":     df,
+        "full_df":     full_df,
         "seed":        seed,
         "attack_families": ATTACK_FAMILIES,
         "label_map":       LABEL_MAP,

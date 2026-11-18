@@ -1,0 +1,774 @@
+{
+  "pipeline_stage": "open_set_evaluation",
+  "run_id": "cicids_medium_seed44",
+  "profile_name": "medium",
+  "profile_warning": "Results are from a reduced profile on a stratified random split.",
+  "sample_fraction": 0.5,
+  "train_row_cap_per_fold": 150000,
+  "git_hash": "b2c05e003e3de274756b5307ab5400f79cfc3643",
+  "flags": {
+    "log1p": true,
+    "xgboost": false,
+    "reduced_profile": true,
+    "stratified_random_split": true
+  },
+  "run_metadata": {
+    "profile_name": "medium",
+    "sample_fraction": 0.5,
+    "train_row_cap_per_fold": 150000,
+    "bootstrap_resamples": 200,
+    "detectors": [
+      "confidence",
+      "isolation_forest",
+      "mahalanobis",
+      "confidence_mahalanobis_rank_average",
+      "union_conf_mahalanobis"
+    ],
+    "known_classifier_models": [
+      "LightGBM"
+    ],
+    "isolation_forest": {
+      "n_estimators": 100,
+      "max_samples": 10000,
+      "n_jobs": -1
+    },
+    "flags": {
+      "log1p": true,
+      "xgboost": false,
+      "reduced_profile": true,
+      "stratified_random_split": true
+    },
+    "git_hash": "b2c05e003e3de274756b5307ab5400f79cfc3643",
+    "git_hash_status": null,
+    "reduced_profile_warning": "Results are from a reduced profile on a stratified random split."
+  },
+  "model_version": "v2.0",
+  "data_hash": "002c7af26c40",
+  "split_type": "stratified_random",
+  "split_warning": "No Timestamp column: stratified random split. Near-duplicate flows may leak between train and test; results are optimistic.",
+  "row_counts": {
+    "train": 874375,
+    "validation": 124914,
+    "test": 249829
+  },
+  "seed": 44,
+  "date": "2026-11-15T11:44:24.334578",
+  "training_time_seconds": 306.23,
+  "threshold_percentile": 95,
+  "log1p": true,
+  "threshold_rule": "95th percentile of known-class validation anomaly scores. No unknown-class data used for threshold selection.",
+  "excluded_labels": [
+    "Heartbleed",
+    "Infiltration"
+  ],
+  "per_family": [
+    {
+      "family": "DosDDoS",
+      "n_train": 150000,
+      "n_val": 108805,
+      "n_test_known": 217609,
+      "n_test_unknown": 32220,
+      "unknown_support": "adequate",
+      "train_cap_per_fold": 150000,
+      "row_counts": {
+        "train": 150000,
+        "validation": 108805,
+        "test_known": 217609,
+        "test_unknown": 32220
+      },
+      "known_classes_in_run": [
+        "BENIGN",
+        "Bot",
+        "BruteForce",
+        "PortScan",
+        "WebAttack"
+      ],
+      "detectors": {
+        "confidence": {
+          "AUROC": 0.943968,
+          "FPR_at_95pct_TPR": 0.16474,
+          "unknown_rejection_rate": 0.798976,
+          "known_false_reject_rate": 0.050076,
+          "threshold_value": 0.000171,
+          "threshold_percentile": 95,
+          "AUROC_95CI": [
+            0.942504,
+            0.945777
+          ],
+          "unknown_rejection_rate_95CI": [
+            0.795126,
+            0.803648
+          ],
+          "bootstrap_resamples": 200
+        },
+        "isolation_forest": {
+          "AUROC": 0.956593,
+          "FPR_at_95pct_TPR": 0.174754,
+          "unknown_rejection_rate": 0.803197,
+          "known_false_reject_rate": 0.049635,
+          "threshold_value": -0.001892,
+          "threshold_percentile": 95,
+          "AUROC_95CI": [
+            0.955829,
+            0.95741
+          ],
+          "unknown_rejection_rate_95CI": [
+            0.799316,
+            0.807389
+          ],
+          "bootstrap_resamples": 200
+        },
+        "mahalanobis": {
+          "AUROC": 0.960366,
+          "FPR_at_95pct_TPR": 0.125468,
+          "unknown_rejection_rate": 0.79432,
+          "known_false_reject_rate": 0.049589,
+          "threshold_value": 13.061372,
+          "threshold_percentile": 95,
+          "AUROC_95CI": [
+            0.959583,
+            0.961034
+          ],
+          "unknown_rejection_rate_95CI": [
+            0.790006,
+            0.799421
+          ],
+          "bootstrap_resamples": 200
+        },
+        "confidence_mahalanobis_rank_average": {
+          "AUROC": 0.97851,
+          "FPR_at_95pct_TPR": 0.051124,
+          "unknown_rejection_rate": 0.947827,
+          "known_false_reject_rate": 0.050269,
+          "threshold_value": 0.870497,
+          "threshold_percentile": 95,
+          "AUROC_95CI": [
+            0.977725,
+            0.979269
+          ],
+          "unknown_rejection_rate_95CI": [
+            0.945561,
+            0.950032
+          ],
+          "bootstrap_resamples": 200
+        },
+        "union_conf_mahalanobis": {
+          "AUROC": 0.976552,
+          "FPR_at_95pct_TPR": 0.137848,
+          "unknown_rejection_rate": 0.824053,
+          "known_false_reject_rate": 0.047866,
+          "threshold_value": {
+            "confidence_score_97_5th_percentile": 0.00027176292955255477,
+            "mahalanobis_score_97_5th_percentile": 15.903623902570155
+          },
+          "threshold_percentile": 97.5,
+          "AUROC_95CI": [
+            0.975978,
+            0.977166
+          ],
+          "unknown_rejection_rate_95CI": [
+            0.819986,
+            0.827748
+          ],
+          "bootstrap_resamples": 200
+        }
+      }
+    },
+    {
+      "family": "PortScan",
+      "n_train": 150000,
+      "n_val": 120400,
+      "n_test_known": 240800,
+      "n_test_unknown": 9029,
+      "unknown_support": "adequate",
+      "train_cap_per_fold": 150000,
+      "row_counts": {
+        "train": 150000,
+        "validation": 120400,
+        "test_known": 240800,
+        "test_unknown": 9029
+      },
+      "known_classes_in_run": [
+        "BENIGN",
+        "Bot",
+        "BruteForce",
+        "DosDDoS",
+        "WebAttack"
+      ],
+      "detectors": {
+        "confidence": {
+          "AUROC": 0.73809,
+          "FPR_at_95pct_TPR": 0.883326,
+          "unknown_rejection_rate": 0.027024,
+          "known_false_reject_rate": 0.049265,
+          "threshold_value": 9.3e-05,
+          "threshold_percentile": 95,
+          "AUROC_95CI": [
+            0.73318,
+            0.742768
+          ],
+          "unknown_rejection_rate_95CI": [
+            0.023809,
+            0.030687
+          ],
+          "bootstrap_resamples": 200
+        },
+        "isolation_forest": {
+          "AUROC": 0.804688,
+          "FPR_at_95pct_TPR": 0.232172,
+          "unknown_rejection_rate": 0.002437,
+          "known_false_reject_rate": 0.049772,
+          "threshold_value": 0.053233,
+          "threshold_percentile": 95,
+          "AUROC_95CI": [
+            0.803027,
+            0.806341
+          ],
+          "unknown_rejection_rate_95CI": [
+            0.001329,
+            0.003436
+          ],
+          "bootstrap_resamples": 200
+        },
+        "mahalanobis": {
+          "AUROC": 0.787714,
+          "FPR_at_95pct_TPR": 0.281063,
+          "unknown_rejection_rate": 0.006424,
+          "known_false_reject_rate": 0.049207,
+          "threshold_value": 12.464094,
+          "threshold_percentile": 95,
+          "AUROC_95CI": [
+            0.786029,
+            0.789354
+          ],
+          "unknown_rejection_rate_95CI": [
+            0.004652,
+            0.007974
+          ],
+          "bootstrap_resamples": 200
+        },
+        "confidence_mahalanobis_rank_average": {
+          "AUROC": 0.833957,
+          "FPR_at_95pct_TPR": 0.501329,
+          "unknown_rejection_rate": 0.034112,
+          "known_false_reject_rate": 0.050083,
+          "threshold_value": 0.889402,
+          "threshold_percentile": 95,
+          "AUROC_95CI": [
+            0.831251,
+            0.836702
+          ],
+          "unknown_rejection_rate_95CI": [
+            0.030787,
+            0.038545
+          ],
+          "bootstrap_resamples": 200
+        },
+        "union_conf_mahalanobis": {
+          "AUROC": 0.717536,
+          "FPR_at_95pct_TPR": 0.416167,
+          "unknown_rejection_rate": 0.013955,
+          "known_false_reject_rate": 0.046968,
+          "threshold_value": {
+            "confidence_score_97_5th_percentile": 0.00015429547284368235,
+            "mahalanobis_score_97_5th_percentile": 15.099397451477632
+          },
+          "threshold_percentile": 97.5,
+          "AUROC_95CI": [
+            0.715287,
+            0.719726
+          ],
+          "unknown_rejection_rate_95CI": [
+            0.011516,
+            0.016408
+          ],
+          "bootstrap_resamples": 200
+        }
+      }
+    },
+    {
+      "family": "BruteForce",
+      "n_train": 150000,
+      "n_val": 124464,
+      "n_test_known": 248930,
+      "n_test_unknown": 899,
+      "unknown_support": "adequate",
+      "train_cap_per_fold": 150000,
+      "row_counts": {
+        "train": 150000,
+        "validation": 124464,
+        "test_known": 248930,
+        "test_unknown": 899
+      },
+      "known_classes_in_run": [
+        "BENIGN",
+        "Bot",
+        "DosDDoS",
+        "PortScan",
+        "WebAttack"
+      ],
+      "detectors": {
+        "confidence": {
+          "AUROC": 0.881831,
+          "FPR_at_95pct_TPR": 0.171309,
+          "unknown_rejection_rate": 0.250278,
+          "known_false_reject_rate": 0.050797,
+          "threshold_value": 0.000201,
+          "threshold_percentile": 95,
+          "AUROC_95CI": [
+            0.877713,
+            0.886618
+          ],
+          "unknown_rejection_rate_95CI": [
+            0.226891,
+            0.276974
+          ],
+          "bootstrap_resamples": 200
+        },
+        "isolation_forest": {
+          "AUROC": 0.775458,
+          "FPR_at_95pct_TPR": 0.273121,
+          "unknown_rejection_rate": 0.0,
+          "known_false_reject_rate": 0.049701,
+          "threshold_value": 0.053604,
+          "threshold_percentile": 95,
+          "AUROC_95CI": [
+            0.770856,
+            0.780369
+          ],
+          "unknown_rejection_rate_95CI": [
+            0.0,
+            0.0
+          ],
+          "bootstrap_resamples": 200
+        },
+        "mahalanobis": {
+          "AUROC": 0.828933,
+          "FPR_at_95pct_TPR": 0.230836,
+          "unknown_rejection_rate": 0.001112,
+          "known_false_reject_rate": 0.049203,
+          "threshold_value": 12.473054,
+          "threshold_percentile": 95,
+          "AUROC_95CI": [
+            0.825757,
+            0.83262
+          ],
+          "unknown_rejection_rate_95CI": [
+            0.0,
+            0.004449
+          ],
+          "bootstrap_resamples": 200
+        },
+        "confidence_mahalanobis_rank_average": {
+          "AUROC": 0.926613,
+          "FPR_at_95pct_TPR": 0.113687,
+          "unknown_rejection_rate": 0.224694,
+          "known_false_reject_rate": 0.049849,
+          "threshold_value": 0.883223,
+          "threshold_percentile": 95,
+          "AUROC_95CI": [
+            0.924105,
+            0.928744
+          ],
+          "unknown_rejection_rate_95CI": [
+            0.196858,
+            0.249221
+          ],
+          "bootstrap_resamples": 200
+        },
+        "union_conf_mahalanobis": {
+          "AUROC": 0.804948,
+          "FPR_at_95pct_TPR": 0.291845,
+          "unknown_rejection_rate": 0.250278,
+          "known_false_reject_rate": 0.047805,
+          "threshold_value": {
+            "confidence_score_97_5th_percentile": 0.00041027566997845784,
+            "mahalanobis_score_97_5th_percentile": 15.072683411602291
+          },
+          "threshold_percentile": 97.5,
+          "AUROC_95CI": [
+            0.797655,
+            0.81214
+          ],
+          "unknown_rejection_rate_95CI": [
+            0.225779,
+            0.279199
+          ],
+          "bootstrap_resamples": 200
+        }
+      }
+    },
+    {
+      "family": "WebAttack",
+      "n_train": 150000,
+      "n_val": 124806,
+      "n_test_known": 249613,
+      "n_test_unknown": 216,
+      "unknown_support": "adequate",
+      "train_cap_per_fold": 150000,
+      "row_counts": {
+        "train": 150000,
+        "validation": 124806,
+        "test_known": 249613,
+        "test_unknown": 216
+      },
+      "known_classes_in_run": [
+        "BENIGN",
+        "Bot",
+        "BruteForce",
+        "DosDDoS",
+        "PortScan"
+      ],
+      "detectors": {
+        "confidence": {
+          "AUROC": 0.982654,
+          "FPR_at_95pct_TPR": 0.010204,
+          "unknown_rejection_rate": 0.967593,
+          "known_false_reject_rate": 0.049909,
+          "threshold_value": 0.000182,
+          "threshold_percentile": 95,
+          "AUROC_95CI": [
+            0.967728,
+            0.9936
+          ],
+          "unknown_rejection_rate_95CI": [
+            0.944444,
+            0.986111
+          ],
+          "bootstrap_resamples": 200
+        },
+        "isolation_forest": {
+          "AUROC": 0.604792,
+          "FPR_at_95pct_TPR": 0.639987,
+          "unknown_rejection_rate": 0.0,
+          "known_false_reject_rate": 0.050222,
+          "threshold_value": 0.045767,
+          "threshold_percentile": 95,
+          "AUROC_95CI": [
+            0.591713,
+            0.618736
+          ],
+          "unknown_rejection_rate_95CI": [
+            0.0,
+            0.0
+          ],
+          "bootstrap_resamples": 200
+        },
+        "mahalanobis": {
+          "AUROC": 0.734088,
+          "FPR_at_95pct_TPR": 0.458598,
+          "unknown_rejection_rate": 0.027778,
+          "known_false_reject_rate": 0.049068,
+          "threshold_value": 12.474075,
+          "threshold_percentile": 95,
+          "AUROC_95CI": [
+            0.724534,
+            0.742752
+          ],
+          "unknown_rejection_rate_95CI": [
+            0.009259,
+            0.050926
+          ],
+          "bootstrap_resamples": 200
+        },
+        "confidence_mahalanobis_rank_average": {
+          "AUROC": 0.931189,
+          "FPR_at_95pct_TPR": 0.160581,
+          "unknown_rejection_rate": 0.0,
+          "known_false_reject_rate": 0.0494,
+          "threshold_value": 0.876576,
+          "threshold_percentile": 95,
+          "AUROC_95CI": [
+            0.925262,
+            0.936184
+          ],
+          "unknown_rejection_rate_95CI": [
+            0.0,
+            0.0
+          ],
+          "bootstrap_resamples": 200
+        },
+        "union_conf_mahalanobis": {
+          "AUROC": 0.994507,
+          "FPR_at_95pct_TPR": 0.019831,
+          "unknown_rejection_rate": 0.986111,
+          "known_false_reject_rate": 0.048062,
+          "threshold_value": {
+            "confidence_score_97_5th_percentile": 0.0003536873511651717,
+            "mahalanobis_score_97_5th_percentile": 15.039798389486837
+          },
+          "threshold_percentile": 97.5,
+          "AUROC_95CI": [
+            0.991275,
+            0.996784
+          ],
+          "unknown_rejection_rate_95CI": [
+            0.972106,
+            1.0
+          ],
+          "bootstrap_resamples": 200
+        }
+      }
+    },
+    {
+      "family": "Bot",
+      "n_train": 150000,
+      "n_val": 124815,
+      "n_test_known": 249632,
+      "n_test_unknown": 197,
+      "unknown_support": "low support",
+      "train_cap_per_fold": 150000,
+      "row_counts": {
+        "train": 150000,
+        "validation": 124815,
+        "test_known": 249632,
+        "test_unknown": 197
+      },
+      "known_classes_in_run": [
+        "BENIGN",
+        "BruteForce",
+        "DosDDoS",
+        "PortScan",
+        "WebAttack"
+      ],
+      "detectors": {
+        "confidence": {
+          "AUROC": 0.610388,
+          "FPR_at_95pct_TPR": 0.839291,
+          "unknown_rejection_rate": 0.218274,
+          "known_false_reject_rate": 0.049124,
+          "threshold_value": 0.000282,
+          "threshold_percentile": 95,
+          "AUROC_95CI": [
+            0.565361,
+            0.660898
+          ],
+          "unknown_rejection_rate_95CI": [
+            0.16231,
+            0.269036
+          ],
+          "bootstrap_resamples": 200
+        },
+        "isolation_forest": {
+          "AUROC": 0.610726,
+          "FPR_at_95pct_TPR": 0.716419,
+          "unknown_rejection_rate": 0.010152,
+          "known_false_reject_rate": 0.049913,
+          "threshold_value": 0.048255,
+          "threshold_percentile": 95,
+          "AUROC_95CI": [
+            0.580287,
+            0.640422
+          ],
+          "unknown_rejection_rate_95CI": [
+            0.0,
+            0.025381
+          ],
+          "bootstrap_resamples": 200
+        },
+        "mahalanobis": {
+          "AUROC": 0.644881,
+          "FPR_at_95pct_TPR": 0.610579,
+          "unknown_rejection_rate": 0.035533,
+          "known_false_reject_rate": 0.049044,
+          "threshold_value": 12.454982,
+          "threshold_percentile": 95,
+          "AUROC_95CI": [
+            0.618102,
+            0.669775
+          ],
+          "unknown_rejection_rate_95CI": [
+            0.015102,
+            0.06599
+          ],
+          "bootstrap_resamples": 200
+        },
+        "confidence_mahalanobis_rank_average": {
+          "AUROC": 0.627426,
+          "FPR_at_95pct_TPR": 0.830062,
+          "unknown_rejection_rate": 0.218274,
+          "known_false_reject_rate": 0.049277,
+          "threshold_value": 0.884766,
+          "threshold_percentile": 95,
+          "AUROC_95CI": [
+            0.578082,
+            0.667121
+          ],
+          "unknown_rejection_rate_95CI": [
+            0.167513,
+            0.284264
+          ],
+          "bootstrap_resamples": 200
+        },
+        "union_conf_mahalanobis": {
+          "AUROC": 0.547548,
+          "FPR_at_95pct_TPR": 0.866367,
+          "unknown_rejection_rate": 0.030457,
+          "known_false_reject_rate": 0.046945,
+          "threshold_value": {
+            "confidence_score_97_5th_percentile": 0.0004329945384691225,
+            "mahalanobis_score_97_5th_percentile": 15.06028863110289
+          },
+          "threshold_percentile": 97.5,
+          "AUROC_95CI": [
+            0.508276,
+            0.595507
+          ],
+          "unknown_rejection_rate_95CI": [
+            0.010152,
+            0.055964
+          ],
+          "bootstrap_resamples": 200
+        }
+      }
+    }
+  ],
+  "per_family_tables": {
+    "AUROC": [
+      {
+        "family": "DosDDoS",
+        "unknown_test_rows": 32220,
+        "support": "adequate",
+        "confidence": 0.943968,
+        "isolation_forest": 0.956593,
+        "mahalanobis": 0.960366,
+        "confidence_mahalanobis_rank_average": 0.97851,
+        "union_conf_mahalanobis": 0.976552
+      },
+      {
+        "family": "PortScan",
+        "unknown_test_rows": 9029,
+        "support": "adequate",
+        "confidence": 0.73809,
+        "isolation_forest": 0.804688,
+        "mahalanobis": 0.787714,
+        "confidence_mahalanobis_rank_average": 0.833957,
+        "union_conf_mahalanobis": 0.717536
+      },
+      {
+        "family": "BruteForce",
+        "unknown_test_rows": 899,
+        "support": "adequate",
+        "confidence": 0.881831,
+        "isolation_forest": 0.775458,
+        "mahalanobis": 0.828933,
+        "confidence_mahalanobis_rank_average": 0.926613,
+        "union_conf_mahalanobis": 0.804948
+      },
+      {
+        "family": "WebAttack",
+        "unknown_test_rows": 216,
+        "support": "adequate",
+        "confidence": 0.982654,
+        "isolation_forest": 0.604792,
+        "mahalanobis": 0.734088,
+        "confidence_mahalanobis_rank_average": 0.931189,
+        "union_conf_mahalanobis": 0.994507
+      },
+      {
+        "family": "Bot",
+        "unknown_test_rows": 197,
+        "support": "low support",
+        "confidence": 0.610388,
+        "isolation_forest": 0.610726,
+        "mahalanobis": 0.644881,
+        "confidence_mahalanobis_rank_average": 0.627426,
+        "union_conf_mahalanobis": 0.547548
+      }
+    ],
+    "unknown_rejection_rate": [
+      {
+        "family": "DosDDoS",
+        "unknown_test_rows": 32220,
+        "support": "adequate",
+        "confidence": 0.798976,
+        "isolation_forest": 0.803197,
+        "mahalanobis": 0.79432,
+        "confidence_mahalanobis_rank_average": 0.947827,
+        "union_conf_mahalanobis": 0.824053
+      },
+      {
+        "family": "PortScan",
+        "unknown_test_rows": 9029,
+        "support": "adequate",
+        "confidence": 0.027024,
+        "isolation_forest": 0.002437,
+        "mahalanobis": 0.006424,
+        "confidence_mahalanobis_rank_average": 0.034112,
+        "union_conf_mahalanobis": 0.013955
+      },
+      {
+        "family": "BruteForce",
+        "unknown_test_rows": 899,
+        "support": "adequate",
+        "confidence": 0.250278,
+        "isolation_forest": 0.0,
+        "mahalanobis": 0.001112,
+        "confidence_mahalanobis_rank_average": 0.224694,
+        "union_conf_mahalanobis": 0.250278
+      },
+      {
+        "family": "WebAttack",
+        "unknown_test_rows": 216,
+        "support": "adequate",
+        "confidence": 0.967593,
+        "isolation_forest": 0.0,
+        "mahalanobis": 0.027778,
+        "confidence_mahalanobis_rank_average": 0.0,
+        "union_conf_mahalanobis": 0.986111
+      },
+      {
+        "family": "Bot",
+        "unknown_test_rows": 197,
+        "support": "low support",
+        "confidence": 0.218274,
+        "isolation_forest": 0.010152,
+        "mahalanobis": 0.035533,
+        "confidence_mahalanobis_rank_average": 0.218274,
+        "union_conf_mahalanobis": 0.030457
+      }
+    ]
+  },
+  "macro_average": {
+    "confidence": {
+      "AUROC": 0.831386,
+      "FPR_at_95pct_TPR": 0.413774,
+      "unknown_rejection_rate": 0.452429,
+      "known_false_reject_rate": 0.049834
+    },
+    "isolation_forest": {
+      "AUROC": 0.750451,
+      "FPR_at_95pct_TPR": 0.407291,
+      "unknown_rejection_rate": 0.163157,
+      "known_false_reject_rate": 0.049849
+    },
+    "mahalanobis": {
+      "AUROC": 0.791196,
+      "FPR_at_95pct_TPR": 0.341309,
+      "unknown_rejection_rate": 0.173033,
+      "known_false_reject_rate": 0.049222
+    },
+    "confidence_mahalanobis_rank_average": {
+      "AUROC": 0.859539,
+      "FPR_at_95pct_TPR": 0.331357,
+      "unknown_rejection_rate": 0.284981,
+      "known_false_reject_rate": 0.049776
+    },
+    "union_conf_mahalanobis": {
+      "AUROC": 0.808218,
+      "FPR_at_95pct_TPR": 0.346412,
+      "unknown_rejection_rate": 0.420971,
+      "known_false_reject_rate": 0.047529
+    }
+  },
+  "bootstrap": {
+    "method": "stratified bootstrap resampling of known and unknown test rows",
+    "resamples": 200,
+    "confidence_level": 0.95
+  },
+  "warnings": [
+    "SUSPICIOUS: WebAttack/union_conf_mahalanobis AUROC=0.9945 is near 1.0; check for duplicated or overly separable flows.",
+    "WEAK: Bot/union_conf_mahalanobis AUROC=0.5475 \u2014 barely better than random. May indicate this family is indistinguishable from known classes in feature space."
+  ],
+  "results_path": "D:\\MAJOR PROJECT\\backend\\ml\\evaluation\\results\\open_set_cicids_medium_seed44.json"
+}

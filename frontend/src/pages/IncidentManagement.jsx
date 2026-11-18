@@ -11,14 +11,21 @@ import {
   Send,
   X,
   ShieldAlert,
+  Activity,
 } from 'lucide-react';
 import { api } from '../services/api';
 
-export default function IncidentManagement({ onSelectIncidentForAssistant }) {
+export default function IncidentManagement({ onSelectIncidentForAssistant, role = 'viewer' }) {
+  const canInvestigate = role === 'analyst' || role === 'admin';
+  const isAdmin = role === 'admin';
   const [incidents, setIncidents] = useState([]);
   const [selectedIncident, setSelectedIncident] = useState(null);
   const [newNote, setNewNote] = useState('');
   const [loading, setLoading] = useState(true);
+  const [correlationRunning, setCorrelationRunning] = useState(false);
+  const [correlationMessage, setCorrelationMessage] = useState('');
+  const [correlationAlerts, setCorrelationAlerts] = useState([]);
+  const reviewQueue = incidents.filter((incident) => incident.status === 'NEEDS_REVIEW');
 
   const fetchIncidents = async () => {
     try {
@@ -37,6 +44,25 @@ export default function IncidentManagement({ onSelectIncidentForAssistant }) {
   useEffect(() => {
     fetchIncidents();
   }, []);
+
+  const handleRunCorrelation = async () => {
+    setCorrelationRunning(true);
+    setCorrelationMessage('');
+    try {
+      const result = await api.runCorrelation(60);
+      setCorrelationAlerts(result.alerts || []);
+      setCorrelationMessage(`Checked ${result.alerts?.length || 0} rule indicators; created or matched ${result.incidents?.length || 0} correlated incidents.`);
+      await fetchIncidents();
+    } catch (err) {
+      setCorrelationMessage(err.message || 'Correlation run failed.');
+    } finally {
+      setCorrelationRunning(false);
+    }
+  };
+
+  if (loading) {
+    return <div className="p-8 text-center text-slate-400">Loading incidents…</div>;
+  }
 
   const handleStatusChange = async (incidentId, newStatus) => {
     try {
@@ -66,11 +92,43 @@ export default function IncidentManagement({ onSelectIncidentForAssistant }) {
   };
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-140px)]">
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#1E293B] bg-[#10182E] p-4">
+        <div>
+          <h3 className="text-sm font-bold text-slate-200">Rule-based cross-layer correlation</h3>
+          <p className="text-xs text-slate-500 mt-1">Signals are rule indicators; they are not ML predictions.</p>
+          {correlationMessage && <p className="text-xs text-blue-200 mt-2">{correlationMessage}</p>}
+        </div>
+        {isAdmin && <button onClick={handleRunCorrelation} disabled={correlationRunning}
+          className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold flex items-center gap-2">
+          <Activity className="w-4 h-4" /> {correlationRunning ? 'Correlating…' : 'Run correlation (60 min)'}
+        </button>}
+      </div>
+
+      <section className="rounded-2xl border border-amber-500/30 bg-amber-500/5 p-4">
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-bold text-amber-200">Model review queue</h3>
+          <span className="text-xs font-mono text-amber-300">{reviewQueue.length}</span>
+        </div>
+        {reviewQueue.length === 0 ? (
+          <p className="text-xs text-slate-500">No unknown candidates need review.</p>
+        ) : (
+          <div className="space-y-2">
+            {reviewQueue.map((item) => (
+              <button key={item.incident_id} onClick={() => setSelectedIncident(item)} className="w-full flex items-center justify-between rounded-xl bg-[#0D1527] border border-amber-500/20 p-3 text-left">
+                <span className="text-xs text-slate-200">{item.title}<span className="block text-[10px] text-slate-500 mt-1">{item.description}</span></span>
+                <span className="text-xs font-mono text-amber-300">{item.flow_count || 1} flows</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-[calc(100vh-220px)]">
       {/* Incidents List (Left col) */}
       <div className="lg:col-span-1 bg-[#10182E] border border-[#1E293B] rounded-2xl p-5 flex flex-col overflow-hidden">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-bold text-slate-200">Correlated Attack Incidents</h3>
+          <h3 className="text-sm font-bold text-slate-200">Correlated incidents</h3>
           <span className="text-xs font-mono text-slate-400">{incidents.length} Active</span>
         </div>
 
@@ -104,6 +162,7 @@ export default function IncidentManagement({ onSelectIncidentForAssistant }) {
                 </div>
 
                 <p className="text-xs font-bold text-slate-200 line-clamp-1">{inc.title}</p>
+                <p className="text-[10px] text-slate-500 mt-1">{inc.flow_count || 1} flows</p>
                 <div className="flex items-center justify-between text-[11px] text-slate-400 mt-2">
                   <span>{inc.user_id || 'host_sys'}</span>
                   <span>{inc.device_id || 'unknown_host'}</span>
@@ -131,17 +190,19 @@ export default function IncidentManagement({ onSelectIncidentForAssistant }) {
               </div>
 
               <div className="flex items-center gap-3">
-                <select
+                {canInvestigate && <select
                   value={selectedIncident.status}
                   onChange={(e) => handleStatusChange(selectedIncident.incident_id, e.target.value)}
                   className="bg-[#0D1527] border border-[#1E293B] text-xs font-semibold text-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:border-blue-500"
                 >
+                  {selectedIncident.status === 'open' && <option value="open">Status: open</option>}
                   <option value="OPEN">Status: OPEN</option>
+                  <option value="NEEDS_REVIEW">Status: NEEDS_REVIEW</option>
                   <option value="INVESTIGATING">Status: INVESTIGATING</option>
                   <option value="CONTAINED">Status: CONTAINED</option>
                   <option value="RESOLVED">Status: RESOLVED</option>
                   <option value="FALSE_POSITIVE">Status: FALSE_POSITIVE</option>
-                </select>
+                </select>}
 
                 {onSelectIncidentForAssistant && (
                   <button
@@ -174,7 +235,43 @@ export default function IncidentManagement({ onSelectIncidentForAssistant }) {
                   {new Date(selectedIncident.first_detected_at).toLocaleTimeString()}
                 </p>
               </div>
+              <div className="bg-[#0D1527] border border-[#1E293B] rounded-xl p-3">
+                <span className="text-[10px] text-slate-500 uppercase font-semibold">Flow Count</span>
+                <p className="text-xs font-bold text-slate-200 mt-0.5">{selectedIncident.flow_count || 1}</p>
+              </div>
             </div>
+
+            {selectedIncident.evidence?.score_summary && (
+              <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4">
+                <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">Model score summary</h4>
+                <p className="text-xs text-slate-300">Score mean {Number(selectedIncident.evidence.score_summary.mean).toFixed(4)} · min {Number(selectedIncident.evidence.score_summary.min).toFixed(4)} · max {Number(selectedIncident.evidence.score_summary.max).toFixed(4)} · {selectedIncident.evidence.score_summary.count} scored flows</p>
+                {selectedIncident.evidence.review_text && <p className="text-xs text-amber-200 mt-2">{selectedIncident.evidence.review_text}</p>}
+                <pre className="mt-2 whitespace-pre-wrap text-[10px] text-slate-400">{JSON.stringify(selectedIncident.evidence.risk_breakdown || {}, null, 2)}</pre>
+              </div>
+            )}
+
+            {selectedIncident.threat_classification === 'RULE_CORRELATED_SUSPICIOUS_ACTIVITY' && (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 space-y-4">
+                <p className="text-xs font-semibold text-amber-200">Correlated suspicious activity; not a confirmed attack.</p>
+                <div>
+                  <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">Attack sequence</h4>
+                  <ol className="space-y-2 border-l border-blue-500/40 ml-2">
+                    {(selectedIncident.attack_sequence || []).map((stage, index) => (
+                      <li key={`${stage.indicator}-${index}`} className="pl-4 relative">
+                        <span className="absolute -left-[5px] top-1.5 w-2 h-2 rounded-full bg-blue-400" />
+                        <div className="text-xs text-slate-200 font-semibold">{index + 1}. {stage.indicator || stage.stage}</div>
+                        <div className="text-[10px] text-slate-500 font-mono">{new Date(stage.timestamp).toLocaleString()} · {stage.layer} · events: {(stage.event_ids || []).join(', ')}</div>
+                        <pre className="mt-1 whitespace-pre-wrap break-all text-[10px] text-slate-400">{JSON.stringify(stage.evidence || {}, null, 2)}</pre>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+                <div>
+                  <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-1">Risk component breakdown</h4>
+                  <pre className="whitespace-pre-wrap text-[10px] text-slate-400">{JSON.stringify(selectedIncident.evidence?.risk_breakdown || selectedIncident.risk_score_detail?.risk_breakdown || {}, null, 2)}</pre>
+                </div>
+              </div>
+            )}
 
             {/* MITRE ATT&CK Mapping */}
             <div>
@@ -202,7 +299,7 @@ export default function IncidentManagement({ onSelectIncidentForAssistant }) {
               </h4>
 
               {/* Add Note Form */}
-              <form onSubmit={handleAddNote} className="flex gap-2">
+              {canInvestigate && <form onSubmit={handleAddNote} className="flex gap-2">
                 <input
                   type="text"
                   placeholder="Add triage note, containment action, or forensic finding..."
@@ -216,7 +313,7 @@ export default function IncidentManagement({ onSelectIncidentForAssistant }) {
                 >
                   <Send className="w-3.5 h-3.5" /> Save Note
                 </button>
-              </form>
+              </form>}
 
               {/* Notes List */}
               <div className="space-y-2">
@@ -233,11 +330,32 @@ export default function IncidentManagement({ onSelectIncidentForAssistant }) {
             </div>
           </div>
         ) : (
-          <div className="h-full flex items-center justify-center text-slate-500">
-            Select an incident to view details
+          <div className="h-full flex flex-col items-center justify-center text-center text-slate-400 px-8">
+            <ShieldAlert className="w-8 h-8 text-slate-600 mb-3" />
+            <p className="text-sm font-semibold">No correlated incidents yet.</p>
+            <p className="text-xs mt-2">Load synthetic demo events from Data Management, then run correlation here. Matching rules produce alerts; an incident requires three indicator types across two layers.</p>
           </div>
         )}
       </div>
+      </div>
+
+      {correlationAlerts.length > 0 && (
+        <div className="rounded-2xl border border-[#1E293B] bg-[#10182E] p-5">
+          <h3 className="text-sm font-bold text-slate-200 mb-3">Rule indicator alerts</h3>
+          <div className="space-y-2">
+            {correlationAlerts.map((alert, index) => (
+              <div key={`${alert.name}-${index}`} className="rounded-xl border border-[#1E293B] bg-[#0D1527] p-3">
+                <div className="flex flex-wrap justify-between gap-2 text-xs">
+                  <span className="font-semibold text-blue-300">{alert.name.replaceAll('_', ' ')}</span>
+                  <span className="font-mono text-slate-500">{new Date(alert.timestamp).toLocaleString()} · {alert.layer}</span>
+                </div>
+                <p className="text-[11px] text-slate-300 mt-1">{alert.rule}</p>
+                <p className="text-[10px] text-slate-500 mt-1">Evidence event IDs: {(alert.event_ids || []).join(', ')}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

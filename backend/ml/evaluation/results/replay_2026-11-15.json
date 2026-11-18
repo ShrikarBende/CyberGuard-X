@@ -1,0 +1,235 @@
+{
+  "model_version": "cicids2017-medium-v1",
+  "score_name": "logit_margin",
+  "n_requested": 20000,
+  "n_replayed": 20000,
+  "seed": 42,
+  "ground_truth_vs_verdict_counts": [
+    {
+      "ground_truth": "BENIGN",
+      "verdict": "BENIGN",
+      "count": 16074
+    },
+    {
+      "ground_truth": "BENIGN",
+      "verdict": "UNKNOWN_CANDIDATE",
+      "count": 515
+    },
+    {
+      "ground_truth": "Bot",
+      "verdict": "KNOWN_THREAT",
+      "count": 9
+    },
+    {
+      "ground_truth": "Bot",
+      "verdict": "UNKNOWN_CANDIDATE",
+      "count": 7
+    },
+    {
+      "ground_truth": "BruteForce",
+      "verdict": "KNOWN_THREAT",
+      "count": 72
+    },
+    {
+      "ground_truth": "BruteForce",
+      "verdict": "UNKNOWN_CANDIDATE",
+      "count": 2
+    },
+    {
+      "ground_truth": "DosDDoS",
+      "verdict": "KNOWN_THREAT",
+      "count": 2439
+    },
+    {
+      "ground_truth": "DosDDoS",
+      "verdict": "UNKNOWN_CANDIDATE",
+      "count": 134
+    },
+    {
+      "ground_truth": "PortScan",
+      "verdict": "KNOWN_THREAT",
+      "count": 372
+    },
+    {
+      "ground_truth": "PortScan",
+      "verdict": "UNKNOWN_CANDIDATE",
+      "count": 359
+    },
+    {
+      "ground_truth": "WebAttack",
+      "verdict": "KNOWN_THREAT",
+      "count": 16
+    },
+    {
+      "ground_truth": "WebAttack",
+      "verdict": "UNKNOWN_CANDIDATE",
+      "count": 1
+    }
+  ],
+  "predicted_class_confusion_matrix": {
+    "rows": [
+      "BENIGN",
+      "Bot",
+      "BruteForce",
+      "DosDDoS",
+      "PortScan",
+      "WebAttack"
+    ],
+    "columns": [
+      "BENIGN",
+      "Bot",
+      "BruteForce",
+      "DosDDoS",
+      "PortScan",
+      "WebAttack",
+      "UNKNOWN_CANDIDATE"
+    ],
+    "counts": [
+      [
+        16074,
+        0,
+        0,
+        0,
+        0,
+        0,
+        515
+      ],
+      [
+        0,
+        9,
+        0,
+        0,
+        0,
+        0,
+        7
+      ],
+      [
+        0,
+        0,
+        72,
+        0,
+        0,
+        0,
+        2
+      ],
+      [
+        0,
+        0,
+        0,
+        2439,
+        0,
+        0,
+        134
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        372,
+        0,
+        359
+      ],
+      [
+        0,
+        0,
+        0,
+        0,
+        0,
+        16,
+        1
+      ]
+    ]
+  },
+  "benign_unknown_candidate_fraction": 0.031044668153595755,
+  "per_family_metrics": {
+    "BENIGN": {
+      "support": 16589,
+      "support_label": null,
+      "alerted_rate": 0.031044668153595755,
+      "alerted_rate_95_wilson": {
+        "lower": 0.02851204327480342,
+        "upper": 0.03379443156173567
+      },
+      "correct_class_recall": 0.9689553318464043,
+      "correct_class_recall_95_wilson": {
+        "lower": 0.9662055684382644,
+        "upper": 0.9714879567251966
+      }
+    },
+    "Bot": {
+      "support": 16,
+      "support_label": "low support",
+      "alerted_rate": 1.0,
+      "alerted_rate_95_wilson": {
+        "lower": 0.8063923194655637,
+        "upper": 1.0
+      },
+      "correct_class_recall": 0.5625,
+      "correct_class_recall_95_wilson": {
+        "lower": 0.331785563988119,
+        "upper": 0.7690134759450765
+      }
+    },
+    "BruteForce": {
+      "support": 74,
+      "support_label": "low support",
+      "alerted_rate": 1.0,
+      "alerted_rate_95_wilson": {
+        "lower": 0.950650220603614,
+        "upper": 1.0
+      },
+      "correct_class_recall": 0.972972972972973,
+      "correct_class_recall_95_wilson": {
+        "lower": 0.9067070748308751,
+        "upper": 0.9925566473617328
+      }
+    },
+    "DosDDoS": {
+      "support": 2573,
+      "support_label": null,
+      "alerted_rate": 1.0,
+      "alerted_rate_95_wilson": {
+        "lower": 0.9985092374202751,
+        "upper": 1.0
+      },
+      "correct_class_recall": 0.9479207151185387,
+      "correct_class_recall_95_wilson": {
+        "lower": 0.9386482981381614,
+        "upper": 0.9558576452173513
+      }
+    },
+    "PortScan": {
+      "support": 731,
+      "support_label": null,
+      "alerted_rate": 1.0,
+      "alerted_rate_95_wilson": {
+        "lower": 0.9947723978082851,
+        "upper": 1.0
+      },
+      "correct_class_recall": 0.5088919288645691,
+      "correct_class_recall_95_wilson": {
+        "lower": 0.472700053146991,
+        "upper": 0.5449908376485052
+      }
+    },
+    "WebAttack": {
+      "support": 17,
+      "support_label": "low support",
+      "alerted_rate": 1.0,
+      "alerted_rate_95_wilson": {
+        "lower": 0.8156818649911483,
+        "upper": 1.0
+      },
+      "correct_class_recall": 0.9411764705882353,
+      "correct_class_recall_95_wilson": {
+        "lower": 0.7301796936242461,
+        "upper": 0.9895395990150025
+      }
+    }
+  },
+  "warnings": [
+    "Replay summary is descriptive only; no thresholds or model settings were tuned from it.",
+    "No Timestamp column: stratified random split. Near-duplicate flows may leak between train and test; results are optimistic."
+  ]
+}

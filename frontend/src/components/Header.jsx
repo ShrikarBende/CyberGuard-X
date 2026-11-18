@@ -1,7 +1,7 @@
 import React from 'react';
 import { Shield, Bell, Cpu, Radio } from 'lucide-react';
 
-export default function Header({ pageTitle, wsConnected }) {
+export default function Header({ pageTitle, wsConnected, analyst, onLogout }) {
   return (
     <header className="h-16 bg-[#0D1527] border-b border-[#1E293B] px-8 flex items-center justify-between shrink-0">
       <div>
@@ -21,13 +21,14 @@ export default function Header({ pageTitle, wsConnected }) {
         {/* Analyst Profile */}
         <div className="flex items-center gap-2.5 pl-4 border-l border-[#1E293B]">
           <div className="w-8 h-8 rounded-full bg-blue-500/20 border border-blue-500/40 flex items-center justify-center text-blue-400 font-bold text-xs">
-            SA
+            {(analyst?.username || 'A').slice(0, 2).toUpperCase()}
           </div>
           <div className="hidden sm:block text-left">
-            <p className="text-xs font-semibold text-slate-200">Security Analyst</p>
-            <p className="text-[10px] text-slate-500 font-mono">SOC Tier-2</p>
+            <p className="text-xs font-semibold text-slate-200">{analyst?.username || 'Analyst'}</p>
+            <p className="text-[10px] text-slate-500 font-mono uppercase">{analyst?.role || 'viewer'}</p>
           </div>
         </div>
+        <button onClick={onLogout} className="text-[10px] font-semibold text-slate-400 hover:text-white">Log out</button>
       </div>
     </header>
   );

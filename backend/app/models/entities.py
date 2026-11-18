@@ -42,7 +42,7 @@ class User(Base):
     department = Column(String(64), nullable=True)
     role = Column(String(64), default="employee")
     privilege_level = Column(String(32), default="standard")
-    risk_score = Column(Float, default=0.0)
+    risk_score = Column(Float)
     baseline_activity = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)
     updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
@@ -62,7 +62,7 @@ class Device(Base):
     os = Column(String(64), nullable=True)
     device_type = Column(String(32), default="workstation")  # workstation, server, gateway
     agent_version = Column(String(32), default="2.0.0")
-    risk_score = Column(Float, default=0.0)
+    risk_score = Column(Float)
     is_isolated = Column(Boolean, default=False)
     last_seen = Column(DateTime(timezone=True), default=utc_now)
     created_at = Column(DateTime(timezone=True), default=utc_now)
@@ -93,6 +93,9 @@ class SecurityEvent(Base):
     bytes_transferred = Column(Integer, default=0)
     location = Column(String(128), nullable=True)
     raw_payload = Column(JSON, nullable=True)
+    dataset = Column(String(64), nullable=True)
+    scenario = Column(String(64), nullable=True, index=True)
+    dedup_hash = Column(String(64), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)
 
     # Relationships
@@ -107,12 +110,18 @@ class DetectionResult(Base):
 
     detection_id = Column(String(128), primary_key=True, index=True)
     event_id = Column(String(128), ForeignKey("security_events.event_id"), nullable=False, unique=True, index=True)
-    verdict = Column(String(32), nullable=False, default="BENIGN")  # BENIGN, KNOWN_THREAT, UNKNOWN_NOVEL_THREAT, SUSPICIOUS
+    verdict = Column(String(32), nullable=False)  # BENIGN, KNOWN_THREAT, UNKNOWN_CANDIDATE
     predicted_class = Column(String(64), nullable=True)  # e.g., Brute Force, Port Scan, Ransomware, Unknown
-    confidence = Column(Float, default=0.0)
-    anomaly_score = Column(Float, default=0.0)
-    open_set_distance = Column(Float, default=0.0)  # Distance in latent space
-    reconstruction_error = Column(Float, default=0.0)
+    # Legacy columns remain mapped for old-row compatibility; live scoring uses score.
+    confidence = Column(Float)
+    probability = Column(Float)
+    anomaly_score = Column(Float)
+    score = Column(Float)
+    attack_probability = Column(Float)
+    open_set_distance = Column(Float)  # Distance in latent space
+    reconstruction_error = Column(Float)
+    model_version = Column(String(128), nullable=True)
+    tau = Column(Float, nullable=True)
     layer = Column(String(32), nullable=False)  # user, endpoint, network
     details = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)
@@ -129,12 +138,14 @@ class Incident(Base):
     description = Column(Text, nullable=True)
     severity = Column(String(32), nullable=False, default="MEDIUM")  # LOW, MEDIUM, HIGH, CRITICAL
     status = Column(String(32), nullable=False, default="OPEN")  # OPEN, INVESTIGATING, CONTAINED, RESOLVED, FALSE_POSITIVE
-    threat_classification = Column(String(64), nullable=False, default="UNKNOWN_NOVEL_THREAT")
-    overall_risk_score = Column(Float, nullable=False, default=50.0)  # 0 to 100
+    threat_classification = Column(String(64), nullable=False)
+    overall_risk_score = Column(Float, nullable=False)
     user_id = Column(String(128), ForeignKey("users.user_id"), nullable=True)
     device_id = Column(String(128), ForeignKey("devices.device_id"), nullable=True)
     attack_sequence = Column(JSON, nullable=True)  # Kill chain stages list
     evidence = Column(JSON, nullable=True)
+    flow_count = Column(Integer, nullable=False, default=1)
+    group_key = Column(String(64), nullable=True, index=True)
     first_detected_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
     last_updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
 
@@ -168,13 +179,14 @@ class RiskScore(Base):
     incident_id = Column(String(128), ForeignKey("incidents.incident_id"), nullable=False, unique=True, index=True)
     score = Column(Float, nullable=False)  # 0 to 100
     category = Column(String(32), nullable=False)  # LOW, MEDIUM, HIGH, CRITICAL
-    user_risk_component = Column(Float, default=0.0)
-    endpoint_risk_component = Column(Float, default=0.0)
-    network_risk_component = Column(Float, default=0.0)
-    anomaly_factor = Column(Float, default=0.0)
-    correlation_multiplier = Column(Float, default=1.0)
+    user_risk_component = Column(Float)
+    endpoint_risk_component = Column(Float)
+    network_risk_component = Column(Float)
+    anomaly_factor = Column(Float)
+    correlation_multiplier = Column(Float)
     top_contributing_features = Column(JSON, nullable=True)  # SHAP feature contributions
     explanation_summary = Column(Text, nullable=True)
+    risk_breakdown = Column(JSON, nullable=True)
     created_at = Column(DateTime(timezone=True), default=utc_now)
 
     incident = relationship("Incident", back_populates="risk_score_detail")
@@ -202,9 +214,9 @@ class MitreTechnique(Base):
     tactic = Column(String(64), nullable=False)
     technique_id = Column(String(32), nullable=False, index=True)
     technique_name = Column(String(128), nullable=False)
-    confidence = Column(Float, default=0.85)
+    confidence = Column(String(32), nullable=False)
     evidence_predicate = Column(JSON, nullable=True)  # Concrete features that satisfied rule
-    is_verified = Column(Boolean, default=True)
+    is_verified = Column(Boolean, nullable=False)
 
     incident = relationship("Incident", back_populates="mitre_mappings")
 
@@ -219,6 +231,18 @@ class AnalystActivity(Base):
     target_entity = Column(String(64), nullable=True)
     target_id = Column(String(128), nullable=True)
     details = Column(JSON, nullable=True)
+
+
+class AnalystAccount(Base):
+    __tablename__ = "analyst_accounts"
+
+    account_id = Column(String(128), primary_key=True, index=True)
+    username = Column(String(64), nullable=False, unique=True, index=True)
+    password_hash = Column(String(256), nullable=False)
+    role = Column(String(16), nullable=False, default="viewer", index=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), default=utc_now)
+    updated_at = Column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
 
 Index("idx_security_event_cat_time", SecurityEvent.event_category, SecurityEvent.timestamp)

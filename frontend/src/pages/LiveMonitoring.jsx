@@ -102,6 +102,7 @@ export default function LiveMonitoring({ liveEvents }) {
                 <th className="pb-3">Network IP</th>
                 <th className="pb-3">Event Type</th>
                 <th className="pb-3">Layer</th>
+                <th className="pb-3">Dataset</th>
                 <th className="pb-3">Status</th>
               </tr>
             </thead>
@@ -116,11 +117,11 @@ export default function LiveMonitoring({ liveEvents }) {
                       {new Date(ev.timestamp).toLocaleTimeString()}
                     </td>
                     <td className="py-2.5 font-medium text-slate-200">
-                      {ev.user_id || 'SYSTEM'}
+                      {ev.user_id || '—'}
                     </td>
-                    <td className="py-2.5 text-slate-300">{ev.device_id || 'host_gw'}</td>
+                    <td className="py-2.5 text-slate-300">{ev.device_id || '—'}</td>
                     <td className="py-2.5 text-slate-400">
-                      {ev.source_ip || '10.0.1.1'} → {ev.destination_ip || '10.0.0.1'}
+                      {ev.source_ip || '—'} → {ev.destination_ip || '—'}
                     </td>
                     <td className="py-2.5 font-sans font-medium text-slate-200">
                       {ev.event_type}
@@ -130,6 +131,7 @@ export default function LiveMonitoring({ liveEvents }) {
                         {cat}
                       </span>
                     </td>
+                    <td className="py-2.5 text-slate-400">{ev.dataset || '—'}</td>
                     <td className="py-2.5">
                       <span
                         className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${

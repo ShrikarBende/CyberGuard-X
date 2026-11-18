@@ -1,40 +1,23 @@
 """
 Model Registry: Tracks paths and operational readiness of ML models.
 """
-import os
 from pathlib import Path
 from typing import Dict, Any
+from app.core.config import settings
 
-SAVED_MODELS_DIR = Path(__file__).resolve().parent.parent.parent / "saved_models"
-SAVED_MODELS_DIR.mkdir(parents=True, exist_ok=True)
+SAVED_MODELS_DIR = Path(settings.SAVED_MODELS_DIR).resolve()
+MODEL_BUNDLE_PATH = Path(settings.MODEL_BUNDLE_PATH)
 
 
 def get_models_status() -> Dict[str, Any]:
-    """Inspect availability of trained model weights."""
+    """Inspect availability of the live real-CICIDS2017 model bundle."""
+    bundle_path = MODEL_BUNDLE_PATH
     models = {
-        "isolation_forest": {
-            "name": "Isolation Forest (Anomaly Detection)",
-            "file": "isolation_forest.pkl",
-            "is_trained": (SAVED_MODELS_DIR / "isolation_forest.pkl").exists(),
-            "target": "Unsupervised Outlier Scoring"
-        },
-        "xgboost_classifier": {
-            "name": "XGBoost Threat Classifier",
-            "file": "xgboost_threats.json",
-            "is_trained": (SAVED_MODELS_DIR / "xgboost_threats.json").exists(),
-            "target": "Known Threat Classification"
-        },
-        "denoising_autoencoder": {
-            "name": "PyTorch Denoising Autoencoder",
-            "file": "autoencoder.pt",
-            "is_trained": (SAVED_MODELS_DIR / "autoencoder.pt").exists(),
-            "target": "Reconstruction Error Residuals"
-        },
-        "open_set_centroids": {
-            "name": "Open-Set Class Centroids & Covariance",
-            "file": "open_set_centroids.pkl",
-            "is_trained": (SAVED_MODELS_DIR / "open_set_centroids.pkl").exists(),
-            "target": "Mahalanobis Latent Space Distance"
+        "cicids2017_lightgbm": {
+            "name": "CICIDS2017 LightGBM Flow Classifier",
+            "file": str(bundle_path),
+            "is_trained": bundle_path.is_file(),
+            "target": "Known network flow classes (CICIDS2017)",
         }
     }
     all_trained = all(m["is_trained"] for m in models.values())
@@ -42,6 +25,7 @@ def get_models_status() -> Dict[str, Any]:
         "models": models,
         "all_models_trained": all_trained,
         "saved_models_dir": str(SAVED_MODELS_DIR),
-        "status": "ready" if all_trained else "partially_trained"
+        "model_bundle_path": str(bundle_path),
+        "status": "ready" if all_trained else "model_bundle_missing",
     }
 

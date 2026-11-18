@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 
 # Adjust path so imports resolve
@@ -37,6 +38,7 @@ from ml.preprocessing.cicids_pipeline import (
     deduplicate_flows,
     fit_log1p_columns,
     apply_log1p_columns,
+    _hash_sample_mask,
 )
 from ml.evaluation.open_set_pipeline import threshold_from_known_validation, known_fold_frames
 
@@ -49,8 +51,54 @@ def pipeline():
     return build_full_pipeline(force_reload=False, seed=42)
 
 
+@pytest.fixture(scope="session")
+def small_leakage_pipeline():
+    """TEST-ONLY fixed fixture (3,600 rows) for memory-heavy leakage checks."""
+    rng = np.random.default_rng(4201)
+    labels = ["BENIGN"] + list(ATTACK_FAMILIES)
+
+    def make_split(rows_per_class: int, split_offset: int) -> pd.DataFrame:
+        parts = []
+        for class_index, label in enumerate(labels):
+            values = rng.normal(
+                loc=class_index + split_offset * 0.1,
+                scale=1.0,
+                size=(rows_per_class, 6),
+            ).astype(np.float32)
+            part = pd.DataFrame(values, columns=[f"f{i}" for i in range(values.shape[1])])
+            part[LABEL_COL] = label
+            part["_source_file"] = "test_fixture.csv"
+            parts.append(part)
+        return pd.concat(parts, ignore_index=True)
+
+    train_df = make_split(400, 0)
+    val_df = make_split(100, 1)
+    test_df = make_split(100, 2)
+    matrices = get_feature_matrices(train_df, val_df, test_df, log1p=False)
+    (
+        X_train, y_train, X_val, y_val, X_test, y_test,
+        feat_cols, scaler, le, class_names,
+    ) = matrices
+    return {
+        "train_df": train_df,
+        "val_df": val_df,
+        "test_df": test_df,
+        "X_train": X_train,
+        "y_train": y_train,
+        "X_val": X_val,
+        "y_val": y_val,
+        "X_test": X_test,
+        "y_test": y_test,
+        "feat_cols": feat_cols,
+        "scaler": scaler,
+        "le": le,
+        "class_names": class_names,
+    }
+
+
 # ─── Test 1: Split ratios ─────────────────────────────────────────────────────
 
+@pytest.mark.requires_data(reason="Loads and splits all eight real CICIDS2017 CSV files.")
 def test_split_ratios(pipeline):
     """
     Total rows must be distributed roughly 70/10/20.
@@ -80,6 +128,7 @@ def test_split_ratios(pipeline):
 
 # ─── Test 2: No NaN / Inf in feature matrices ─────────────────────────────────
 
+@pytest.mark.requires_data(reason="Loads feature matrices from the real CICIDS2017 dataset.")
 def test_no_nan_inf_in_matrices(pipeline):
     """Feature matrices must be finite after pipeline."""
     for split, X in [
@@ -93,14 +142,21 @@ def test_no_nan_inf_in_matrices(pipeline):
 
 # ─── Test 3: Scaler fitted on train only (mean/std consistency) ───────────────
 
+@pytest.mark.requires_data(reason="Loads the real CICIDS2017 training split.")
 def test_scaler_fitted_on_train_only(pipeline):
     """
     After scaling, train features should be approximately zero-mean unit-variance.
     Val and test should NOT necessarily have this property (different distribution ok).
     """
     X_train = pipeline["X_train"]
-    col_means = np.abs(X_train.mean(axis=0))
-    col_stds  = X_train.std(axis=0)
+    train_mean = X_train.mean(axis=0, dtype=np.float64)
+    col_means = np.abs(train_mean)
+    squared_deviations = np.zeros(X_train.shape[1], dtype=np.float64)
+    for start in range(0, len(X_train), 50_000):
+        block = X_train[start:start + 50_000].astype(np.float64)
+        block -= train_mean
+        squared_deviations += np.einsum("ij,ij->j", block, block)
+    col_stds = np.sqrt(squared_deviations / len(X_train))
 
     # Allow per-feature mean to be within ±0.1 of 0 (numerical tolerance)
     assert col_means.max() < 0.5, (
@@ -112,6 +168,7 @@ def test_scaler_fitted_on_train_only(pipeline):
 
 # ─── Test 4: Rare labels excluded ─────────────────────────────────────────────
 
+@pytest.mark.requires_data(reason="Checks mapped labels from the real CICIDS2017 dataset.")
 def test_rare_labels_excluded(pipeline):
     """Heartbleed and Infiltration must NOT appear anywhere in the pipeline output."""
     all_labels = set(pipeline["class_names"])
@@ -124,6 +181,7 @@ def test_rare_labels_excluded(pipeline):
 
 # ─── Test 5: All class names are known families ───────────────────────────────
 
+@pytest.mark.requires_data(reason="Checks label encoding from the real CICIDS2017 dataset.")
 def test_class_names_are_known_families(pipeline):
     """The label encoder must only contain the 6 known families."""
     expected = set(["BENIGN"] + ATTACK_FAMILIES)
@@ -135,15 +193,15 @@ def test_class_names_are_known_families(pipeline):
 
 # ─── Test 6: Threshold rule (no leakage from held-out family into val) ────────
 
-def test_threshold_rule_no_leakage(pipeline):
+def test_threshold_rule_no_leakage(small_leakage_pipeline):
     """
     For each held-out attack family F, verify that:
       - val_df contains NO rows with label == F
       - train_df contains NO rows with label == F
     This replicates the assertion inside open_set_pipeline but at the DataFrame level.
     """
-    train_df = pipeline["train_df"]
-    val_df   = pipeline["val_df"]
+    train_df = small_leakage_pipeline["train_df"]
+    val_df   = small_leakage_pipeline["val_df"]
 
     for family in ATTACK_FAMILIES:
         train_fold, val_fold = known_fold_frames(train_df, val_df, family)
@@ -156,18 +214,33 @@ def test_threshold_rejects_unknown_validation_rows():
         threshold_from_known_validation(np.array([0.1, 0.9]), np.array([True, False]))
 
 
-def test_leave_one_family_out_rows_excluded(pipeline):
+def test_leave_one_family_out_rows_excluded(small_leakage_pipeline):
     for family in ATTACK_FAMILIES:
-        train, validation = known_fold_frames(pipeline["train_df"], pipeline["val_df"], family)
+        train, validation = known_fold_frames(
+            small_leakage_pipeline["train_df"], small_leakage_pipeline["val_df"], family
+        )
         assert (train[LABEL_COL] == family).sum() == 0
         assert (validation[LABEL_COL] == family).sum() == 0
 
 
-def test_scaler_statistics_match_train_only(pipeline):
-    raw = pipeline["train_df"][pipeline["feat_cols"]].to_numpy(dtype=np.float32)
-    scaler = pipeline["scaler"]
-    np.testing.assert_allclose(scaler.mean_, raw.mean(axis=0), rtol=1e-5, atol=1e-5)
-    expected_scale = raw.std(axis=0)
+def test_scaler_statistics_match_train_only(small_leakage_pipeline):
+    train_df = small_leakage_pipeline["train_df"]
+    feat_cols = small_leakage_pipeline["feat_cols"]
+    row_count = len(train_df)
+    raw_sum = np.zeros(len(feat_cols), dtype=np.float64)
+    for start in range(0, row_count, 50_000):
+        block = train_df[feat_cols].iloc[start:start + 50_000].to_numpy(dtype=np.float32)
+        raw_sum += block.sum(axis=0, dtype=np.float64)
+    raw_mean = raw_sum / row_count
+    squared_deviations = np.zeros(len(feat_cols), dtype=np.float64)
+    for start in range(0, row_count, 50_000):
+        block = train_df[feat_cols].iloc[start:start + 50_000].to_numpy(dtype=np.float32)
+        block = block.astype(np.float64)
+        block -= raw_mean
+        squared_deviations += np.einsum("ij,ij->j", block, block)
+    scaler = small_leakage_pipeline["scaler"]
+    np.testing.assert_allclose(scaler.mean_, raw_mean, rtol=1e-5, atol=1e-5)
+    expected_scale = np.sqrt(squared_deviations / row_count)
     expected_scale[expected_scale == 0] = 1.0
     np.testing.assert_allclose(scaler.scale_, expected_scale, rtol=1e-5, atol=1e-5)
 
@@ -180,6 +253,31 @@ def test_dedup_drops_exact_and_conflicting_rows():
     assert len(cleaned) == 1
 
 
+def test_light_hash_sample_before_dedup_matches_sample_after_full_dedup():
+    candidates = pd.DataFrame({"f": np.arange(10_000)})
+    candidate_mask = _hash_sample_mask(candidates, 0.15)
+    selected_values = candidates.loc[candidate_mask, "f"].head(2).tolist()
+    rejected_value = int(candidates.loc[~candidate_mask, "f"].iloc[0])
+
+    first, conflicting = selected_values
+    frame = pd.DataFrame({
+        "f": [first, first, conflicting, conflicting, conflicting, rejected_value],
+        "Label": ["A", "A", "A", "B", "B", "A"],
+        "_source_file": ["x", "y", "x", "y", "y", "z"],
+    })
+    full_dedup, _, _ = deduplicate_flows(frame)
+    after_dedup_mask = _hash_sample_mask(full_dedup, 0.15)
+    dedup_then_sample = full_dedup.iloc[np.flatnonzero(after_dedup_mask)].reset_index(drop=True)
+
+    before_dedup_mask = _hash_sample_mask(frame, 0.15)
+    sampled = frame.iloc[np.flatnonzero(before_dedup_mask)]
+    sample_then_dedup, _, _ = deduplicate_flows(sampled)
+    pd.testing.assert_frame_equal(
+        dedup_then_sample.reset_index(drop=True),
+        sample_then_dedup.reset_index(drop=True),
+    )
+
+
 def test_log1p_column_selection_uses_train_statistics():
     train = np.array([[0.0, -1.0, 4.0], [3.0, 2.0, 8.0]], dtype=np.float32)
     columns = fit_log1p_columns(train)
@@ -190,6 +288,7 @@ def test_log1p_column_selection_uses_train_statistics():
 
 # ─── Test 7: Label encoding: test labels are subset of train labels ───────────
 
+@pytest.mark.requires_data(reason="Checks encoded labels from the real CICIDS2017 test split.")
 def test_label_encoding_no_unseen_classes(pipeline):
     """
     All integer labels in y_test must be in the range [0, n_classes-1].
@@ -204,6 +303,7 @@ def test_label_encoding_no_unseen_classes(pipeline):
 
 # ─── Test 8: Data hash is a non-empty string ─────────────────────────────────
 
+@pytest.mark.requires_data(reason="Builds the pipeline from the real CICIDS2017 dataset.")
 def test_data_hash_present(pipeline):
     h = pipeline["data_hash"]
     assert isinstance(h, str) and len(h) > 0, "data_hash must be a non-empty string"

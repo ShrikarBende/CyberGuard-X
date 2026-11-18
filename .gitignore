@@ -13,10 +13,27 @@ venv/
 # Local databases and generated datasets
 *.db
 backend/datasets/
-backend/ml/evaluation/results/
+backend/uploads/
+backend/saved_models/
+backend/app/rag/index/
+backend/saved_models_synthetic_old/*
+!backend/saved_models_synthetic_old/README.md
+*.sqlite
+*.parquet
+backend/ml/evaluation/results/*
+!backend/ml/evaluation/results/
+!backend/ml/evaluation/results/*.json
+backend/ml/evaluation/results/partial_*.json
+backend/ml/evaluation/results/*_progress*.json
+backend/ml/evaluation/results/*_capture*.json
+backend/ml/evaluation/results/scores/
+backend/ml/evaluation/results/archive/
+backend/saved_models_synthetic_old/
+.medium_seed43.log
 
 # Frontend build output and dependencies
 frontend/node_modules/
+node_modules/
 frontend/dist/
 
 # OS/editor files

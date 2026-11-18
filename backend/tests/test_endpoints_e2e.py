@@ -1,98 +1,185 @@
-"""
-End-to-End API Test Suite for Enterprise CyberGuard X.
-"""
+"""API authorization smoke tests through httpx ASGITransport (Windows safe)."""
+from __future__ import annotations
+
+import hashlib
+import hmac
+import json
+import re
 import sys
 from pathlib import Path
-import pytest
-from fastapi.testclient import TestClient
 
-backend_dir = Path(__file__).resolve().parent.parent
+import httpx
+import pytest
+import pytest_asyncio
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+backend_dir = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(backend_dir))
 
 from app.main import app
+from app.auth import create_access_token, hash_password
+from app.auth import _b64url, _unb64url
+from app.core.config import settings
+from app.database.session import Base, get_db
+from app.models.entities import AnalystAccount
 
-pytestmark = pytest.mark.skipif(
-    sys.platform == "win32",
-    reason="Windows TestClient requests hang during asyncio self-pipe initialization in this environment; verify API routes against a running server instead.",
+pytestmark = pytest.mark.requires_linux(
+    reason="Windows Python 3.13 hangs initializing its asyncio socketpair; run this ASGITransport suite on Linux."
 )
 
-client = TestClient(app)
+
+@pytest_asyncio.fixture
+async def api_clients(tmp_path):
+    test_engine = create_engine(
+        f"sqlite:///{tmp_path / 'api.db'}", connect_args={"check_same_thread": False}
+    )
+    Base.metadata.create_all(test_engine)
+    TestSession = sessionmaker(autoflush=False, bind=test_engine)
+    tokens = {}
+    with TestSession() as db:
+        for username, role in (("test-admin", "admin"), ("test-analyst", "analyst"), ("test-viewer", "viewer")):
+            account = AnalystAccount(
+                account_id=f"account-{username}", username=username,
+                password_hash=hash_password("api-test-password-123"), role=role, is_active=True,
+            )
+            db.add(account)
+            db.flush()
+            tokens[role], _ = create_access_token(account)
+        db.commit()
+
+    def override_get_db():
+        with TestSession() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = override_get_db
+    transport = httpx.ASGITransport(app=app)
+    try:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://testserver",
+            headers={"Authorization": f"Bearer {tokens['admin']}"},
+        ) as admin_client:
+            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as anonymous_client:
+                yield admin_client, anonymous_client, tokens
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+        test_engine.dispose()
 
 
-def test_health_check():
-    res = client.get("/api/health")
-    assert res.status_code == 200
-    assert res.json()["status"] == "healthy"
+def _http_routes():
+    for route in app.routes:
+        if not hasattr(route, "methods") or not hasattr(route, "path"):
+            continue
+        for method in (route.methods or set()) & {"GET", "POST", "PUT", "PATCH", "DELETE"}:
+            yield method, route.path
 
 
-def test_dashboard_stats():
-    res = client.get("/api/dashboard/stats")
-    assert res.status_code == 200
-    data = res.json()
-    assert "total_events" in data
-    assert "threat_distribution" in data
-    assert "risk_trend" in data
-    assert "layer_detection_stats" in data
+def _concrete_path(path: str) -> str:
+    return re.sub(r"\{[^}/]+\}", "test-id", path)
 
 
-def test_get_events():
-    res = client.get("/api/events?limit=10")
-    assert res.status_code == 200
-    events = res.json()
-    assert isinstance(events, list)
-    assert len(events) > 0
+@pytest.mark.asyncio
+async def test_health_is_public_and_every_other_http_route_requires_a_token(api_clients):
+    _, anonymous, _ = api_clients
+    assert (await anonymous.get("/api/health")).status_code == 200
+    seen = set()
+    for method, route_path in _http_routes():
+        if (method, route_path) == ("POST", "/api/auth/login"):
+            continue
+        if (method, route_path) == ("GET", "/api/health"):
+            continue
+        key = (method, route_path)
+        if key in seen:
+            continue
+        seen.add(key)
+        response = await anonymous.request(method, _concrete_path(route_path))
+        assert response.status_code == 401, f"{method} {route_path} returned {response.status_code}"
 
 
-def test_get_incidents_and_detail():
-    res = client.get("/api/incidents")
-    assert res.status_code == 200
-    incidents = res.json()
-    assert len(incidents) > 0
-
-    inc_id = incidents[0]["incident_id"]
-    detail_res = client.get(f"/api/incidents/{inc_id}")
-    assert detail_res.status_code == 200
-    assert detail_res.json()["incident_id"] == inc_id
-
-
-def test_threat_intelligence():
-    res = client.get("/api/threats")
-    assert res.status_code == 200
-    data = res.json()
-    assert "summary" in data
-    assert "known_categories" in data
-    assert "unknown_novel_threats" in data
-
-
-def test_explainability():
-    res = client.get("/api/incidents")
-    inc_id = res.json()[0]["incident_id"]
-
-    exp_res = client.get(f"/api/explainability/{inc_id}")
-    assert exp_res.status_code == 200
-    data = exp_res.json()
-    assert "shap_feature_importance" in data
-    assert "layer_breakdown" in data
-
-
-def test_rag_chat():
-    payload = {
-        "query": "What attack technique is involved and what are the containment steps?"
+@pytest.mark.asyncio
+async def test_viewer_gets_forbidden_for_every_write_route(api_clients):
+    _, anonymous, tokens = api_clients
+    cases = {
+        ("POST", "/api/auth/users"): {"json": {"username": "other", "password": "new-password-123", "role": "viewer"}},
+        ("POST", "/api/demo/load"): {},
+        ("POST", "/api/demo/replay"): {"json": {"n": 1, "speed": 0}},
+        ("POST", "/api/demo/replay/stop"): {},
+        ("POST", "/api/correlation/run"): {},
+        ("PATCH", "/api/incidents/{incident_id}/status"): {"params": {"status": "INVESTIGATING"}},
+        ("POST", "/api/incidents/{incident_id}/notes"): {"json": {"content": "test note"}},
+        ("POST", "/api/rag/chat"): {"json": {"query": "test"}},
+        ("POST", "/api/models/retrain"): {"json": {"profile": "light"}},
+        ("POST", "/api/upload"): {"files": {"file": ("empty.json", "[]", "application/json")}},
+        ("POST", "/api/analyze"): {"json": {"event_type": "test", "event_category": "auth"}},
+        ("POST", "/api/evaluation/run"): {},
     }
-    res = client.post("/api/rag/chat", json=payload)
-    assert res.status_code == 200
-    data = res.json()
-    assert "answer" in data
-    assert "citations" in data
-    assert len(data["citations"]) > 0
+    discovered_writes = {
+        (method, path) for method, path in _http_routes()
+        if method in {"POST", "PUT", "PATCH", "DELETE"}
+        and (method, path) != ("POST", "/api/auth/login")
+    }
+    assert set(cases) == discovered_writes
+    for (method, route_path), kwargs in cases.items():
+        response = await anonymous.request(
+            method, _concrete_path(route_path),
+            headers={"Authorization": f"Bearer {tokens['viewer']}"}, **kwargs,
+        )
+        assert response.status_code == 403, f"{method} {route_path} returned {response.status_code}"
 
 
-def test_models_status():
-    res = client.get("/api/models/status")
-    assert res.status_code == 200
-    data = res.json()
-    assert "models" in data
-    assert data["models"]["isolation_forest"]["is_trained"] is True
-    assert data["models"]["xgboost_classifier"]["is_trained"] is True
-    assert data["models"]["denoising_autoencoder"]["is_trained"] is True
+@pytest.mark.asyncio
+async def test_analyst_is_forbidden_from_admin_operations(api_clients):
+    _, anonymous, tokens = api_clients
+    admin_routes = [
+        ("POST", "/api/auth/users", {"json": {"username": "other", "password": "new-password-123", "role": "viewer"}}),
+        ("POST", "/api/demo/load", {}),
+        ("POST", "/api/demo/replay", {"json": {"n": 1, "speed": 0}}),
+        ("POST", "/api/demo/replay/stop", {}),
+        ("POST", "/api/correlation/run", {}),
+        ("POST", "/api/models/retrain", {"json": {"profile": "light"}}),
+        ("POST", "/api/evaluation/run", {}),
+    ]
+    for method, path, kwargs in admin_routes:
+        response = await anonymous.request(
+            method, path,
+            headers={"Authorization": f"Bearer {tokens['analyst']}"}, **kwargs,
+        )
+        assert response.status_code == 403, f"{method} {path} returned {response.status_code}"
 
+
+@pytest.mark.asyncio
+async def test_tampered_and_expired_tokens_are_unauthorized(api_clients):
+    _, anonymous, tokens = api_clients
+    parts = tokens["analyst"].split(".")
+    parts[2] = ("A" if parts[2][0] != "A" else "B") + parts[2][1:]
+    valid_parts = tokens["analyst"].split(".")
+    claims = json.loads(_unb64url(valid_parts[1]))
+    claims["exp"] = 1
+    signing_input = f"{valid_parts[0]}.{_b64url(json.dumps(claims, separators=(',', ':')).encode())}"
+    signature = hmac.new(settings.SECRET_KEY.encode(), signing_input.encode("ascii"), hashlib.sha256).digest()
+    expired_token = f"{signing_input}.{_b64url(signature)}"
+    for token in (".".join(parts), expired_token):
+        response = await anonymous.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+        assert response.status_code == 401
+        assert token not in response.text
+
+
+@pytest.mark.asyncio
+async def test_validation_errors_do_not_echo_password_values(api_clients):
+    _, anonymous, _ = api_clients
+    password = "x" * 160
+    response = await anonymous.post(
+        "/api/auth/login", json={"username": "test-viewer", "password": password}
+    )
+    assert response.status_code == 422
+    assert password not in response.text
+
+
+@pytest.mark.asyncio
+async def test_failed_login_is_audited_and_rate_limited(api_clients):
+    _, anonymous, _ = api_clients
+    for attempt in range(5):
+        response = await anonymous.post("/api/auth/login", json={"username": "missing", "password": "bad"})
+        assert response.status_code == 401, f"failed login {attempt + 1} returned {response.status_code}"
+    limited = await anonymous.post("/api/auth/login", json={"username": "missing", "password": "bad"})
+    assert limited.status_code == 429

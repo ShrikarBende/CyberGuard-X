@@ -44,10 +44,13 @@ import torch.nn as nn
 from scipy.spatial.distance import cdist
 from sklearn.ensemble import IsolationForest
 from sklearn.metrics import roc_auc_score
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from ml.preprocessing.cicids_pipeline import apply_log1p_columns, fit_log1p_columns
+from ml.evaluation.provenance import working_tree_is_dirty
+from ml.evaluation.output_paths import get_results_dir
 
-RESULTS_DIR = Path(__file__).resolve().parent / "results"
+RESULTS_DIR = get_results_dir()
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 SEED = 42
@@ -461,29 +464,32 @@ def evaluate_one_family(
         f"LEAKAGE: held-out family {held_out_family} present in val during threshold selection"
 
     # ── (b) Isolation Forest ───────────────────────────────────────────────
-    if_settings = pipeline.get("isolation_forest", {})
-    iforest = IsolationForest(
-        n_estimators=if_settings.get("n_estimators", 200),
-        max_samples=if_settings.get("max_samples", "auto"),
-        contamination=0.05, random_state=seed, n_jobs=if_settings.get("n_jobs", -1),
-    )
-    benign_indices = np.flatnonzero(tr[label_col].to_numpy() == "BENIGN")
-    if not len(benign_indices):
-        raise ValueError("No BENIGN training rows available for anomaly detector fitting")
-    if_sample_indices = benign_indices
-    if len(if_sample_indices) > 100_000:
-        if_sample_indices = np.random.default_rng(seed).choice(if_sample_indices, 100_000, replace=False)
-    iforest.fit(X_tr[if_sample_indices])
-    # decision_function: lower = more anomalous; negate to get anomaly score
-    score_if_vl  = -iforest.decision_function(X_vl)
-    score_if_all = -iforest.decision_function(X_test_all)
-    thresh_if    = threshold_from_known_validation(score_if_vl, np.ones(len(score_if_vl), dtype=bool))
+    if "isolation_forest" in pipeline.get("detectors", ["isolation_forest"]):
+        if_settings = pipeline.get("isolation_forest", {})
+        iforest = IsolationForest(
+            n_estimators=if_settings.get("n_estimators", 200),
+            max_samples=if_settings.get("max_samples", "auto"),
+            contamination=0.05, random_state=seed, n_jobs=if_settings.get("n_jobs", -1),
+        )
+        benign_indices = np.flatnonzero(tr[label_col].to_numpy() == "BENIGN")
+        if not len(benign_indices):
+            raise ValueError("No BENIGN training rows available for anomaly detector fitting")
+        if_sample_indices = benign_indices
+        if len(if_sample_indices) > 100_000:
+            if_sample_indices = np.random.default_rng(seed).choice(if_sample_indices, 100_000, replace=False)
+        iforest.fit(X_tr[if_sample_indices])
+        # decision_function: lower = more anomalous; negate to get anomaly score
+        score_if_vl  = -iforest.decision_function(X_vl)
+        score_if_all = -iforest.decision_function(X_test_all)
+        thresh_if    = threshold_from_known_validation(score_if_vl, np.ones(len(score_if_vl), dtype=bool))
 
     enabled = pipeline.get("detectors", ["confidence", "isolation_forest", "autoencoder", "mahalanobis",
                                           "mahalanobis_mlp", "confidence_mahalanobis_rank_average"])
     detector_validation = {"confidence": score_conf_vl}
     detector_test = {"confidence": score_conf_all}
     detector_threshold = {"confidence": thresh_conf}
+    detector_flags = {}
+    union_thresholds = None
     if "isolation_forest" in enabled:
         detector_validation["isolation_forest"] = score_if_vl
         detector_test["isolation_forest"] = score_if_all
@@ -540,11 +546,58 @@ def evaluate_one_family(
         detector_threshold["confidence_mahalanobis_rank_average"] = threshold_from_known_validation(
             score_rank_vl, np.ones(len(score_rank_vl), dtype=bool)
         )
+    if "union_conf_mahalanobis" in enabled:
+        confidence_threshold = threshold_from_known_validation(
+            detector_validation["confidence"], np.ones(len(vl_clean), dtype=bool), percentile=97.5
+        )
+        mahalanobis_threshold = threshold_from_known_validation(
+            detector_validation["mahalanobis"], np.ones(len(vl_clean), dtype=bool), percentile=97.5
+        )
+        confidence_rank_vl = rank_average_scores(
+            [detector_validation["confidence"]], [detector_validation["confidence"]]
+        )
+        confidence_rank_all = rank_average_scores(
+            [detector_validation["confidence"]], [detector_test["confidence"]]
+        )
+        mahalanobis_rank_vl = rank_average_scores(
+            [detector_validation["mahalanobis"]], [detector_validation["mahalanobis"]]
+        )
+        mahalanobis_rank_all = rank_average_scores(
+            [detector_validation["mahalanobis"]], [detector_test["mahalanobis"]]
+        )
+        detector_validation["union_conf_mahalanobis"] = np.maximum(
+            confidence_rank_vl, mahalanobis_rank_vl
+        )
+        detector_test["union_conf_mahalanobis"] = np.maximum(
+            confidence_rank_all, mahalanobis_rank_all
+        )
+        detector_threshold["union_conf_mahalanobis"] = 0.5  # used only for score-bin AUROC bootstrap
+        union_thresholds = {
+            "confidence_score_97_5th_percentile": confidence_threshold,
+            "mahalanobis_score_97_5th_percentile": mahalanobis_threshold,
+        }
+        detector_flags["union_conf_mahalanobis"] = (
+            (detector_test["confidence"] > confidence_threshold)
+            | (detector_test["mahalanobis"] > mahalanobis_threshold)
+        )
 
     detectors = {name: (detector_test[name], detector_threshold[name]) for name in enabled}
 
     detector_results = {}
     for name, (scores, thresh) in detectors.items():
+        if pipeline.get("save_detector_scores", False):
+            score_dir = Path(pipeline.get("score_output_dir", RESULTS_DIR / "scores"))
+            score_dir.mkdir(parents=True, exist_ok=True)
+            score_path = score_dir / f"{pipeline.get('run_id', 'open_set')}_{held_out_family}.npz"
+            existing = {}
+            if score_path.exists():
+                with np.load(score_path, allow_pickle=False) as saved:
+                    existing = {key: saved[key] for key in saved.files}
+            existing[f"{name}_scores"] = np.asarray(scores, dtype=np.float64)
+            existing["labels"] = np.asarray(test_labels, dtype=np.int8)
+            existing["known_labels"] = np.asarray(test_known[label_col].astype(str).to_numpy(), dtype="U")
+            existing["unknown_labels"] = np.asarray(test_unknown[label_col].astype(str).to_numpy(), dtype="U")
+            np.savez_compressed(score_path, **existing)
         # Guard against constant scores (edge case)
         unique_scores = np.unique(scores)
         if len(unique_scores) < 2:
@@ -552,19 +605,31 @@ def evaluate_one_family(
         else:
             auroc = float(roc_auc_score(test_labels, scores))
         fpr95 = fpr_at_tpr(scores, test_labels, tpr_target=0.95)
-        unk_rej, knw_rej = rejection_metrics(scores, test_labels, thresh)
+        if name == "union_conf_mahalanobis":
+            flags = detector_flags[name]
+            unk_rej = float(flags[test_labels == 1].mean())
+            knw_rej = float(flags[test_labels == 0].mean())
+        else:
+            unk_rej, knw_rej = rejection_metrics(scores, test_labels, thresh)
         bootstrap = bootstrap_metric_intervals(
             scores, test_labels, thresh,
             seed + zlib.crc32(f"{held_out_family}:{name}".encode("utf-8")) % (2**31),
             n_resamples=pipeline.get("bootstrap_resamples", 1000),
         )
+        if name == "union_conf_mahalanobis":
+            rejection_bootstrap = bootstrap_metric_intervals(
+                flags.astype(np.float32), test_labels, 0.5,
+                seed + zlib.crc32(f"{held_out_family}:{name}:union-flags".encode("utf-8")) % (2**31),
+                n_resamples=pipeline.get("bootstrap_resamples", 1000),
+            )
+            bootstrap["unknown_rejection_rate_95CI"] = rejection_bootstrap["unknown_rejection_rate_95CI"]
         detector_results[name] = {
             "AUROC":                   round(auroc, 6),
             "FPR_at_95pct_TPR":       round(fpr95, 6),
             "unknown_rejection_rate": round(unk_rej, 6),
             "known_false_reject_rate": round(knw_rej, 6),
-            "threshold_value":         round(thresh, 6),
-            "threshold_percentile":    THRESHOLD_PERCENTILE,
+            "threshold_value": union_thresholds if name == "union_conf_mahalanobis" else round(thresh, 6),
+            "threshold_percentile": 97.5 if name == "union_conf_mahalanobis" else THRESHOLD_PERCENTILE,
             **bootstrap,
         }
         elapsed = time.perf_counter() - progress_state["started"] if progress_state else time.perf_counter() - family_started
@@ -643,6 +708,7 @@ def run_open_set_evaluation(pipeline: dict) -> dict:
             "train_row_cap_per_fold": run_metadata.get("train_row_cap_per_fold"),
             "bootstrap_resamples": run_metadata.get("bootstrap_resamples"),
             "git_hash": run_metadata.get("git_hash"),
+            "git_dirty": run_metadata.get("git_dirty", working_tree_is_dirty()),
             "flags": run_metadata.get("flags", {}),
             "run_metadata": run_metadata, "data_hash": pipeline["data_hash"],
             "seed": seed, "date": datetime.utcnow().isoformat(),
@@ -708,6 +774,7 @@ def run_open_set_evaluation(pipeline: dict) -> dict:
         "sample_fraction":   run_metadata.get("sample_fraction"),
         "train_row_cap_per_fold": run_metadata.get("train_row_cap_per_fold"),
         "git_hash":          run_metadata.get("git_hash"),
+        "git_dirty":         run_metadata.get("git_dirty", working_tree_is_dirty()),
         "flags":             run_metadata.get("flags", {}),
         "run_metadata":      run_metadata,
         "model_version":     "v2.0",

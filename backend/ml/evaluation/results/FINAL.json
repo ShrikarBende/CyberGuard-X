@@ -1,0 +1,106 @@
+{
+  "manifest_version": 1,
+  "results": [
+    {
+      "file": "open_set_cicids_light_seed42.json",
+      "kind": "open_set",
+      "role": "sample_size_sensitivity",
+      "profile": "light",
+      "sample_fraction": 0.15,
+      "seed": 42,
+      "date": "2026-11-13T11:38:32.681535",
+      "description": "Light CICIDS open-set run, seed 42, included for sample-size sensitivity against medium seed 42."
+    },
+    {
+      "file": "open_set_cicids_medium_seed42.json",
+      "kind": "open_set",
+      "profile": "medium",
+      "sample_fraction": 0.5,
+      "seed": 42,
+      "date": "2026-11-13T11:57:46.316548",
+      "description": "Medium CICIDS open-set evaluation, seed 42; current deduplicated pipeline with bootstrap interval metadata."
+    },
+    {
+      "file": "open_set_cicids_medium_seed43.json",
+      "kind": "open_set",
+      "profile": "medium",
+      "sample_fraction": 0.5,
+      "seed": 43,
+      "date": "2026-11-15T11:37:44.803591",
+      "description": "Medium CICIDS open-set evaluation, seed 43; current deduplicated pipeline with bootstrap interval metadata."
+    },
+    {
+      "file": "open_set_cicids_medium_seed44.json",
+      "kind": "open_set",
+      "profile": "medium",
+      "sample_fraction": 0.5,
+      "seed": 44,
+      "date": "2026-11-15T11:44:24.334578",
+      "description": "Medium CICIDS open-set evaluation, seed 44; current deduplicated pipeline with bootstrap interval metadata."
+    },
+    {
+      "file": "known_classifier_20261113_1154.json",
+      "kind": "known_classifier",
+      "profile": "medium",
+      "sample_fraction": 0.5,
+      "seed": 42,
+      "date": "2026-11-13T11:54:33.903555",
+      "description": "Known-class LightGBM classifier paired with the medium seed 42 run."
+    },
+    {
+      "file": "archive/known_classifier_20261115_1134.json",
+      "kind": "known_classifier",
+      "profile": "medium",
+      "sample_fraction": 0.5,
+      "seed": 43,
+      "date": "2026-11-15T11:34:45.637562",
+      "description": "Known-class LightGBM classifier, medium sample, seed 43."
+    },
+    {
+      "file": "archive/known_classifier_20261115_1139.json",
+      "kind": "known_classifier",
+      "profile": "medium",
+      "sample_fraction": 0.5,
+      "seed": 44,
+      "date": "2026-11-15T11:39:18.004270",
+      "description": "Known-class LightGBM classifier, medium sample, seed 44."
+    },
+    {
+      "file": "replay_2026-11-15.json",
+      "kind": "replay",
+      "profile": "medium",
+      "sample_fraction": 0.5,
+      "seed": 42,
+      "date": "2026-11-15",
+      "description": "Held-out replay summary using the medium CICIDS model bundle."
+    },
+    {
+      "file": "rag_retrieval_2026-11-18.json",
+      "kind": "rag_retrieval",
+      "profile": "rag_retrieval",
+      "sample_fraction": null,
+      "seed": null,
+      "date": "2026-11-18",
+      "description": "RAG retrieval report using the existing developer-written question set."
+    }
+  ],
+  "historical_sample_fractions": {
+    "light": 0.15,
+    "medium": 0.5
+  },
+  "report_facts": {
+    "sample_fractions": {
+      "light": 0.15,
+      "medium": 0.5
+    },
+    "open_set_reading": {
+      "indistinguishable_sd": 2.5,
+      "low_support_rows": 200,
+      "known_false_reject_rate": 0.05
+    },
+    "limitations": {
+      "dataset_year": 2017,
+      "replay_low_support_flows": 100
+    }
+  }
+}

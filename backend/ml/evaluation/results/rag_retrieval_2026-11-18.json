@@ -1,0 +1,163 @@
+{
+  "date": "2026-11-18",
+  "model_name": "all-MiniLM-L6-v2",
+  "faiss_backend": "faiss",
+  "knowledge_file_hash": "10e29d7f76ab448200b323b3108b2f61929ccaf5a41f5ecdb2d7b78aa00dccc0",
+  "question_count": 20,
+  "hit_at_1": 0.85,
+  "hit_at_3": 0.9,
+  "missed_questions": [
+    {
+      "question": "What traffic pattern can indicate network service discovery?",
+      "expected_source_file": "t1046_network_discovery.md",
+      "top_retrieved_source": "t1498_network_denial_of_service.md"
+    },
+    {
+      "question": "What evidence should be preserved before containing a suspicious host?",
+      "expected_source_file": "ir_evidence_containment.md",
+      "top_retrieved_source": "t1190_public_facing_app.md"
+    }
+  ],
+  "questions": [
+    {
+      "question": "What evidence suggests repeated password guessing against an account?",
+      "expected_source_file": "t1110_brute_force.md",
+      "top_retrieved_source": "t1110_brute_force.md",
+      "hit_at_1": true,
+      "hit_at_3": true
+    },
+    {
+      "question": "What should be checked after a burst of failed logins?",
+      "expected_source_file": "t1110_brute_force.md",
+      "top_retrieved_source": "t1110_brute_force.md",
+      "hit_at_1": true,
+      "hit_at_3": true
+    },
+    {
+      "question": "How can stolen credentials be used through a valid account?",
+      "expected_source_file": "t1078_valid_accounts.md",
+      "top_retrieved_source": "t1078_valid_accounts.md",
+      "hit_at_1": true,
+      "hit_at_3": true
+    },
+    {
+      "question": "What should analysts verify after a login from an unfamiliar device?",
+      "expected_source_file": "t1078_valid_accounts.md",
+      "top_retrieved_source": "t1078_valid_accounts.md",
+      "hit_at_1": true,
+      "hit_at_3": true
+    },
+    {
+      "question": "What does an encoded PowerShell command line indicate and what records should I inspect?",
+      "expected_source_file": "t1059_001_powershell.md",
+      "top_retrieved_source": "t1059_001_powershell.md",
+      "hit_at_1": true,
+      "hit_at_3": true
+    },
+    {
+      "question": "Which endpoint evidence helps investigate suspicious PowerShell execution?",
+      "expected_source_file": "t1059_001_powershell.md",
+      "top_retrieved_source": "t1059_001_powershell.md",
+      "hit_at_1": true,
+      "hit_at_3": true
+    },
+    {
+      "question": "How should unusual outbound data transfers through a command channel be investigated?",
+      "expected_source_file": "t1041_exfiltration_c2.md",
+      "top_retrieved_source": "t1041_exfiltration_c2.md",
+      "hit_at_1": true,
+      "hit_at_3": true
+    },
+    {
+      "question": "What should be preserved when a host may be sending data to unfamiliar external infrastructure?",
+      "expected_source_file": "t1041_exfiltration_c2.md",
+      "top_retrieved_source": "t1041_exfiltration_c2.md",
+      "hit_at_1": true,
+      "hit_at_3": true
+    },
+    {
+      "question": "What traffic pattern can indicate network service discovery?",
+      "expected_source_file": "t1046_network_discovery.md",
+      "top_retrieved_source": "t1498_network_denial_of_service.md",
+      "hit_at_1": false,
+      "hit_at_3": false
+    },
+    {
+      "question": "How do I distinguish an authorized port scan from suspicious probing?",
+      "expected_source_file": "t1046_network_discovery.md",
+      "top_retrieved_source": "t1046_network_discovery.md",
+      "hit_at_1": true,
+      "hit_at_3": true
+    },
+    {
+      "question": "What should I check for unexpected SMB administrative share access?",
+      "expected_source_file": "t1021_002_smb_admin_shares.md",
+      "top_retrieved_source": "t1021_002_smb_admin_shares.md",
+      "hit_at_1": true,
+      "hit_at_3": true
+    },
+    {
+      "question": "Which evidence helps investigate remote Windows activity over SMB?",
+      "expected_source_file": "t1021_002_smb_admin_shares.md",
+      "top_retrieved_source": "t1021_002_smb_admin_shares.md",
+      "hit_at_1": true,
+      "hit_at_3": true
+    },
+    {
+      "question": "What network signals can indicate a denial of service event?",
+      "expected_source_file": "t1498_network_denial_of_service.md",
+      "top_retrieved_source": "t1498_network_denial_of_service.md",
+      "hit_at_1": true,
+      "hit_at_3": true
+    },
+    {
+      "question": "What should be checked before mitigating a sudden traffic spike?",
+      "expected_source_file": "t1498_network_denial_of_service.md",
+      "top_retrieved_source": "t1498_network_denial_of_service.md",
+      "hit_at_1": true,
+      "hit_at_3": true
+    },
+    {
+      "question": "Which host-side changes can corroborate an attack against a public application?",
+      "expected_source_file": "t1190_public_facing_app.md",
+      "top_retrieved_source": "t1190_public_facing_app.md",
+      "hit_at_1": true,
+      "hit_at_3": true
+    },
+    {
+      "question": "What application and proxy evidence should be preserved after suspicious web requests?",
+      "expected_source_file": "t1190_public_facing_app.md",
+      "top_retrieved_source": "t1190_public_facing_app.md",
+      "hit_at_1": true,
+      "hit_at_3": true
+    },
+    {
+      "question": "What makes ordinary application protocol traffic suspicious as a possible control channel?",
+      "expected_source_file": "t1071_application_layer_protocol.md",
+      "top_retrieved_source": "t1071_application_layer_protocol.md",
+      "hit_at_1": true,
+      "hit_at_3": true
+    },
+    {
+      "question": "How can periodic outbound application traffic be investigated?",
+      "expected_source_file": "t1071_application_layer_protocol.md",
+      "top_retrieved_source": "t1498_network_denial_of_service.md",
+      "hit_at_1": false,
+      "hit_at_3": true
+    },
+    {
+      "question": "What evidence should be preserved before containing a suspicious host?",
+      "expected_source_file": "ir_evidence_containment.md",
+      "top_retrieved_source": "t1190_public_facing_app.md",
+      "hit_at_1": false,
+      "hit_at_3": false
+    },
+    {
+      "question": "When a telemetry layer has no trained model, what does NOT_COVERED mean?",
+      "expected_source_file": "project_not_covered.md",
+      "top_retrieved_source": "project_not_covered.md",
+      "hit_at_1": true,
+      "hit_at_3": true
+    }
+  ]
+}

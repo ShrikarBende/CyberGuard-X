@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: cyberguard
-      POSTGRES_PASSWORD: cyberguard_secret
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env before starting Docker Compose}"
       POSTGRES_DB: cyberguardx
     ports:
       - "5432:5432"
@@ -26,15 +26,24 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - DATABASE_URL=postgresql://cyberguard:cyberguard_secret@postgres:5432/cyberguardx
-      - APP_ENV=production
-      - DEBUG=False
-      - LLM_PROVIDER=template_fallback
+      DATABASE_URL: "postgresql://cyberguard:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env before starting Docker Compose}@postgres:5432/cyberguardx"
+      APP_ENV: production
+      DEBUG: "False"
+      SECRET_KEY: "${SECRET_KEY:?Set SECRET_KEY in .env before starting Docker Compose}"
+      ADMIN_USERNAME: "${ADMIN_USERNAME:-}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
+      LLM_PROVIDER: template_fallback
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
       - ./backend/saved_models:/app/backend/saved_models
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
 
   frontend:
     build:
@@ -45,7 +54,8 @@ services:
     ports:
       - "3000:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
 
 volumes:
   pgdata:

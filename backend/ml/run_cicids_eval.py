@@ -5,7 +5,7 @@ Run this script to execute the full pipeline end-to-end:
   1. Load + clean + cache all 8 CICIDS2017 CSVs
   2. Stratified 70/10/20 split per file
   3. Train LightGBM + XGBoost known-class classifiers
-  4. Leave-one-family-out open-set evaluation (5 families × 4 detectors)
+  4. Leave-one-family-out open-set evaluation
   5. Save all results to backend/ml/evaluation/results/
 
 Usage:
@@ -34,10 +34,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from ml.preprocessing.cicids_pipeline import build_full_pipeline
 from ml.evaluation.known_classifier import run_known_classifier
 from ml.evaluation.open_set_pipeline import run_open_set_evaluation
+from ml.evaluation.provenance import working_tree_is_dirty
+from ml.evaluation.output_paths import get_results_dir
 
 LIGHT_DETECTORS = [
     "confidence", "isolation_forest", "mahalanobis",
     "confidence_mahalanobis_rank_average",
+]
+MEDIUM_DETECTORS = [
+    "confidence", "isolation_forest", "mahalanobis",
+    "confidence_mahalanobis_rank_average", "union_conf_mahalanobis",
 ]
 
 
@@ -54,7 +60,7 @@ def _git_revision() -> tuple[str | None, str | None]:
 
 def main():
     parser = argparse.ArgumentParser(description="CICIDS2017 Full Evaluation Pipeline")
-    parser.add_argument("--profile", choices=["full", "light"], default="full")
+    parser.add_argument("--profile", choices=["full", "light", "medium"], default="full")
     parser.add_argument("--force-reload", action="store_true",
                         help="Re-read CSVs and rebuild Parquet cache")
     parser.add_argument("--seed", type=int)
@@ -63,6 +69,8 @@ def main():
     parser.add_argument("--run-id", help="Stable ID used for per-family partial checkpoints and resume")
     parser.add_argument("--log1p", action="store_true",
                         help="Apply train-fitted log1p to features that are non-negative in train")
+    parser.add_argument("--save-scores", action="store_true",
+                        help="Save each fold's detector scores and labels as compressed NPZ files")
     args = parser.parse_args()
 
     print("=" * 70)
@@ -72,40 +80,47 @@ def main():
     # ── Stage 1: Data ──────────────────────────────────────────────────────
     print("\n[Stage 1] Loading and preprocessing CICIDS2017 ...")
     light = args.profile == "light"
+    medium = args.profile == "medium"
+    reduced = light or medium
     seed = args.seed if args.seed is not None else 42
-    sample = args.sample if args.sample is not None else (0.15 if light else 1.0)
+    sample = args.sample if args.sample is not None else (0.15 if light else 0.5 if medium else 1.0)
     if light and (seed != 42 or sample != 0.15):
         parser.error("--profile light fixes --seed 42 and --sample 0.15")
-    log1p = True if light else args.log1p
+    if medium and (seed not in (42, 43, 44) or sample != 0.5):
+        parser.error("--profile medium fixes --sample 0.5 and seeds in (42, 43, 44)")
+    log1p = True if reduced else args.log1p
     run_id = args.run_id or f"{args.profile}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
     git_hash, git_hash_status = _git_revision()
     profile_config = {
         "profile_name": args.profile,
         "sample_fraction": sample,
-        "train_row_cap_per_fold": 60000 if light else None,
-        "bootstrap_resamples": 200 if light else 1000,
-        "detectors": LIGHT_DETECTORS if light else ["confidence", "isolation_forest", "autoencoder", "mahalanobis", "mahalanobis_mlp", "confidence_mahalanobis_rank_average"],
-        "known_classifier_models": ["LightGBM"] if light else ["LightGBM", "XGBoost"],
-        "isolation_forest": {"n_estimators": 100, "max_samples": 10000, "n_jobs": -1} if light else {"n_estimators": 200, "max_samples": "auto", "n_jobs": -1},
-        "flags": {"log1p": log1p, "xgboost": not light, "reduced_profile": light,
+        "train_row_cap_per_fold": 60000 if light else 150000 if medium else None,
+        "bootstrap_resamples": 200 if reduced else 1000,
+        "detectors": LIGHT_DETECTORS if light else MEDIUM_DETECTORS if medium else ["confidence", "isolation_forest", "autoencoder", "mahalanobis", "mahalanobis_mlp", "confidence_mahalanobis_rank_average"],
+        "known_classifier_models": ["LightGBM"] if reduced else ["LightGBM", "XGBoost"],
+        "isolation_forest": {"n_estimators": 100, "max_samples": 10000, "n_jobs": -1} if reduced else {"n_estimators": 200, "max_samples": "auto", "n_jobs": -1},
+        "flags": {"log1p": log1p, "xgboost": not reduced, "reduced_profile": reduced,
                   "stratified_random_split": True},
         "git_hash": git_hash,
+        "git_dirty": working_tree_is_dirty(),
         "git_hash_status": git_hash_status,
-        "reduced_profile_warning": "Results are from a reduced profile on a stratified random split." if light else None,
+        "reduced_profile_warning": "Results are from a reduced profile on a stratified random split." if reduced else None,
     }
     pipeline = build_full_pipeline(force_reload=args.force_reload, seed=seed,
                                    sample=sample, log1p=log1p)
     pipeline.update(profile_config)
     pipeline["run_id"] = run_id
+    pipeline["save_detector_scores"] = args.save_scores
+    pipeline["score_output_dir"] = get_results_dir() / "scores"
     pipeline["run_metadata"] = profile_config
-    if light:
+    if reduced:
         print("WARNING: Results are from a reduced profile on a stratified random split.")
-        print(f"Command: python backend/ml/run_cicids_eval.py --profile light --run-id {run_id}")
+        print(f"Command: python backend/ml/run_cicids_eval.py --profile {args.profile} --run-id {run_id}")
     print(f"WARNING: {pipeline['split_warning']}")
 
     # ── Stage 2: Known-class classifier ───────────────────────────────────
     print("\n[Stage 2] Training known-class classifiers ...")
-    cls_results, lgbm_model, xgb_model = run_known_classifier(pipeline, include_xgboost=not light)
+    cls_results, lgbm_model, xgb_model = run_known_classifier(pipeline, include_xgboost=not reduced)
     del lgbm_model
     if xgb_model is not None:
         del xgb_model
