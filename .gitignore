@@ -27,7 +27,10 @@ backend/ml/evaluation/results/partial_*.json
 backend/ml/evaluation/results/*_progress*.json
 backend/ml/evaluation/results/*_capture*.json
 backend/ml/evaluation/results/scores/
-backend/ml/evaluation/results/archive/
+!backend/ml/evaluation/results/archive/
+backend/ml/evaluation/results/archive/**
+!backend/ml/evaluation/results/archive/known_classifier_20261115_1134.json
+!backend/ml/evaluation/results/archive/known_classifier_20261115_1139.json
 backend/saved_models_synthetic_old/
 .medium_seed43.log
 

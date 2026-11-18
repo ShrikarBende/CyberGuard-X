@@ -85,6 +85,10 @@ def test_uppercase_json_extension_and_iso_offset(db_session, monkeypatch):
 
 
 def test_cicids_csv_is_scored_in_one_batch(db_session, monkeypatch):
+    if not detection_engine.MODEL_BUNDLE_PATH.is_file():
+        pytest.skip(
+            "Requires the CICIDS model bundle, which is not checked into the repository."
+        )
     bundle = detection_engine.load_model_bundle()
     monkeypatch.setattr(detection_engine, "load_model_bundle", lambda: bundle)
     headers = ["Timestamp", *bundle["feature_names"]]

@@ -1,0 +1,134 @@
+{
+  "pipeline_stage": "known_classifier",
+  "model_version": "v2.0",
+  "data_hash": "002c7af26c40",
+  "seed": 43,
+  "date": "2026-11-15T11:34:45.637562",
+  "row_counts": {
+    "train": 874375,
+    "validation": 124914,
+    "test": 249829
+  },
+  "split_type": "stratified_random",
+  "split_warning": "No Timestamp column: stratified random split. Near-duplicate flows may leak between train and test; results are optimistic.",
+  "profile_name": "medium",
+  "sample_fraction": 0.5,
+  "train_row_cap_per_fold": 150000,
+  "bootstrap_resamples": 200,
+  "git_hash": "b2c05e003e3de274756b5307ab5400f79cfc3643",
+  "flags": {
+    "log1p": true,
+    "xgboost": false,
+    "reduced_profile": true,
+    "stratified_random_split": true
+  },
+  "profile_warning": "Results are from a reduced profile on a stratified random split.",
+  "training_time_seconds": 44.92,
+  "excluded_labels": [
+    "Heartbleed",
+    "Infiltration"
+  ],
+  "note": "Macro-F1 is the headline metric; accuracy not used due to class imbalance.",
+  "LightGBM": {
+    "model": "LightGBM",
+    "macro_f1": 0.966943,
+    "accuracy": 0.999396,
+    "per_class": {
+      "BENIGN": {
+        "precision": 0.999913,
+        "recall": 0.999368,
+        "f1": 0.99964,
+        "support": 207268
+      },
+      "Bot": {
+        "precision": 0.703704,
+        "recall": 0.964467,
+        "f1": 0.813704,
+        "support": 197
+      },
+      "BruteForce": {
+        "precision": 0.99667,
+        "recall": 0.998888,
+        "f1": 0.997778,
+        "support": 899
+      },
+      "DosDDoS": {
+        "precision": 0.999566,
+        "recall": 0.999845,
+        "f1": 0.999705,
+        "support": 32220
+      },
+      "PortScan": {
+        "precision": 0.996136,
+        "recall": 0.999446,
+        "f1": 0.997789,
+        "support": 9029
+      },
+      "WebAttack": {
+        "precision": 0.995349,
+        "recall": 0.990741,
+        "f1": 0.993039,
+        "support": 216
+      }
+    },
+    "confusion_matrix": [
+      [
+        207137,
+        80,
+        3,
+        13,
+        35,
+        0
+      ],
+      [
+        7,
+        190,
+        0,
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        898,
+        0,
+        0,
+        1
+      ],
+      [
+        5,
+        0,
+        0,
+        32215,
+        0,
+        0
+      ],
+      [
+        4,
+        0,
+        0,
+        1,
+        9024,
+        0
+      ],
+      [
+        2,
+        0,
+        0,
+        0,
+        0,
+        214
+      ]
+    ],
+    "class_names": [
+      "BENIGN",
+      "Bot",
+      "BruteForce",
+      "DosDDoS",
+      "PortScan",
+      "WebAttack"
+    ]
+  },
+  "results_path": "D:\\MAJOR PROJECT\\backend\\ml\\evaluation\\results\\known_classifier_20261115_1134.json"
+}
