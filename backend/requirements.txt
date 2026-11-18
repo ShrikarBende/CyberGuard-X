@@ -1,4 +1,8 @@
-fastapi>=0.115.0
+# FastAPI 0.137 changed include_router() to retain nested routers internally;
+# app.routes no longer contains the flattened APIRoute entries our auth audits
+# and API route inventory depend on. Keep the flat route representation until
+# those consumers migrate to FastAPI's router-context APIs.
+fastapi>=0.115.0,<0.137.0
 uvicorn[standard]>=0.30.0
 pydantic>=2.8.0
 pydantic-settings>=2.4.0
