@@ -1,0 +1,7 @@
+{
+  "doc_id": "past-incident-schema-example",
+  "title": "Resolved incident summary schema example",
+  "source_type": "past_incident",
+  "source_note": "Schema guidance only. Live retrieval uses resolved, analyst-reviewed incidents stored in the database.",
+  "text": "A resolved incident summary should preserve the analyst-assigned outcome, affected entity type, verified indicators, evidence sources, response actions approved and performed by humans, and lessons learned. Do not treat this schema example as a real incident or as evidence for another case."
+}

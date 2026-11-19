@@ -84,13 +84,25 @@ def _positive_coefficients(calibrator: CalibratedClassifierCV) -> np.ndarray:
     return np.mean(coefficients, axis=0)
 
 
-def train_fusion_meta(data_path: Path = DATA_PATH, output_path: Path = ARTIFACT_PATH) -> Path:
+def train_fusion_meta(data_path: Path = DATA_PATH, output_path: Path = ARTIFACT_PATH,
+                      feedback_samples: list[dict] | None = None) -> Path:
     x, y, source = load_training_data(data_path)
     if len(np.unique(y)) != 2 or np.bincount(y, minlength=2).min() < 5:
         raise ValueError("Fusion meta training requires at least five examples from each label")
     x_train, x_val, y_train, y_val = train_test_split(
         x, y, test_size=0.2, random_state=SEED, stratify=y
     )
+    feedback_count = 0
+    for sample in feedback_samples or []:
+        feature_values = sample.get("fusion_features")
+        target = sample.get("target")
+        if not isinstance(feature_values, dict) or target not in (0, 1):
+            continue
+        vector = [float(feature_values.get(name, 0.0) or 0.0) for name in FEATURE_NAMES]
+        if np.isfinite(vector).all():
+            x_train = np.vstack([x_train, np.asarray(vector, dtype=np.float64)])
+            y_train = np.append(y_train, int(target))
+            feedback_count += 1
     scaler = StandardScaler().fit(x_train)
     train_scaled = scaler.transform(x_train)
     val_scaled = scaler.transform(x_val)
@@ -106,6 +118,8 @@ def train_fusion_meta(data_path: Path = DATA_PATH, output_path: Path = ARTIFACT_
         "validation_positive_rate": float(y_val.mean()),
         "validation_predicted_positive_rate": float((probabilities >= 0.5).mean()),
     }
+    negative_validation_probabilities = probabilities[y_val == 0]
+    decision_threshold = float(np.quantile(negative_validation_probabilities, 0.97)) if len(negative_validation_probabilities) else 0.5
     bundle = {
         "scaler": scaler,
         "model": model,
@@ -117,11 +131,14 @@ def train_fusion_meta(data_path: Path = DATA_PATH, output_path: Path = ARTIFACT_
         "class_weight": "balanced",
         "seed": SEED,
         "training_source": source,
+        "feedback_samples_used": feedback_count,
         "training_rows": int(len(x_train)),
         "validation_rows": int(len(x_val)),
         "class_balance": {"train_positive_fraction": float(y_train.mean()),
                            "validation_positive_fraction": float(y_val.mean())},
         "validation_metrics": metrics,
+        "decision_threshold": decision_threshold,
+        "threshold_calibration": "97th percentile of negative validation probabilities",
         "training_date": datetime.now(timezone.utc).isoformat(),
         "severity_thresholds": {"LOW": [0.0, 0.25], "MEDIUM": [0.25, 0.5],
                                 "HIGH": [0.5, 0.75], "CRITICAL": [0.75, 1.0]},

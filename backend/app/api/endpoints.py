@@ -466,7 +466,7 @@ def get_incident_detail(incident_id: str, db: Session = Depends(get_db)):
 @router.patch("/incidents/{incident_id}/status")
 def update_incident_status(
     incident_id: str,
-    status: str = Query(..., pattern="^(OPEN|open|NEEDS_REVIEW|INVESTIGATING|CONTAINED|RESOLVED|FALSE_POSITIVE)$"),
+    status: str = Query(..., pattern="^(OPEN|open|NEEDS_REVIEW|INVESTIGATING|CONTAINED|RESOLVED|CONFIRMED|FALSE_POSITIVE)$"),
     db: Session = Depends(get_db),
     analyst: AnalystAccount = Depends(require_roles("analyst", "admin")),
 ):
@@ -481,9 +481,45 @@ def update_incident_status(
         db, analyst.username, "status_changed", "incident", incident_id,
         {"old_status": previous_status, "new_status": status},
     )
+    if status in {"CONFIRMED", "FALSE_POSITIVE"}:
+        feedback = _incident_feedback_sample(db, inc, status)
+        record_analyst_activity(db, analyst.username, "analyst_feedback", "incident", incident_id,
+                                {"label": status, "source": "status_update", **feedback})
     db.commit()
     db.refresh(inc)
     return {"incident_id": incident_id, "status": inc.status}
+
+
+def _incident_feedback_sample(db: Session, incident: Incident, label: str) -> dict[str, Any]:
+    """Capture immutable branch/model inputs with an analyst-verified incident label."""
+    event_ids = [row.event_id for row in db.query(IncidentEvent).filter(
+        IncidentEvent.incident_id == incident.incident_id).all()]
+    detections = db.query(DetectionResult).filter(DetectionResult.event_id.in_(event_ids)).all() if event_ids else []
+    fusion = (incident.evidence or {}).get("risk_fusion", {})
+    features = dict(fusion.get("inputs") or {})
+    flow_features = None
+    predicted_class = incident.threat_classification
+    for detection in detections:
+        details = detection.details or {}
+        for feature in ("s_user", "s_endpoint", "s_network_flow", "s_network_graph", "s_open_set_distance"):
+            value = details.get(feature)
+            if value is None and feature == "s_network_flow":
+                value = details.get("s_network_flow", detection.attack_probability)
+            if value is not None:
+                features[feature] = max(float(features.get(feature, 0.0)), float(value))
+        novelty = details.get("open_set_score")
+        if novelty is not None:
+            features["s_open_set_distance"] = max(float(features.get("s_open_set_distance", 0.0)), float(novelty))
+        features["stage_count"] = max(float(features.get("stage_count", 0.0)), float(len(incident.attack_sequence or [])))
+        if details.get("cicids_features"):
+            flow_features = details["cicids_features"]
+        if detection.predicted_class:
+            predicted_class = detection.predicted_class
+    return {"fusion_features": features, "flow_features": flow_features,
+            "predicted_class": predicted_class,
+            "target": 1 if label == "CONFIRMED" else 0,
+            "source_incident_id": incident.incident_id,
+            "risk_score_before_feedback": incident.overall_risk_score}
 
 
 @router.post("/incidents/{incident_id}/notes", response_model=InvestigationNoteResponse)
@@ -507,6 +543,12 @@ def add_incident_note(
         created_at=datetime.now(timezone.utc)
     )
     db.add(note)
+    if note_in.feedback_label:
+        feedback = _incident_feedback_sample(db, inc, note_in.feedback_label)
+        feedback["analyst_note"] = note_in.content[:2000]
+        feedback["note_id"] = note.note_id
+        record_analyst_activity(db, analyst.username, "analyst_feedback", "incident", incident_id,
+                                {"label": note_in.feedback_label, "source": "investigation_note", **feedback})
     record_analyst_activity(
         db, analyst.username, "note_added", "incident", incident_id,
         {"note_id": note.note_id, "content_length": len(note.content)},
@@ -665,6 +707,21 @@ def rag_chat(
     return query_rag_assistant(query=request.query, incident=inc, db=db)
 
 
+@router.post("/incidents/{incident_id}/investigate")
+def investigate_incident_route(
+    incident_id: str,
+    top_k: int = Query(6, ge=1, le=20),
+    db: Session = Depends(get_db),
+    analyst: AnalystAccount = Depends(require_roles("analyst", "admin")),
+):
+    """Execute a read-only five-stage RAG investigation for an incident."""
+    incident = db.query(Incident).filter(Incident.incident_id == incident_id).first()
+    if not incident:
+        raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
+    from app.rag.assistant import investigate_incident
+    return investigate_incident(incident, db, top_k=top_k)
+
+
 # -------------------------------------------------------------------
 # 7. Model Retraining & Status (/api/models/retrain, /api/models/status)
 # -------------------------------------------------------------------
@@ -704,9 +761,30 @@ def retrain_model(
         }
 
     def run_training():
+        feedback_db = SessionLocal()
+        feedback_samples = []
+        before_metrics = {}
         try:
+            if target.is_file():
+                try:
+                    import joblib
+                    old_bundle = joblib.load(target)
+                    before_metrics["flow_model_version"] = old_bundle.get("model_version")
+                    before_metrics["open_set_thresholds"] = {key: old_bundle.get(key) for key in
+                        ("open_set_union_threshold", "confidence_anomaly_threshold", "energy_anomaly_threshold")}
+                    before_metrics["feedback_samples_used"] = old_bundle.get("feedback_adaptation", {}).get("samples_used", 0)
+                except Exception as exc:
+                    before_metrics["artifact_read_error"] = type(exc).__name__
+            feedback_activities = (feedback_db.query(AnalystActivity)
+                                   .filter(AnalystActivity.action_type == "analyst_feedback")
+                                   .order_by(AnalystActivity.timestamp.asc()).all())
+            feedback_samples = [dict(activity.details or {}) for activity in feedback_activities]
             from ml.training.train_final import train_final
-            trained_path = train_final(profile=request.profile, output_path=temporary)
+            if feedback_samples:
+                trained_path = train_final(profile=request.profile, output_path=temporary,
+                                           feedback_samples=feedback_samples)
+            else:
+                trained_path = train_final(profile=request.profile, output_path=temporary)
             if not Path(trained_path).is_file():
                 raise FileNotFoundError(f"Training completed without producing artifact: {trained_path}")
             import joblib
@@ -715,11 +793,44 @@ def retrain_model(
                 raise ValueError("Training produced an invalid model bundle.")
             # Same-directory replacement is atomic; the current bundle remains intact until here.
             os.replace(trained_path, target)
+            fusion_feedback = [sample for sample in feedback_samples if sample.get("fusion_features")]
+            fusion_metrics = None
+            if fusion_feedback:
+                from ml.fusion_meta import ARTIFACT_PATH as FUSION_ARTIFACT_PATH
+                from ml.training.train_fusion_meta import train_fusion_meta
+                fusion_temporary = FUSION_ARTIFACT_PATH.with_name(f".{FUSION_ARTIFACT_PATH.name}.{job_id}.tmp")
+                if FUSION_ARTIFACT_PATH.is_file():
+                    try:
+                        previous_fusion = joblib.load(FUSION_ARTIFACT_PATH)
+                        before_metrics["fusion_validation_metrics"] = previous_fusion.get("validation_metrics")
+                        before_metrics["fusion_decision_threshold"] = previous_fusion.get("decision_threshold")
+                    except Exception as exc:
+                        before_metrics["fusion_artifact_read_error"] = type(exc).__name__
+                fusion_path = train_fusion_meta(output_path=fusion_temporary, feedback_samples=fusion_feedback)
+                fusion_bundle = joblib.load(fusion_path)
+                os.replace(fusion_path, FUSION_ARTIFACT_PATH)
+                from ml import fusion_meta
+                fusion_meta._BUNDLE_CACHE = fusion_bundle
+                fusion_metrics = {"validation_metrics": fusion_bundle.get("validation_metrics"),
+                                  "decision_threshold": fusion_bundle.get("decision_threshold"),
+                                  "feedback_samples_used": fusion_bundle.get("feedback_samples_used")}
             if target.resolve() == Path(MODEL_BUNDLE_PATH).resolve():
                 from app.detection import engine as detection_engine
                 detection_engine._MODEL_BUNDLE_CACHE = staged_bundle
             with _RETRAIN_JOBS_LOCK:
-                _RETRAIN_JOBS[job_id].update(status="completed", artifact_path=str(target), error=None)
+                _RETRAIN_JOBS[job_id].update(status="completed", artifact_path=str(target), error=None,
+                                             feedback_samples_seen=len(feedback_samples),
+                                             fusion_adaptation=fusion_metrics)
+            after_metrics = {"flow_model_version": staged_bundle.get("model_version"),
+                             "flow_feedback_samples_used": staged_bundle.get("feedback_adaptation", {}).get("samples_used", 0),
+                             "open_set_thresholds": {key: staged_bundle.get(key) for key in
+                                 ("open_set_union_threshold", "confidence_anomaly_threshold", "energy_anomaly_threshold")},
+                             "fusion_adaptation": fusion_metrics}
+            before_after = {"feedback_samples_seen": len(feedback_samples),
+                            "before": before_metrics, "after": after_metrics}
+            record_analyst_activity(feedback_db, getattr(admin, "username", "system"), "model_retrained", "model", job_id,
+                                    {"profile": request.profile, "before_after_metrics": before_after})
+            feedback_db.commit()
         except Exception as exc:
             try:
                 Path(temporary).unlink(missing_ok=True)
@@ -728,6 +839,8 @@ def retrain_model(
             logger.exception("CICIDS %s profile retraining failed", request.profile)
             with _RETRAIN_JOBS_LOCK:
                 _RETRAIN_JOBS[job_id].update(status="failed", error=str(exc))
+        finally:
+            feedback_db.close()
 
     threading.Thread(target=run_training, name=f"retrain-{request.profile}-{job_id[:8]}", daemon=True).start()
     return {"status": "running", "job_id": job_id, "profile": request.profile}

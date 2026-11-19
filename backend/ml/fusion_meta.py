@@ -103,4 +103,5 @@ def predict_fused_risk(values: Mapping[str, Any], bundle: Mapping[str, Any] | No
         "inputs": {name: float(vector[0, index]) for index, name in enumerate(FEATURE_NAMES)},
         "model_version": active.get("model_version", "heuristic-fallback") if active else "heuristic-fallback",
         "calibrated": bool(active and active.get("calibrated", False)),
+        "decision_threshold": float(active.get("decision_threshold", 0.5)) if active else 0.5,
     }

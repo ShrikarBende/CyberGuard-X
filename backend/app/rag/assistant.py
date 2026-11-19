@@ -195,3 +195,128 @@ def query_rag_assistant(query: str, incident: Incident | None, db: Session) -> d
         "evidence_used": evidence_values,
         "confidence": None,
     }
+
+
+def _resolved_incident_documents(db: Session, exclude_incident_id: str | None = None) -> list[dict[str, Any]]:
+    """Build retrieval documents from analyst-resolved incidents in the database."""
+    query = db.query(Incident).filter(Incident.status.in_(["RESOLVED", "FALSE_POSITIVE", "CONFIRMED"]))
+    if exclude_incident_id:
+        query = query.filter(Incident.incident_id != exclude_incident_id)
+    documents = []
+    for incident in query.order_by(Incident.last_updated_at.desc()).limit(100).all():
+        evidence = incident.evidence or {}
+        documents.append({
+            "doc_id": f"past-incident:{incident.incident_id}",
+            "chunk_id": f"past-incident:{incident.incident_id}:summary",
+            "file_id": f"past-incident:{incident.incident_id}",
+            "source_file": "resolved_incident_database",
+            "source_type": "past_incident",
+            "title": incident.title,
+            "section_title": "Analyst-verified historical incident",
+            "text": (f"Historical incident {incident.incident_id}. Status={incident.status}. "
+                     f"Classification={incident.threat_classification}. Severity={incident.severity}. "
+                     f"Indicators={json.dumps(evidence.get('indicators', []), ensure_ascii=False, default=str)}. "
+                     f"Summary={incident.description or ''}"),
+        })
+    return documents
+
+
+def _incident_investigation_evidence(incident: Incident, db: Session) -> dict[str, Any]:
+    evidence_values, _terms, _json = _stored_incident_evidence(incident, db)
+    incident_event_rows = (db.query(IncidentEvent).filter(IncidentEvent.incident_id == incident.incident_id)
+                           .order_by(IncidentEvent.order.asc(), IncidentEvent.id.asc()).all())
+    event_ids = [row.event_id for row in incident_event_rows]
+    detections = db.query(DetectionResult).filter(DetectionResult.event_id.in_(event_ids)).all() if event_ids else []
+    layer_scores: dict[str, float] = {}
+    signals = {"shap": [], "endpoint_residuals": [], "temporal_attention": [], "graph_attention": [], "open_set": []}
+    for detection in detections:
+        details = detection.details or {}
+        signals_by_layer = {
+            "user": details.get("user_sequence") or {},
+            "endpoint": details,
+            "network": details,
+        }
+        raw_score = details.get(f"s_{detection.layer}", detection.attack_probability or detection.score or 0.0)
+        layer_scores[detection.layer] = max(layer_scores.get(detection.layer, 0.0), float(raw_score or 0.0))
+        network_flow = details.get("s_network_flow")
+        if network_flow is not None:
+            layer_scores["network_flow"] = max(layer_scores.get("network_flow", 0.0), float(network_flow))
+        for key, value in (("shap", details.get("shap_feature_importance") or details.get("top_contributing_features")),
+                           ("endpoint_residuals", details.get("feature_residuals")),
+                           ("temporal_attention", signals_by_layer["user"].get("temporal_attention") or details.get("temporal_attention")),
+                           ("graph_attention", (details.get("network_graph") or {}).get("top_suspicious_edges") or details.get("top_suspicious_edges"))):
+            if value:
+                signals[key].append({"event_id": detection.event_id, "evidence": value})
+        if details.get("open_set_score") is not None or detection.verdict in {"UNKNOWN_CANDIDATE", "UNKNOWN_NOVEL"}:
+            signals["open_set"].append({"event_id": detection.event_id, "verdict": detection.verdict,
+                                        "open_set_score": details.get("open_set_score"),
+                                        "centroid_distance": details.get("centroid_distance", detection.open_set_distance)})
+    fusion = (incident.evidence or {}).get("risk_fusion", {})
+    if not fusion and incident.risk_score_detail and incident.risk_score_detail.risk_breakdown:
+        fusion = incident.risk_score_detail.risk_breakdown.get("fusion", {})
+    return {"incident": {"incident_id": incident.incident_id, "title": incident.title,
+                         "status": incident.status, "severity": incident.severity,
+                         "threat_classification": incident.threat_classification,
+                         "overall_risk_score": incident.overall_risk_score},
+            "indicators": evidence_values, "layer_scores": layer_scores,
+            "risk_contributions": fusion.get("contributions", {}), "signals": signals,
+            "timeline": incident.attack_sequence or []}
+
+
+def investigate_incident(incident: Incident, db: Session, top_k: int | None = None) -> dict[str, Any]:
+    """Run retrieve -> analyze -> map -> summarize -> recommend, with no side effects."""
+    evidence = _incident_investigation_evidence(incident, db)
+    unknown = incident.threat_classification in {"UNKNOWN_CANDIDATE", "UNKNOWN_NOVEL"}
+    query = " ".join([incident.title, incident.threat_classification,
+                      json.dumps(evidence["indicators"], ensure_ascii=False, default=str),
+                      json.dumps(evidence["layer_scores"]), "unknown novel" if unknown else ""])
+    retrieved = get_retriever().search(query, top_k=top_k,
+        extra_documents=_resolved_incident_documents(db, incident.incident_id))
+    minimum = float(settings.RAG_MIN_RETRIEVAL_SCORE)
+    grounded = [item for item in retrieved if float(item.get("relevance_score", item.get("score", 0.0))) >= minimum]
+    retrieve = {"step": "retrieve", "query": query, "minimum_relevance_score": minimum,
+                "evidence_sufficient": bool(grounded),
+                "results": [{"chunk_id": item.get("chunk_id"), "doc_id": item.get("doc_id"),
+                             "source_type": item.get("source_type"), "title": item.get("title"),
+                             "score": float(item.get("score", 0.0)),
+                             "relevance_score": float(item.get("relevance_score", item.get("score", 0.0))),
+                             "text": item.get("text", "")} for item in retrieved]}
+    analyze = {"step": "analyze", "risk_score": incident.overall_risk_score,
+               "severity": incident.severity, "layer_scores": evidence["layer_scores"],
+               "risk_contributions": evidence["risk_contributions"], "evidence_signals": evidence["signals"]}
+    telemetry = json.dumps(evidence, ensure_ascii=False, default=str).lower()
+    mappings = []
+    if grounded:
+        for item in grounded:
+            if item.get("source_type") != "mitre":
+                continue
+            full_text = f"{item.get('title', '')} {item.get('text', '')}"
+            match = re.search(r"\b(T\d{4}(?:\.\d{3})?)\b", full_text)
+            if not match:
+                continue
+            terms = item.get("supported_indicators") or re.findall(r"[A-Za-z][A-Za-z0-9_-]{3,}", item.get("title", ""))
+            matched = sorted(set(str(term).lower() for term in terms if str(term).lower() in telemetry))
+            if matched:
+                mappings.append({"technique_id": match.group(1), "technique_name": item.get("title"),
+                                 "evidence_terms": matched, "source_chunk_id": item.get("chunk_id"),
+                                 "confidence": "evidence_supported"})
+    map_step = {"step": "map", "mitre_attack": mappings,
+                "statement": ("Technique mapping requires both retrieved documentation and matching incident telemetry."
+                              if mappings else "Evidence is insufficient for a supported MITRE ATT&CK technique mapping.")}
+    indicators = evidence["indicators"]
+    timeline = evidence["timeline"]
+    summary = (f"{incident.title}: {incident.severity} risk score {float(incident.overall_risk_score):.1f}. "
+               f"Stored evidence includes {len(indicators)} indicator records across {len(evidence['layer_scores'])} scored layers. "
+               + ("The event is an unknown/novel candidate and is not confirmed as an attack. " if unknown else
+                  "The incident remains analyst-reviewable and is not asserted as a confirmed attack. ")
+               + (f"The timeline contains {len(timeline)} recorded stages." if timeline else "No ordered timeline stages are stored."))
+    summarize = {"step": "summarize", "executive_summary": summary, "timeline": timeline,
+                 "certainty": "unconfirmed"}
+    actions = ([{"action": "Preserve relevant authentication, endpoint, and network telemetry for review.",
+                 "requires_human_approval": True},
+                {"action": "Validate account and host ownership before considering containment.",
+                 "requires_human_approval": True}] if grounded else [])
+    recommend = {"step": "recommend", "actions": actions, "requires_human_approval": True,
+                 "statement": "Recommendations are advisory; this workflow does not execute actions."}
+    return {"incident_id": incident.incident_id, "read_only": True,
+            "trace": [retrieve, analyze, map_step, summarize, recommend]}

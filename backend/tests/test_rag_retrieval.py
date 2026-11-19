@@ -16,6 +16,8 @@ from app.database.session import Base
 from app.models.entities import DetectionResult, Incident, IncidentEvent, MitreTechnique, SecurityEvent
 from app.rag.assistant import query_rag_assistant
 from app.rag.indexer import get_retriever, knowledge_hash
+from app.rag.assistant import investigate_incident
+from ml.training.train_fusion_meta import train_fusion_meta
 
 
 RETRIEVAL_QUESTIONS = [
@@ -183,3 +185,94 @@ def test_evidence_used_matches_values_stored_in_database(db_session):
     assert evidence["event_ids"] == ["rag-event-1"]
     assert evidence["mitre"][0]["technique_id"] == "T1046"
     assert evidence["mitre"][0]["confidence"] == "rule_matched"
+
+
+def _investigation_incident(db):
+    incident = Incident(
+        incident_id="investigation-flow", title="Failed login followed by PowerShell",
+        severity="HIGH", status="NEEDS_REVIEW", threat_classification="UNKNOWN_NOVEL",
+        overall_risk_score=82.0, first_detected_at=datetime.now(timezone.utc),
+        last_updated_at=datetime.now(timezone.utc), attack_sequence=[{"stage": "execution"}],
+        evidence={"indicators": [{"name": "failed_login_burst", "evidence": {"event_type": "brute_force"}}],
+                  "risk_fusion": {"contributions": {"user_contribution": 30.0,
+                      "endpoint_contribution": 20.0, "network_contribution": 30.0,
+                      "open_set_contribution": 20.0}}},
+    )
+    event = SecurityEvent(event_id="investigation-event", timestamp=datetime.now(timezone.utc),
+                          event_category="auth", event_type="login", status="failure")
+    db.add_all([incident, event]); db.flush()
+    db.add(IncidentEvent(incident_id=incident.incident_id, event_id=event.event_id, stage="failed_login_burst", order=0))
+    db.add(DetectionResult(detection_id="investigation-detection", event_id=event.event_id,
+                           verdict="UNKNOWN_NOVEL", predicted_class="PortScan", probability=.8,
+                           score=.9, attack_probability=.9, open_set_distance=6.2, layer="network",
+                           details={"s_network_flow": .9, "open_set_score": .92,
+                                    "top_suspicious_edges": [{"srcip": "a", "dstip": "b", "attention": .8}]}))
+    db.commit()
+    return incident
+
+
+class _InvestigationRetriever:
+    def __init__(self, score):
+        self.score = score
+
+    def search(self, query, top_k=None, extra_documents=None):
+        return [{"chunk_id": "T1110:001", "doc_id": "T1110", "source_type": "mitre",
+                 "title": "T1110 Brute Force", "text": "MITRE brute-force technique and mitigation.",
+                 "supported_indicators": ["failed_login_burst"],
+                 "score": self.score, "relevance_score": self.score}]
+
+
+def test_five_step_investigation_is_read_only_and_maps_only_supported_evidence(monkeypatch, db_session):
+    import app.rag.assistant as assistant
+    monkeypatch.setattr(assistant, "get_retriever", lambda: _InvestigationRetriever(.85))
+    incident = _investigation_incident(db_session)
+    before_count = db_session.query(IncidentEvent).count()
+    result = investigate_incident(incident, db_session, top_k=3)
+    assert [step["step"] for step in result["trace"]] == ["retrieve", "analyze", "map", "summarize", "recommend"]
+    assert result["read_only"] is True
+    assert result["trace"][0]["results"][0]["source_type"] == "mitre"
+    assert result["trace"][0]["results"][0]["doc_id"] == "T1110"
+    assert result["trace"][2]["mitre_attack"][0]["technique_id"] == "T1110"
+    assert "not confirmed" in result["trace"][3]["executive_summary"]
+    assert result["trace"][4]["requires_human_approval"] is True
+    assert all(row["requires_human_approval"] for row in result["trace"][4]["actions"])
+    assert db_session.query(IncidentEvent).count() == before_count
+
+
+def test_low_retrieval_score_blocks_mapping_and_recommendations(monkeypatch, db_session):
+    import app.rag.assistant as assistant
+    monkeypatch.setattr(assistant, "get_retriever", lambda: _InvestigationRetriever(-.1))
+    incident = _investigation_incident(db_session)
+    result = investigate_incident(incident, db_session)
+    retrieve, _analyze, map_step, _summary, recommend = result["trace"]
+    assert retrieve["evidence_sufficient"] is False
+    assert map_step["mitre_attack"] == []
+    assert "insufficient" in map_step["statement"].lower()
+    assert recommend["actions"] == []
+    assert recommend["requires_human_approval"] is True
+
+
+def test_fusion_retraining_appends_verified_feedback_without_validation_leakage(tmp_path):
+    artifact = tmp_path / "fusion-feedback.joblib"
+    samples = [{"target": 1, "fusion_features": {"s_user": .9, "s_endpoint": .8,
+                 "s_network_flow": .95, "s_network_graph": .8, "s_open_set_distance": .9,
+                 "stage_count": 5}},
+               {"target": 0, "fusion_features": {"s_user": .01, "s_endpoint": .02,
+                 "s_network_flow": .02, "s_network_graph": .01, "s_open_set_distance": .03,
+                 "stage_count": 1}}]
+    train_fusion_meta(output_path=artifact, feedback_samples=samples)
+    import joblib
+    bundle = joblib.load(artifact)
+    assert bundle["feedback_samples_used"] == 2
+    assert bundle["validation_rows"] < 6000
+    assert bundle["threshold_calibration"].startswith("97th percentile")
+
+
+def test_feedback_builder_records_branch_scores_and_verified_label(db_session):
+    from app.api.endpoints import _incident_feedback_sample
+    incident = _investigation_incident(db_session)
+    sample = _incident_feedback_sample(db_session, incident, "CONFIRMED")
+    assert sample["target"] == 1
+    assert sample["source_incident_id"] == incident.incident_id
+    assert sample["fusion_features"]["s_network_flow"] == pytest.approx(.9)
+    assert sample["fusion_features"]["s_open_set_distance"] == pytest.approx(.92)

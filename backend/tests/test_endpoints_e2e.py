@@ -108,6 +108,7 @@ async def test_viewer_gets_forbidden_for_every_write_route(api_clients):
         ("POST", "/api/correlation/run"): {},
         ("PATCH", "/api/incidents/{incident_id}/status"): {"params": {"status": "INVESTIGATING"}},
         ("POST", "/api/incidents/{incident_id}/notes"): {"json": {"content": "test note"}},
+        ("POST", "/api/incidents/{incident_id}/investigate"): {},
         ("POST", "/api/rag/chat"): {"json": {"query": "test"}},
         ("POST", "/api/models/retrain"): {"json": {"profile": "light"}},
         ("POST", "/api/upload"): {"files": {"file": ("empty.json", "[]", "application/json")}},

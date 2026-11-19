@@ -92,6 +92,7 @@ def train_final(
     force_reload: bool = False,
     profile: str = "light",
     output_path: Path | None = None,
+    feedback_samples: list[dict] | None = None,
 ) -> Path:
     """Fit on train only, calibrate tau on known validation only, and save bundle."""
     if profile not in {"light", "medium"}:
@@ -124,8 +125,32 @@ def train_final(
         n_jobs=-1,
         verbosity=-1,
     )
-    # Validation data is deliberately excluded from model fitting.
-    model.fit(pipeline["X_train"], pipeline["y_train"])
+    # Analyst-verified feedback is appended only to training rows; validation
+    # remains untouched and continues to calibrate every open-set threshold.
+    raw_train = pipeline["train_df"][pipeline["feat_cols"]].to_numpy(dtype=np.float32)
+    log1p_columns = fit_log1p_columns(raw_train)
+    feedback_x, feedback_y = [], []
+    class_to_index = {name: index for index, name in enumerate(class_names)}
+    for sample_row in feedback_samples or []:
+        raw_features = sample_row.get("flow_features")
+        label = sample_row.get("predicted_class") if int(sample_row.get("target", 0)) == 1 else "BENIGN"
+        if not isinstance(raw_features, dict) or label not in class_to_index:
+            continue
+        try:
+            raw_row = np.asarray([[float(raw_features[name]) for name in pipeline["feat_cols"]]], dtype=np.float32)
+        except (KeyError, TypeError, ValueError):
+            continue
+        if not np.isfinite(raw_row).all():
+            continue
+        transformed = apply_log1p_columns(raw_row, np.asarray(log1p_columns, dtype=bool))
+        feedback_x.append(pipeline["scaler"].transform(transformed)[0])
+        feedback_y.append(class_to_index[label])
+    X_fit = np.asarray(pipeline["X_train"], dtype=np.float32)
+    y_fit = np.asarray(pipeline["y_train"])
+    if feedback_x:
+        X_fit = np.vstack([X_fit, np.asarray(feedback_x, dtype=np.float32)])
+        y_fit = np.concatenate([y_fit, np.asarray(feedback_y, dtype=y_fit.dtype)])
+    model.fit(X_fit, y_fit)
 
     val_raw_scores = model.predict(pipeline["X_val"], raw_score=True)
     validation_labels = pipeline["le"].inverse_transform(pipeline["y_val"])
@@ -133,9 +158,9 @@ def train_final(
 
     # Centroids/covariance and IF are fit on training rows only. Their rejection
     # thresholds and score ranges are calibrated on known validation rows only.
-    X_train = np.asarray(pipeline["X_train"], dtype=np.float64)
+    X_train = np.asarray(X_fit, dtype=np.float64)
     X_val = np.asarray(pipeline["X_val"], dtype=np.float64)
-    y_train = np.asarray(pipeline["y_train"])
+    y_train = np.asarray(y_fit)
     compact_scaler = StandardScaler().fit(X_train)
     compact_pca = PCA(n_components=min(16, X_train.shape[1]), random_state=SEED).fit(compact_scaler.transform(X_train))
     compact_train = compact_pca.transform(compact_scaler.transform(X_train))
@@ -167,8 +192,6 @@ def train_final(
     union_threshold = float(np.quantile(val_union_score, OPEN_SET_SPECIFICITY))
     anomaly_bounds = (float(np.quantile(val_anomaly, 0.05)), float(np.quantile(val_anomaly, OPEN_SET_SPECIFICITY)))
 
-    raw_train = pipeline["train_df"][pipeline["feat_cols"]].to_numpy(dtype=np.float32)
-    log1p_columns = fit_log1p_columns(raw_train)
     split_type = pipeline.get("split_type", "stratified_random")
     evaluation_json_path = find_corresponding_evaluation("light", SEED, split_type, LIGHT_SAMPLE)
     bundle = {
@@ -212,6 +235,8 @@ def train_final(
         "profile": {"name": profile, "sample_fraction": sample, "log1p": True},
         "split_type": split_type,
         "training_parameters": {"n_estimators": 400, "early_stopping": False},
+        "feedback_adaptation": {"samples_used": len(feedback_x),
+                                "open_set_threshold_calibration": "known validation only"},
     }
     if profile == "medium":
         matching = EVALUATION_DIR / "open_set_cicids_medium_seed42.json"

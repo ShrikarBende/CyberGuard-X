@@ -25,7 +25,7 @@ _RETRIEVER: "KnowledgeRetriever | None" = None
 
 def knowledge_hash() -> str:
     digest = hashlib.sha256()
-    for path in sorted(KNOWLEDGE_DIR.glob("*.md")):
+    for path in sorted([*KNOWLEDGE_DIR.rglob("*.md"), *KNOWLEDGE_DIR.rglob("*.json")]):
         digest.update(path.name.encode("utf-8"))
         digest.update(b"\0")
         digest.update(path.read_bytes())
@@ -95,16 +95,37 @@ def _word_chunks(text: str, file_id: str, title: str, source_file: str,
 
 def load_knowledge_chunks() -> list[dict[str, Any]]:
     chunks = []
-    for path in sorted(KNOWLEDGE_DIR.glob("*.md")):
-        metadata, body = _header_and_body(path.read_text(encoding="utf-8"), path)
-        chunks.extend(_word_chunks(
+    paths = sorted([*KNOWLEDGE_DIR.rglob("*.md"), *KNOWLEDGE_DIR.rglob("*.json")])
+    for path in paths:
+        if path.suffix.lower() == ".json":
+            document = json.loads(path.read_text(encoding="utf-8"))
+            body = str(document.get("text") or document.get("content") or "")
+            metadata = {"id": str(document.get("doc_id") or path.stem),
+                        "title": str(document.get("title") or path.stem.replace("_", " ")),
+                        "source_type": str(document.get("source_type") or "past_incident"),
+                        "source_note": str(document.get("source_note") or "")}
+        else:
+            metadata, body = _header_and_body(path.read_text(encoding="utf-8"), path)
+        source_type = metadata.get("source_type", "project_doc")
+        if source_type == "mitre_attack":
+            source_type = "mitre"
+        if source_type not in {"mitre", "cve", "past_incident"}:
+            source_type = source_type or "project_doc"
+        document_chunks = _word_chunks(
             body,
             metadata["id"],
             metadata["title"],
             path.name,
             settings.RAG_CHUNK_WORDS,
             settings.RAG_CHUNK_OVERLAP_WORDS,
-        ))
+        )
+        for chunk in document_chunks:
+            chunk["doc_id"] = metadata["id"]
+            chunk["source_type"] = source_type
+            chunk["source_note"] = metadata.get("source_note", "")
+            if metadata.get("supported_indicators"):
+                chunk["supported_indicators"] = [value.strip() for value in metadata["supported_indicators"].split(",")]
+        chunks.extend(document_chunks)
     return chunks
 
 
@@ -203,8 +224,9 @@ class KnowledgeRetriever:
             import faiss
             faiss.write_index(self.index, str(INDEX_FILE))
 
-    def search(self, query: str, top_k: int | None = None) -> list[dict[str, Any]]:
-        count = min(max(1, int(top_k or settings.RAG_TOP_K)), len(self.chunks))
+    def search(self, query: str, top_k: int | None = None,
+               extra_documents: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+        count = max(1, int(top_k or settings.RAG_TOP_K))
         vector = self.embedder.encode([query], convert_to_numpy=True, show_progress_bar=False,
                                       normalize_embeddings=True).astype(np.float32)
         vector = np.ascontiguousarray(vector)
@@ -215,10 +237,21 @@ class KnowledgeRetriever:
             scores = self.vectors @ vector[0]
             indices = np.argsort(scores)[::-1][:count]
             pairs = ((int(index), float(scores[index])) for index in indices)
-        return [
-            {**self.chunks[index], "score": float(score)}
-            for index, score in pairs if index >= 0
-        ]
+        results = [{**self.chunks[index], "score": float(score), "relevance_score": float(score)}
+                   for index, score in pairs if index >= 0]
+        if extra_documents:
+            extras = [dict(doc) for doc in extra_documents if str(doc.get("text", "")).strip()]
+            if extras:
+                extra_vectors = self.embedder.encode([doc["text"] for doc in extras], convert_to_numpy=True,
+                                                     show_progress_bar=False, normalize_embeddings=True).astype(np.float32)
+                extra_scores = extra_vectors @ vector[0]
+                results.extend({**doc, "score": float(score), "relevance_score": float(score)}
+                               for doc, score in zip(extras, extra_scores))
+        results.sort(key=lambda item: item["score"], reverse=True)
+        for index, item in enumerate(results):
+            item.setdefault("doc_id", item.get("file_id", item.get("chunk_id", f"doc-{index}")))
+            item.setdefault("source_type", "project_doc")
+        return results[:count]
 
 
 def get_retriever(force_rebuild: bool = False) -> KnowledgeRetriever:

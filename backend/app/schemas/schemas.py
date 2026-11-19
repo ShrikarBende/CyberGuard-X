@@ -3,7 +3,7 @@ Pydantic v2 schemas for Enterprise CyberGuard X.
 """
 from datetime import datetime
 from typing import Optional, List, Dict, Any, Union
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, field_validator
 
 
 # -------------------------------------------------------------------
@@ -76,6 +76,14 @@ class MitreTechniqueResponse(BaseModel):
 class InvestigationNoteCreate(BaseModel):
     content: str
     author: Optional[str] = "SOC Analyst"
+    feedback_label: Optional[str] = None
+
+    @field_validator("feedback_label")
+    @classmethod
+    def validate_feedback_label(cls, value):
+        if value is not None and value not in {"CONFIRMED", "FALSE_POSITIVE"}:
+            raise ValueError("feedback_label must be CONFIRMED or FALSE_POSITIVE")
+        return value
 
 
 class InvestigationNoteResponse(BaseModel):

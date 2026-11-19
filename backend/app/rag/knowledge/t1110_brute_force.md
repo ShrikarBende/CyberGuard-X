@@ -3,6 +3,7 @@ id: T1110
 title: Brute Force
 source_type: mitre_attack
 source_note: Developer-authored summary; verify the current technique details at attack.mitre.org before citing.
+supported_indicators: failed_login_burst, brute_force
 ---
 Summarised by the developer; verify against attack.mitre.org before citing.
 

@@ -50,6 +50,10 @@ def test_every_http_route_declares_auth_and_writes_require_minimum_role():
     }
     assert next(
         _route_auth_metadata(route)[2]
+        for route in routes if route.path == "/api/incidents/{incident_id}/investigate"
+    ) == "analyst"
+    assert next(
+        _route_auth_metadata(route)[2]
         for route in routes if route.path == "/api/explainability/{incident_id}"
     ) == "viewer"
     rows = []
