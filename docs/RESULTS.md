@@ -1,6 +1,55 @@
-# Evaluation results
+# Evaluation results and model provenance
 
-Generated only from saved JSON files listed in `backend/ml/evaluation/results/FINAL.json`; this report does not run evaluation.
+This report reconciles the saved evaluation JSONs and model bundle metadata present in this checkout. Tables labeled as saved-artifact results describe those exact artifacts; newer training code does not retroactively update older bundles.
+
+## Implemented model families and decision layers
+
+Four trained model families are present in code and saved bundles: (1) LightGBM/XGBoost network-flow classifiers (LightGBM is the saved live classifier), (2) DAE + Isolation Forest endpoint anomaly scoring, (3) TFT user-sequence scoring, and (4) GAT host-communication scoring. Presence of a bundle is not evidence of independent ground-truth validation.
+
+Open-set scoring uses centroid distance and confidence/energy/margin signals. Internal outcomes include `KNOWN_THREAT`, `ABSTAIN_NEEDS_REVIEW` (the explicit `decision_outcome`), and `UNKNOWN_NOVEL`; the persisted compatibility verdict for low-margin cases remains `UNKNOWN_CANDIDATE`. `KNOWN_ATTACK` is not a current code/API label. Logistic-regression stacking fuses branch scores into a calibrated 0–100 triage score, not a real-world incident probability.
+
+## Label provenance: benchmark labels vs proxy labels
+
+**Dataset-labeled benchmark results:** CICIDS2017 flow classification and leave-one-family-out open-set results use the dataset's labels as benchmark references. The source corpus has known labeling limits, and these labels are not independently adjudicated real-world incident ground truth. Both the standard stratified runs and the new capture-session-disjoint comparison are listed below. The saved local Sysmon bundle has no labeled benign-versus-Atomic-Red-Team evaluation metrics; that benchmark remains unavailable until separate labeled capture sets are supplied.
+
+**Weakly supervised or synthetic proxy results:** the saved TFT metrics use heuristic sequence labels from Sysmon/CERT indicators; GAT's target is UNSW-NB15 non-benign `attack_cat`, a multi-host anomaly proxy rather than lateral-movement ground truth; the fusion meta-model uses synthetic weak labels. Do not compare these proxy metrics directly with the dataset-labeled CICIDS benchmark.
+
+## Scenario coverage
+
+The scenario loader implements four interactive synthetic scenarios: `multi_stage_takeover`, `brute_force_only`, `benign_admin`, and `normal_employee_day`. The 12-class enterprise attack scenario taxonomy is a target for future benchmark coverage; the current repository does not define the names or implementations of the remaining eight classes.
+
+## MITRE ATT&CK knowledge metadata
+
+The curated technique references are versioned in `backend/app/rag/knowledge_metadata.json` against Enterprise ATT&CK v20.1 (reference verified 2026-11-19). This is a project-curated subset, not a complete or automatically synchronized ATT&CK export. Technique-based mappings are implemented; ingestion of MITRE Detection Strategies and Analytics is a planned transition, not a current capability. MITRE's [version history](https://attack.mitre.org/resources/previous-versions/) records v20.1 as current for the reference date.
+
+## Capture-session-disjoint comparison
+
+The saved [comparison JSON](../backend/ml/evaluation/results/medium_stratified_vs_session_disjoint.json) and [Markdown report](../backend/ml/evaluation/results/medium_stratified_vs_session_disjoint.md) compare the medium CICIDS sample (50% feature-row sample, 60,000-row per-fold train cap, LightGBM confidence detector, seeds 42 and 43). Stratified values cover all ten family/seed folds. The GroupShuffleSplit session-disjoint test had unknown support for only three of ten family/seed folds; the remaining folds are explicitly listed as skipped. Intervals are across available family/seed folds and are wide for session-disjoint results.
+
+| Split | OSCR AUC | Unknown Recall | Benign FPR | Known Macro F1 | Supported folds |
+|---|---:|---:|---:|---:|---:|
+| Stratified row split | 0.8239 (0.7377–0.9101) | 0.3966 (0.1622–0.6310) | 0.0294 (0.0284–0.0305) | 0.9482 (0.9369–0.9595) | 10/10 |
+| Session-disjoint capture split | 0.5410 (0.1286–0.9535) | 0.0760 (0.0000–0.2200) | 0.0012 (0.0011–0.0014) | 0.1898 (0.1710–0.2086) | 3/10 |
+
+These are dataset-labeled benchmark metrics, not independently verified incidents. The split comparison uses fewer trees and a smaller train cap than the saved full medium open-set run; it is a controlled split comparison, not a replacement result for that artifact.
+
+## Saved branch artifact status
+
+| Family | Saved artifact evidence | Label provenance and validation status |
+|---|---|---|
+| Network flow | `cicids2017_medium_lightgbm.bundle.pkl`; seed 42; CICIDS2017 medium profile | Dataset-labeled classifier and open-set reports are available below. |
+| Endpoint DAE + Isolation Forest | `endpoint_behavior.bundle.pkl`; 293 Sysmon capture windows; source `real_sysmon_captures_unsupervised` | No labeled validation metrics are stored. The current bundled source collection does not establish a benign baseline; do not describe this saved artifact as a validated benign-only detector. Updated training code accepts separate benign and Atomic Red Team evaluation capture directories and stores ROC-AUC, PR-AUC, and detection at 5% benign FPR when both are supplied. |
+| TFT | `user_tft.bundle.pkl`; 1,978 train sequences, 495 validation sequences; seed 42 | Saved metrics: ROC-AUC 0.99998, accuracy 0.9960, precision 0.9926, recall 0.9926. The saved artifact predates user-disjoint splitting and uses `stratified_sequence_level_80_20`; labels are heuristic weak proxies, so these values are not ground-truth performance. Newly trained bundles use user-group-disjoint validation. |
+| GAT | `network_gat.bundle.pkl`; 12,000 UNSW-NB15 rows; seed 42 | No independent validation metrics are stored. `attack_cat != benign` is a proxy target, not verified lateral-movement labels. |
+| Risk fusion | `risk_fusion_meta.joblib`; 4,800 synthetic weak-label train rows, 1,200 validation rows | Saved validation ROC-AUC 0.8573 and Brier score 0.1507 on synthetic proxy labels only. |
+
+The app also contains four built-in interactive demo scenarios and a 12-scenario target taxonomy; demo/rule correlation results are not benchmark detections.
+
+---
+
+## Saved open-set evaluation reports
+
+The tables below are generated from saved JSON artifacts; this document does not run an evaluation.
 
 ## Medium open-set results
 
@@ -76,7 +125,7 @@ Replay metadata: model_version=cicids2017-medium-v1; profile=not recorded; rows=
 
 ### Confusion matrix
 
-| Ground truth / verdict | BENIGN | Bot | BruteForce | DosDDoS | PortScan | WebAttack | UNKNOWN_CANDIDATE |
+| Dataset label / verdict | BENIGN | Bot | BruteForce | DosDDoS | PortScan | WebAttack | UNKNOWN_CANDIDATE |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | BENIGN | 16074 | 0 | 0 | 0 | 0 | 0 | 515 |
 | Bot | 0 | 9 | 0 | 0 | 0 | 0 | 7 |
@@ -145,7 +194,7 @@ Accuracy is shown last in the summary table because benign flows dominate the te
 
 ## Limitations
 
-- stratified random split with no timestamps (near-duplicate flows can sit in both train and test, so results are optimistic)
+- Older saved CICIDS runs use stratified row splits with possible capture-session leakage. The new session-disjoint comparison is available, but only 3/10 family/seed folds had unknown support.
 - single dataset, CICIDS2017, from a 2017 testbed with known labelling problems
 - 15% and 50% hash samples
 - 3 seeds only
@@ -153,7 +202,8 @@ Accuracy is shown last in the summary table because benign flows dominate the te
 - PortScan is the weakest family for open-set rejection; the maximum observed unknown rejection across its detectors and seeds was 0.1813
 - Bot is the weakest known class (mean F1 0.8207)
 - replay families with under 100 flows are not interpretable
-- the RAG test is 20 developer-written questions
-- correlation scenarios and thresholds are developer-written demo values
-- the user and endpoint layers have no trained model
-- TFT and GAT are not implemented
+- the RAG retrieval test is 20 developer-written questions
+- correlation scenarios and thresholds are developer-written demo values; four synthetic scenarios are interactive, while the 12-class taxonomy remains a target
+- endpoint evaluation against labeled benign and Atomic Red Team Sysmon captures is not available in the saved artifact; separate labeled capture directories are required
+- TFT validation metrics in the saved bundle use weak labels and a sequence-level random split; the current training code now groups validation by user
+- GAT and fusion metrics use non-ground-truth proxy labels

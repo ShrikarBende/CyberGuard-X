@@ -4,13 +4,16 @@ import { api } from '../services/api';
 
 export default function ThreatIntelligence() {
   const [threatData, setThreatData] = useState(null);
+  const [novelAlerts, setNovelAlerts] = useState([]);
+  const [novelOnly, setNovelOnly] = useState(true);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function loadData() {
       try {
-        const data = await api.getThreats();
+        const [data, novel] = await Promise.all([api.getThreats(), api.getAlerts('UNKNOWN_NOVEL', 100)]);
         setThreatData(data);
+        setNovelAlerts(novel);
       } catch (err) {
         console.error('Failed to load threat intelligence:', err);
       } finally {
@@ -30,12 +33,26 @@ export default function ThreatIntelligence() {
 
   const { summary, known_categories } = threatData || {};
 
-  if (threatData?.detection_count === 0) {
-    return <div className="rounded-2xl border border-[#1E293B] bg-[#10182E] p-8 text-center text-slate-300">No detections yet.</div>;
-  }
-
   return (
     <div className="space-y-6">
+      <section className="rounded-2xl border border-fuchsia-500/40 bg-fuchsia-500/[0.06] p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div><p className="text-[10px] font-bold uppercase tracking-widest text-fuchsia-300">Open-set triage</p><h2 className="mt-1 text-base font-extrabold text-slate-100">Unknown / Novel Threat View</h2><p className="mt-1 text-xs text-slate-400">Review behavior that falls outside known-class confidence or centroid boundaries.</p></div>
+          <label className="flex items-center gap-2 text-xs text-slate-300"><input type="checkbox" checked={novelOnly} onChange={(event) => setNovelOnly(event.target.checked)} className="accent-fuchsia-500" /> UNKNOWN_NOVEL only</label>
+        </div>
+        <div className="mt-4 rounded-xl border border-fuchsia-500/30 bg-[#0D1527] p-3 text-sm font-bold text-fuchsia-100">Novel / Unfamiliar Behavior — Requires Analyst Triage</div>
+        <div className="mt-3 space-y-2">
+          {(novelOnly ? novelAlerts : (threatData?.unknown_candidates || [])).map((item) => {
+            const distance = item.centroid_distance ?? item.open_set_distance;
+            const novelty = item.novelty_score ?? item.details?.open_set_score;
+            return <article key={item.detection_id || item.event_id} className="grid gap-2 rounded-xl border border-[#26344D] bg-[#0D1527] p-3 sm:grid-cols-[1fr_auto] sm:items-center">
+              <div><div className="flex flex-wrap items-center gap-2"><span className="text-xs font-bold text-fuchsia-200">{item.verdict || 'UNKNOWN_NOVEL'}</span><span className="font-mono text-[10px] text-slate-500">Event {item.event_id?.slice(-10) || '—'}</span></div><p className="mt-1 text-[10px] text-slate-500">{item.timestamp || item.created_at ? new Date(item.timestamp || item.created_at).toLocaleString() : 'Timestamp unavailable'}</p></div>
+              <div className="flex gap-4 text-xs"><span className="text-slate-400">Centroid distance <strong className="ml-1 font-mono text-amber-300">{distance == null ? '—' : Number(distance).toFixed(4)}</strong></span><span className="text-slate-400">Novelty score <strong className="ml-1 font-mono text-fuchsia-300">{novelty == null ? '—' : Number(novelty).toFixed(3)}</strong></span></div>
+            </article>;
+          })}
+          {(novelOnly ? novelAlerts : threatData?.unknown_candidates || []).length === 0 && <p className="py-3 text-xs text-slate-500">No UNKNOWN_NOVEL detections are currently recorded.</p>}
+        </div>
+      </section>
       {/* Overview Metric Banner */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="bg-[#10182E] border border-[#1E293B] rounded-2xl p-5">

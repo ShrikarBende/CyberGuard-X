@@ -14,6 +14,7 @@ import {
   Activity,
 } from 'lucide-react';
 import { api } from '../services/api';
+import RiskFusion from '../components/RiskFusion';
 
 export default function IncidentManagement({ onSelectIncidentForAssistant, role = 'viewer' }) {
   const canInvestigate = role === 'analyst' || role === 'admin';
@@ -136,6 +137,8 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
           {incidents.map((inc) => {
             const isSelected = selectedIncident?.incident_id === inc.incident_id;
             const isCritical = inc.severity === 'CRITICAL';
+              const isRuleCorrelated = inc.threat_classification === 'RULE_CORRELATED_SUSPICIOUS_ACTIVITY';
+              const isDemo = (inc.evidence?.indicators || []).some((indicator) => indicator.dataset === 'synthetic_demo' || indicator.is_demo);
             return (
               <div
                 key={inc.incident_id}
@@ -162,6 +165,10 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
                 </div>
 
                 <p className="text-xs font-bold text-slate-200 line-clamp-1">{inc.title}</p>
+                {isRuleCorrelated && <div className="mt-2 flex flex-wrap gap-1.5">
+                  {isDemo && <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[9px] font-bold tracking-wide text-amber-200">DEMO</span>}
+                  <span className="rounded-full border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-[9px] font-bold tracking-wide text-cyan-200">RULE-CORRELATED</span>
+                </div>}
                 <p className="text-[10px] text-slate-500 mt-1">{inc.flow_count || 1} flows</p>
                 <div className="flex items-center justify-between text-[11px] text-slate-400 mt-2">
                   <span>{inc.user_id || 'host_sys'}</span>
@@ -214,6 +221,25 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
                 )}
               </div>
             </div>
+
+            {selectedIncident.threat_classification === 'RULE_CORRELATED_SUSPICIOUS_ACTIVITY' && (() => {
+              const isDemo = (selectedIncident.evidence?.indicators || []).some((indicator) => indicator.dataset === 'synthetic_demo' || indicator.is_demo);
+              return <div className="flex flex-wrap gap-2" aria-label="Incident provenance badges">
+                {isDemo && <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2.5 py-1 text-[10px] font-bold tracking-wide text-amber-200">DEMO</span>}
+                <span className="rounded-full border border-cyan-500/40 bg-cyan-500/10 px-2.5 py-1 text-[10px] font-bold tracking-wide text-cyan-200">RULE-CORRELATED</span>
+              </div>;
+            })()}
+
+            {(() => {
+              const fusion = selectedIncident.evidence?.risk_fusion || selectedIncident.risk_score_detail?.risk_breakdown?.fusion || {};
+              return <RiskFusion explanation={{
+                severity: fusion.severity || selectedIncident.severity,
+                calibrated_risk_score: fusion.probability,
+                overall_risk_score: selectedIncident.overall_risk_score,
+                per_layer_contributions: fusion.contributions || {},
+              }} />;
+            })()}
+            {String(selectedIncident.threat_classification || '').includes('UNKNOWN') && <div className="rounded-xl border border-fuchsia-500/40 bg-fuchsia-500/10 p-3 text-xs font-semibold text-fuchsia-100">Novel / Unfamiliar Behavior — Requires Analyst Triage. This open-set candidate is not a confirmed attack.</div>}
 
             {/* Target Entities Row */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -346,9 +372,14 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
             {correlationAlerts.map((alert, index) => (
               <div key={`${alert.name}-${index}`} className="rounded-xl border border-[#1E293B] bg-[#0D1527] p-3">
                 <div className="flex flex-wrap justify-between gap-2 text-xs">
-                  <span className="font-semibold text-blue-300">{alert.name.replaceAll('_', ' ')}</span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold text-blue-300">{alert.name.replaceAll('_', ' ')}</span>
+                    {alert.is_demo && <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[9px] font-bold text-amber-200">DEMO</span>}
+                    <span className="rounded-full border border-cyan-500/40 bg-cyan-500/10 px-2 py-0.5 text-[9px] font-bold text-cyan-200">RULE-CORRELATED</span>
+                  </div>
                   <span className="font-mono text-slate-500">{new Date(alert.timestamp).toLocaleString()} · {alert.layer}</span>
                 </div>
+                {alert.scenario && <p className="text-[10px] text-amber-200 mt-1">Demo scenario: {alert.scenario.replaceAll('_', ' ')}</p>}
                 <p className="text-[11px] text-slate-300 mt-1">{alert.rule}</p>
                 <p className="text-[10px] text-slate-500 mt-1">Evidence event IDs: {(alert.event_ids || []).join(', ')}</p>
               </div>

@@ -426,8 +426,16 @@ export default function DataManagement({ role = 'viewer' }) {
         </div>
         <div className="bg-[#10182E] border border-amber-500/30 rounded-2xl p-6 flex flex-wrap items-center justify-between gap-4">
           <div>
-            <h4 className="text-sm font-bold text-slate-200">Synthetic correlation scenarios</h4>
+            <div className="flex items-center gap-2">
+              <h4 className="text-sm font-bold text-slate-200">Synthetic correlation scenarios</h4>
+              <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[9px] font-bold tracking-wide text-amber-200">DEMO</span>
+            </div>
             <p className="text-xs text-slate-500 mt-1">Loads labelled events only. Run correlation separately from Incident Management.</p>
+            <div className="mt-2 flex flex-wrap gap-1.5" aria-label="Four built-in demo scenarios">
+              {['multi_stage_takeover', 'brute_force_only', 'benign_admin', 'normal_employee_day'].map((scenario) => (
+                <span key={scenario} className="rounded-full border border-amber-500/20 bg-[#0D1527] px-2 py-1 text-[9px] text-amber-100">{scenario.replaceAll('_', ' ')}</span>
+              ))}
+            </div>
             {demoMessage && <p className="text-xs text-amber-200 mt-2">{demoMessage}</p>}
           </div>
           {isAdmin && <button

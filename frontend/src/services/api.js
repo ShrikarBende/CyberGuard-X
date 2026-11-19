@@ -109,6 +109,7 @@ export const api = {
 
   // 5. Explainability
   getExplainability: (id) => fetchJson(`/explainability/${id}`),
+  investigateIncident: (id, topK = 6) => fetchJson(`/incidents/${id}/investigate?top_k=${topK}`, { method: 'POST' }),
 
   // 6. RAG Chat Assistant
   ragChat: (query, incidentId = null) =>

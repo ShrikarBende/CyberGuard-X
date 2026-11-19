@@ -26,7 +26,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: "postgresql://cyberguard:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env before starting Docker Compose}@postgres:5432/cyberguardx"
+      DATABASE_URL: "postgresql+psycopg2://cyberguard:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env before starting Docker Compose}@postgres:5432/cyberguardx"
       APP_ENV: production
       DEBUG: "False"
       SECRET_KEY: "${SECRET_KEY:?Set SECRET_KEY in .env before starting Docker Compose}"

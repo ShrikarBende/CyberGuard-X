@@ -1,0 +1,10 @@
+{
+  "knowledge_base_name": "CyberGuard X curated ATT&CK references",
+  "metadata_schema_version": 1,
+  "reference_catalog": "MITRE ATT&CK Enterprise v20.1",
+  "reference_verified_on": "2026-11-19",
+  "source_url": "https://attack.mitre.org/resources/previous-versions/",
+  "content_scope": "Project-authored and curated procedure/technique documents; not a complete or automatically synchronized ATT&CK export.",
+  "detection_content_status": "Technique references and evidence-gated mappings are implemented. MITRE Detection Strategies and Analytics are not yet ingested; migration is planned.",
+  "note": "Review identifiers and source content against the current ATT&CK release before operational use."
+}

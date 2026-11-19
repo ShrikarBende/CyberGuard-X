@@ -36,6 +36,10 @@ def _record(name: str, rule: str, event: Any, fields: list[str], *, event_ids=No
             evidence=None, layer=None, timestamp=None) -> dict:
     return {
         "name": name,
+        "source_type": "rule_correlated",
+        "dataset": _get(event, "dataset"),
+        "scenario": _get(event, "scenario"),
+        "is_demo": _get(event, "dataset") == "synthetic_demo",
         "rule": rule,
         "evidence_fields": fields,
         "evidence": evidence or {field: _get(event, field) for field in fields},
