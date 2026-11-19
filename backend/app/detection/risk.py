@@ -56,6 +56,9 @@ def compute_fused_risk(scores: dict):
     return {
         "score": fused["score"],
         "probability": fused["probability"],
+        "calibrated_risk_score": fused["calibrated_risk_score"],
+        "fusion_confidence": fused["fusion_confidence"],
+        "calibration_source": fused["calibration_source"],
         "severity": fused["severity"],
         "contributions": fused["contributions"],
         "inputs": fused["inputs"],

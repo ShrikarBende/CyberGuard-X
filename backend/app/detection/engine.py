@@ -342,16 +342,33 @@ def predict_flow(flow: Dict[str, Any], bundle: Dict[str, Any]) -> Dict[str, Any]
                 probabilities.reshape(1, -1), np.asarray([distance]), bundle["centroid_distance_bounds"],
                 anomaly, bundle.get("anomaly_score_bounds"),
             )[0])
-        open_set_details = {"open_set_label": "UNKNOWN_NOVEL" if rejected else predicted_class,
+        low_confidence = probability < float(bundle.get("confidence_threshold", 0.0))
+        low_margin = score < float(bundle.get("margin_threshold", tau))
+        energy_far = (energy is not None and bundle.get("energy_anomaly_threshold") is not None
+                      and energy > float(bundle["energy_anomaly_threshold"]))
+        distance_far = distance > float(bundle["centroid_distance_threshold"])
+        anomaly_far = (anomaly_score is not None and bundle.get("anomaly_score_threshold") is not None
+                       and anomaly_score > float(bundle["anomaly_score_threshold"]))
+        # Older bundles have no separate energy gate. Preserve their trained
+        # reject threshold while newly calibrated bundles require joint signals.
+        has_energy_gate = bundle.get("energy_anomaly_threshold") is not None
+        novel = bool(rejected and (distance_far or anomaly_far) and
+                     ((low_confidence or energy_far or low_margin) if has_energy_gate else (low_confidence or distance_far or anomaly_far)))
+        ambiguous = bool(not novel and (low_confidence or low_margin))
+        decision = "UNKNOWN_NOVEL" if novel else ("ABSTAIN_NEEDS_REVIEW" if ambiguous else predicted_class)
+        open_set_details = {"open_set_label": decision,
                             "centroid_distance": distance, "open_set_score": open_set_score,
-                            "branch_anomaly_score": anomaly_score, "energy_anomaly_score": energy}
-        verdict = "UNKNOWN_NOVEL" if rejected else (
+                            "branch_anomaly_score": anomaly_score, "energy_anomaly_score": energy,
+                            "decision_outcome": decision}
+        verdict = ("UNKNOWN_CANDIDATE" if decision == "ABSTAIN_NEEDS_REVIEW" else decision) if decision in {"UNKNOWN_NOVEL", "ABSTAIN_NEEDS_REVIEW"} else (
             "BENIGN" if predicted_class == "BENIGN" else "KNOWN_THREAT"
         )
     else:
         verdict = "UNKNOWN_CANDIDATE" if score < tau else (
             "BENIGN" if predicted_class == "BENIGN" else "KNOWN_THREAT"
         )
+    if verdict == "UNKNOWN_CANDIDATE":
+        open_set_details["decision_outcome"] = "ABSTAIN_NEEDS_REVIEW"
     return {
         "class_names": names, "probabilities": probabilities,
         "probability_by_class": {name: float(probabilities[i]) for i, name in enumerate(names)},

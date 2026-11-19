@@ -185,7 +185,8 @@ def build_evaluation_summary(include_archive: bool = False) -> list[dict[str, An
             for _, row in family_runs:
                 for detector, metrics in (row.get("detectors") or {}).items():
                     bucket = detector_values.setdefault(detector, {
-                        "AUROC": [], "unknown_rejection_rate": []
+                        "AUROC": [], "unknown_rejection_rate": [], "oscr_auc": [],
+                        "unknown_recall": [], "known_macro_f1": [], "auprc": [],
                     })
                     for metric in bucket:
                         value = metrics.get(metric)

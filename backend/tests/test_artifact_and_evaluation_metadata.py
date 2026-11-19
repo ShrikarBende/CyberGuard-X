@@ -63,6 +63,13 @@ def test_relative_sqlite_paths_resolve_from_backend_directory(tmp_path, monkeypa
     assert in_memory.database == ":memory:"
 
 
+def test_postgresql_database_url_is_preserved_for_sqlalchemy():
+    resolved = resolve_database_url("postgresql+psycopg2://cyberguard:secret@localhost:5432/cyberguardx")
+    assert resolved.drivername == "postgresql+psycopg2"
+    assert resolved.host == "localhost"
+    assert resolved.database == "cyberguardx"
+
+
 def test_results_directory_is_under_backend_ml_evaluation():
     assert evaluation_results.RESULTS_DIR == BACKEND_DIR / "ml" / "evaluation" / "results"
 

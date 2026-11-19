@@ -72,7 +72,10 @@ def _fallback_probability(vector: np.ndarray) -> float:
 
 
 def predict_fused_risk(values: Mapping[str, Any], bundle: Mapping[str, Any] | None = None) -> dict:
-    """Return calibrated threat probability, 0-100 risk, tier, and normalized contributions."""
+    """Return a calibrated 0-100 risk score, confidence, provenance, and contributions.
+
+    The score is a triage signal, not a real-world incident probability.
+    """
     vector = normalize_fusion_inputs(values)
     active = bundle if bundle is not None else load_fusion_bundle()
     if active:
@@ -95,9 +98,16 @@ def predict_fused_risk(values: Mapping[str, Any], bundle: Mapping[str, Any] | No
         contributions = {name: round(value * 100.0 / total, 2) for name, value in contributions.items()}
         key = next(reversed(contributions))
         contributions[key] = round(contributions[key] + 100.0 - sum(contributions.values()), 2)
+    calibration_source = ("ground_truth" if active and active.get("calibration_source") == "ground_truth"
+                          else "synthetic_weak_labels_plus_feedback")
+    score = round(float(np.clip(probability, 0.0, 1.0)) * 100.0, 2)
     return {
         "probability": float(np.clip(probability, 0.0, 1.0)),
-        "score": round(float(np.clip(probability, 0.0, 1.0)) * 100.0, 2),
+        "score": score,
+        "calibrated_risk_score": score,
+        "fusion_confidence": float(np.clip(active.get("fusion_confidence", active.get("calibration_confidence", 0.5)) if active else 0.25, 0.0, 1.0)),
+        "calibration_source": calibration_source,
+        "score_interpretation": "calibrated triage risk score; not a real-world incident probability",
         "severity": severity_tier(probability),
         "contributions": contributions,
         "inputs": {name: float(vector[0, index]) for index, name in enumerate(FEATURE_NAMES)},

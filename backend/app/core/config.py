@@ -51,6 +51,8 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_MB: int = 50
     INCIDENT_WINDOW_MINUTES: int = 5
 
+    # SQLAlchemy URL: SQLite is the dev/CI default; production Compose uses
+    # postgresql+psycopg2:// with the psycopg2 driver from requirements.txt.
     DATABASE_URL: str = "sqlite:///./cyberguardx.db"
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",

@@ -280,6 +280,58 @@ def rejection_metrics(
     return unk_reject, knw_reject
 
 
+def benign_fpr_operating_points(scores: np.ndarray, labels: np.ndarray,
+                                points: tuple[float, ...] = (0.01, 0.03, 0.05),
+                                seed: int = 42, n_resamples: int = 500) -> dict:
+    """Unknown detection metrics at thresholds selected from benign/known scores."""
+    scores = np.asarray(scores, dtype=np.float64)
+    labels = np.asarray(labels)
+    benign = scores[labels == 0]
+    unknown = labels == 1
+    known = labels == 0
+    result = {}
+    if not len(benign):
+        return result
+    for target in points:
+        threshold = float(np.quantile(benign, 1.0 - target, method="higher"))
+        flagged = scores > threshold
+        tp = int(np.count_nonzero(flagged & unknown))
+        fp = int(np.count_nonzero(flagged & ~unknown))
+        support = int(unknown.sum())
+        volume = int(flagged.sum())
+        rng = np.random.default_rng(seed + int(target * 10000))
+        recall_samples = np.empty(n_resamples)
+        precision_samples = np.empty(n_resamples)
+        fpr_samples = np.empty(n_resamples)
+        volume_samples = np.empty(n_resamples)
+        known_scores = scores[known]
+        unknown_scores = scores[unknown]
+        for index in range(n_resamples):
+            known_sample = rng.choice(known_scores, size=len(known_scores), replace=True)
+            unknown_sample = rng.choice(unknown_scores, size=len(unknown_scores), replace=True) if len(unknown_scores) else np.array([])
+            sampled_tp = int(np.count_nonzero(unknown_sample > threshold))
+            sampled_fp = int(np.count_nonzero(known_sample > threshold))
+            sampled_volume = sampled_tp + sampled_fp
+            recall_samples[index] = sampled_tp / len(unknown_sample) if len(unknown_sample) else 0.0
+            precision_samples[index] = sampled_tp / sampled_volume if sampled_volume else 0.0
+            fpr_samples[index] = sampled_fp / len(known_sample)
+            volume_samples[index] = sampled_volume
+        ci = lambda values: [float(np.quantile(values, .025)), float(np.quantile(values, .975))]
+        result[f"{int(target * 100)}pct_benign_fpr"] = {
+            "target_benign_fpr": target,
+            "benign_fpr": float(fp / len(benign)),
+            "unknown_recall": float(tp / support) if support else 0.0,
+            "open_set_precision": float(tp / volume) if volume else 0.0,
+            "flagged_alert_volume": volume,
+            "threshold": threshold,
+            "unknown_recall_95CI": ci(recall_samples),
+            "open_set_precision_95CI": ci(precision_samples),
+            "benign_fpr_95CI": ci(fpr_samples),
+            "flagged_alert_volume_95CI": ci(volume_samples),
+        }
+    return result
+
+
 def oscr_curve(known_correct: np.ndarray, unknown_scores: np.ndarray,
                known_scores: np.ndarray) -> Tuple[np.ndarray, np.ndarray, float]:
     """Return OSCR (unknown FPR, known CCR, AUC), sweeping an anomaly-score cutoff.
@@ -733,6 +785,11 @@ def evaluate_one_family(
                            "points_total": int(len(oscr_x))},
             "threshold_value": union_thresholds if name == "union_conf_mahalanobis" else round(thresh, 6),
             "threshold_percentile": 97.5 if name == "union_conf_mahalanobis" else THRESHOLD_PERCENTILE,
+            "benign_fpr_operating_points": benign_fpr_operating_points(
+                scores, test_labels,
+                seed=seed + zlib.crc32(f"{held_out_family}:{name}:operating-points".encode("utf-8")) % (2**31),
+                n_resamples=pipeline.get("bootstrap_resamples", 1000),
+            ),
             **bootstrap,
         }
         elapsed = time.perf_counter() - progress_state["started"] if progress_state else time.perf_counter() - family_started

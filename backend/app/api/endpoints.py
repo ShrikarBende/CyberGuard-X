@@ -391,7 +391,7 @@ def run_rule_correlation(
 # -------------------------------------------------------------------
 @router.get("/alerts", response_model=List[DetectionResultResponse])
 def get_alerts(
-    verdict: Optional[str] = Query(None, description="BENIGN, KNOWN_THREAT, UNKNOWN_CANDIDATE"),
+    verdict: Optional[str] = Query(None, description="BENIGN, KNOWN_THREAT, UNKNOWN_CANDIDATE, UNKNOWN_NOVEL"),
     limit: int = Query(50, ge=1, le=500),
     db: Session = Depends(get_db)
 ):
@@ -410,7 +410,8 @@ def get_threat_intelligence(db: Session = Depends(get_db)):
     detections = db.query(DetectionResult).all()
     detection_count = len(detections)
     known = [d for d in detections if d.verdict == "KNOWN_THREAT"]
-    candidates = [d for d in detections if d.verdict == "UNKNOWN_CANDIDATE"]
+    candidates = [d for d in detections if d.verdict in {"UNKNOWN_CANDIDATE", "UNKNOWN_NOVEL"}]
+    novel = [d for d in detections if d.verdict == "UNKNOWN_NOVEL"]
 
     return {
         "detection_count": detection_count,
@@ -418,6 +419,7 @@ def get_threat_intelligence(db: Session = Depends(get_db)):
             "total_detections": detection_count,
             "known_threats_count": len(known),
             "unknown_candidates_count": len(candidates),
+            "unknown_novel_count": len(novel),
             "candidate_rate": round(len(candidates) / detection_count, 3) if detection_count else 0.0
         },
         "known_categories": list({d.predicted_class for d in known if d.predicted_class}),
@@ -428,6 +430,9 @@ def get_threat_intelligence(db: Session = Depends(get_db)):
                 "attack_probability": d.attack_probability,
                 "open_set_distance": d.open_set_distance,
                 "reconstruction_error": d.reconstruction_error,
+                "verdict": d.verdict,
+                "centroid_distance": (d.details or {}).get("centroid_distance", d.open_set_distance),
+                "novelty_score": (d.details or {}).get("open_set_score"),
                 "timestamp": d.created_at.isoformat()
             }
             for d in candidates[:20]
@@ -666,6 +671,10 @@ def get_explainability(
         "title": inc.title,
         "overall_risk_score": risk_score,
         "calibrated_risk_score": risk_probability,
+        "calibrated_risk_score_0_100": risk_score,
+        "fusion_confidence": float(fusion.get("fusion_confidence", 0.5)),
+        "calibration_source": fusion.get("calibration_source", "synthetic_weak_labels_plus_feedback"),
+        "risk_score_interpretation": "calibrated triage score (0-100), not a real-world incident probability",
         "severity": inc.severity,
         "threat_classification": inc.threat_classification,
         "risk_breakdown": risk_breakdown,
