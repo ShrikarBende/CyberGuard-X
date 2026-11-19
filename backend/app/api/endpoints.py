@@ -780,11 +780,17 @@ def retrain_model(
                                    .order_by(AnalystActivity.timestamp.asc()).all())
             feedback_samples = [dict(activity.details or {}) for activity in feedback_activities]
             from ml.training.train_final import train_final
-            if feedback_samples:
-                trained_path = train_final(profile=request.profile, output_path=temporary,
-                                           feedback_samples=feedback_samples)
-            else:
-                trained_path = train_final(profile=request.profile, output_path=temporary)
+            import inspect
+            trainer_signature = inspect.signature(train_final)
+            accepts_feedback = (
+                "feedback_samples" in trainer_signature.parameters
+                or any(parameter.kind == inspect.Parameter.VAR_KEYWORD
+                       for parameter in trainer_signature.parameters.values())
+            )
+            trainer_kwargs = {"profile": request.profile, "output_path": temporary}
+            if feedback_samples and accepts_feedback:
+                trainer_kwargs["feedback_samples"] = feedback_samples
+            trained_path = train_final(**trainer_kwargs)
             if not Path(trained_path).is_file():
                 raise FileNotFoundError(f"Training completed without producing artifact: {trained_path}")
             import joblib
