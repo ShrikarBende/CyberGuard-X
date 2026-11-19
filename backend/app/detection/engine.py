@@ -14,7 +14,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.detection.risk import compute_risk
+from app.detection.risk import compute_fused_risk
 from app.models.entities import (
     DetectionResult,
     Incident,
@@ -116,9 +116,7 @@ def _upsert_grouped_flow_incident(event: SecurityEvent, prediction: Dict[str, An
     incident = db.query(Incident).filter(Incident.group_key == group_key).first()
     is_new = incident is None
     risk_score = float(risk_result["score"])
-    severity = "CRITICAL" if risk_score >= settings.RISK_CRITICAL_THRESHOLD else (
-        "HIGH" if risk_score >= settings.RISK_HIGH_THRESHOLD else "MEDIUM"
-    )
+    severity = risk_result.get("severity", "MEDIUM")
     score_value = float(prediction["score"])
     if is_new:
         unknown = verdict in {"UNKNOWN_CANDIDATE", "UNKNOWN_NOVEL"}
@@ -142,6 +140,7 @@ def _upsert_grouped_flow_incident(event: SecurityEvent, prediction: Dict[str, An
                 "window_bucket": window_bucket,
                 "review_text": "Low model margin; not a confirmed novel attack." if unknown else None,
                 "risk_breakdown": risk_result["breakdown"],
+                "risk_fusion": {key: risk_result[key] for key in ("probability", "severity", "contributions", "inputs", "model_version", "calibrated")},
                 "score_summary": {"count": 1, "min": score_value, "max": score_value, "mean": score_value},
                 "sample_event_count": 0,
             },
@@ -156,6 +155,9 @@ def _upsert_grouped_flow_incident(event: SecurityEvent, prediction: Dict[str, An
             score=risk_score,
             category=severity,
             anomaly_factor=attack_probability,
+            user_risk_component=risk_result["contributions"]["user_contribution"],
+            endpoint_risk_component=risk_result["contributions"]["endpoint_contribution"],
+            network_risk_component=risk_result["contributions"]["network_contribution"],
             top_contributing_features=None,
             explanation_summary=None,
             risk_breakdown=risk_result["breakdown"],
@@ -170,12 +172,14 @@ def _upsert_grouped_flow_incident(event: SecurityEvent, prediction: Dict[str, An
         summary["mean"] = (float(summary.get("mean", 0.0)) * old_count + score_value) / new_count
         summary["count"] = new_count
         evidence["score_summary"] = summary
-        evidence["risk_breakdown"] = risk_result["breakdown"]
         incident.evidence = evidence
         incident.flow_count = int(incident.flow_count or 0) + 1
-        if risk_score > float(incident.overall_risk_score):
+        if risk_score >= float(incident.overall_risk_score):
             incident.overall_risk_score = risk_score
             incident.severity = severity
+            evidence["risk_breakdown"] = risk_result["breakdown"]
+            evidence["risk_fusion"] = {key: risk_result[key] for key in ("probability", "severity", "contributions", "inputs", "model_version", "calibrated")}
+            incident.evidence = evidence
         first_time = incident.first_detected_at
         if first_time.tzinfo is None:
             first_time = first_time.replace(tzinfo=timezone.utc)
@@ -188,10 +192,15 @@ def _upsert_grouped_flow_incident(event: SecurityEvent, prediction: Dict[str, An
             incident.last_updated_at = event_time
         risk_detail = db.query(RiskScore).filter(RiskScore.incident_id == incident.incident_id).first()
         if risk_detail:
+            previous_score = float(risk_detail.score)
             risk_detail.score = max(float(risk_detail.score), risk_score)
             risk_detail.category = incident.severity
             risk_detail.anomaly_factor = max(float(risk_detail.anomaly_factor or 0.0), attack_probability)
-            risk_detail.risk_breakdown = risk_result["breakdown"]
+            if risk_score >= previous_score:
+                risk_detail.risk_breakdown = risk_result["breakdown"]
+                risk_detail.user_risk_component = risk_result["contributions"]["user_contribution"]
+                risk_detail.endpoint_risk_component = risk_result["contributions"]["endpoint_contribution"]
+                risk_detail.network_risk_component = risk_result["contributions"]["network_contribution"]
 
     sample_count = db.query(func.count(IncidentEvent.id)).filter(
         IncidentEvent.incident_id == incident.incident_id
@@ -462,7 +471,12 @@ def persist_scored_batch(events: list[SecurityEvent], predictions: list[Dict[str
         score = float(prediction["score"])
         probability = float(prediction["probability"])
         attack_probability = float(1.0 - probabilities[class_names.index("BENIGN")])
-        risk_result = compute_risk(attack_probability, probability, verdict)
+        fusion_inputs = {
+            "s_network_flow": attack_probability,
+            "s_open_set_distance": prediction.get("open_set_score", prediction.get("centroid_distance", 0.0)),
+            "stage_count": 1,
+        }
+        risk_result = compute_fused_risk(fusion_inputs)
         detection_id = f"det_{uuid.uuid4().hex[:12]}"
         flow = (event.raw_payload or {}).get("cicids_features", {})
         detection_rows.append(DetectionResult(
@@ -482,6 +496,11 @@ def persist_scored_batch(events: list[SecurityEvent], predictions: list[Dict[str
                 "score_name": bundle["score_name"],
                 "score": score,
                 "risk_breakdown": risk_result["breakdown"],
+                "risk_fusion": {key: risk_result[key] for key in ("probability", "severity", "contributions", "inputs", "model_version", "calibrated")},
+                "s_network_flow": attack_probability,
+                "open_set_score": prediction.get("open_set_score"),
+                "centroid_distance": prediction.get("centroid_distance"),
+                "open_set_label": prediction.get("open_set_label"),
             },
             model_version=bundle["model_version"],
             tau=prediction["tau"],
@@ -659,7 +678,6 @@ async def process_single_event(event_in: SecurityEventCreate, db: Session) -> Di
     benign_index = class_names.index("BENIGN") if "BENIGN" in class_names else None
     probabilities = prediction["probabilities"]
     attack_probability = float(1.0 - probabilities[benign_index])
-    risk_result = compute_risk(attack_probability, probability, verdict)
     user_prediction = None
     if event_in.user_id:
         user_bundle = load_user_bundle()
@@ -676,6 +694,15 @@ async def process_single_event(event_in: SecurityEventCreate, db: Session) -> Di
             if isinstance(supplied_graph_features, dict):
                 graph_features.update(supplied_graph_features)
             graph_prediction = predict_graph_edge(str(source_host), str(destination_host), graph_features, graph_bundle)
+    fusion_inputs = {
+        "s_user": user_prediction.get("s_user", 0.0) if user_prediction else 0.0,
+        "s_endpoint": 0.0,
+        "s_network_flow": attack_probability,
+        "s_network_graph": graph_prediction.get("s_network_graph", 0.0) if graph_prediction else 0.0,
+        "s_open_set_distance": prediction.get("open_set_score", prediction.get("centroid_distance", 0.0)),
+        "stage_count": 1,
+    }
+    risk_result = compute_fused_risk(fusion_inputs)
     probability_by_class = prediction["probability_by_class"]
     detection_id = f"det_{uuid.uuid4().hex[:12]}"
     details = {
@@ -684,7 +711,15 @@ async def process_single_event(event_in: SecurityEventCreate, db: Session) -> Di
         "score_name": bundle["score_name"],
         "score": score,
         "risk_breakdown": risk_result["breakdown"],
+        "risk_fusion": {key: risk_result[key] for key in ("probability", "severity", "contributions", "inputs", "model_version", "calibrated")},
         "s_network_flow": attack_probability,
+        "s_user": fusion_inputs["s_user"],
+        "s_endpoint": fusion_inputs["s_endpoint"],
+        "s_network_graph": fusion_inputs["s_network_graph"],
+        "s_open_set_distance": fusion_inputs["s_open_set_distance"],
+        "open_set_score": prediction.get("open_set_score"),
+        "centroid_distance": prediction.get("centroid_distance"),
+        "open_set_label": prediction.get("open_set_label"),
         **({"user_sequence": user_prediction} if user_prediction else {}),
         **({"network_graph": graph_prediction} if graph_prediction else {}),
     }
@@ -696,7 +731,7 @@ async def process_single_event(event_in: SecurityEventCreate, db: Session) -> Di
         probability=probability,
         score=score,
         attack_probability=attack_probability,
-        open_set_distance=None,
+        open_set_distance=prediction.get("centroid_distance"),
         reconstruction_error=None,
         layer="network",
         details=details,

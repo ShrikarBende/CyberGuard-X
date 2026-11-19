@@ -6,6 +6,7 @@ The verdict component is 1 for confirmed threats, 0.5 for unconfirmed
 candidates, and 0 for BENIGN. Configured weights are normalized before use.
 """
 from app.core.config import settings
+from ml.fusion_meta import predict_fused_risk
 
 
 def compute_risk(attack_probability, class_probability, verdict):
@@ -47,3 +48,18 @@ def compute_correlation_risk(indicator_count: int, layer_count: int, has_model_f
         + layer_value * weights["layer_diversity"]
     ) / total_weight
     return {"score": round(score, 2), "breakdown": components}
+
+
+def compute_fused_risk(scores: dict):
+    """Stack all available branch scores into one calibrated incident risk result."""
+    fused = predict_fused_risk(scores)
+    return {
+        "score": fused["score"],
+        "probability": fused["probability"],
+        "severity": fused["severity"],
+        "contributions": fused["contributions"],
+        "inputs": fused["inputs"],
+        "model_version": fused["model_version"],
+        "calibrated": fused["calibrated"],
+        "breakdown": {"fusion": fused},
+    }

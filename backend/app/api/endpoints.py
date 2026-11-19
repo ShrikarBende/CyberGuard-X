@@ -524,95 +524,125 @@ def get_explainability(
     incident_id: str,
     db: Session = Depends(get_db),
 ):
-    """Compute and cache signed LightGBM TreeSHAP attributions on demand."""
+    """Return a unified fusion-risk and multi-modal explanation for an incident."""
     inc = db.query(Incident).filter(Incident.incident_id == incident_id).first()
     if not inc:
         raise HTTPException(status_code=404, detail=f"Incident {incident_id} not found")
-
     risk_detail = inc.risk_score_detail
-    if not risk_detail:
-        return {"available": False, "reason": "SHAP not computed"}
+    evidence = inc.evidence or {}
+    risk_breakdown = (risk_detail.risk_breakdown if risk_detail else None) or evidence.get("risk_breakdown") or {}
+    fusion = risk_breakdown.get("fusion", {}) if isinstance(risk_breakdown, dict) else {}
+    evidence_fusion = evidence.get("risk_fusion", {})
+    if not fusion and isinstance(evidence_fusion, dict):
+        fusion = evidence_fusion
+    contributions = fusion.get("contributions") or {
+        "user_contribution": 0.0, "endpoint_contribution": 0.0,
+        "network_contribution": 100.0, "open_set_contribution": 0.0,
+    }
+    event_links = (db.query(IncidentEvent).filter(IncidentEvent.incident_id == incident_id)
+                   .order_by(IncidentEvent.order).all())
+    event_ids = list(dict.fromkeys(link.event_id for link in event_links))
+    detections = (db.query(DetectionResult).filter(DetectionResult.event_id.in_(event_ids)).all()
+                  if event_ids else [])
+    detection_by_event = {row.event_id: row for row in detections}
+    tree_shap = []
+    endpoint_residuals = []
+    temporal_attention = []
+    graph_attention = []
+    open_set_rationales = []
+    for row in detections:
+        details = row.details or {}
+        if row.layer == "endpoint" or details.get("feature_residuals"):
+            endpoint_residuals.append({"event_id": row.event_id,
+                                       "top_features": details.get("top_contributing_features", details.get("feature_residuals", [])),
+                                       "reconstruction_error": details.get("reconstruction_error", row.reconstruction_error),
+                                       "s_endpoint": details.get("s_endpoint", row.score)})
+        user_result = details.get("user_sequence", details)
+        if user_result.get("temporal_attention"):
+            temporal_attention.append({"event_id": row.event_id,
+                                       "attention": user_result["temporal_attention"],
+                                       "variable_selection_weights": user_result.get("variable_selection_weights")})
+        graph_result = details.get("network_graph", details)
+        if graph_result.get("top_suspicious_edges") or graph_result.get("edge_attention") is not None:
+            graph_attention.append({"event_id": row.event_id,
+                                    "score": graph_result.get("s_network_graph"),
+                                    "edge_attention": graph_result.get("edge_attention"),
+                                    "top_suspicious_edges": graph_result.get("top_suspicious_edges", [])})
+        open_set_score = details.get("open_set_score")
+        centroid_distance = details.get("centroid_distance", row.open_set_distance)
+        if open_set_score is not None or row.verdict in {"UNKNOWN_CANDIDATE", "UNKNOWN_NOVEL"}:
+            open_set_rationales.append({"event_id": row.event_id,
+                                       "flagged": row.verdict in {"UNKNOWN_CANDIDATE", "UNKNOWN_NOVEL"},
+                                       "label": details.get("open_set_label", row.verdict),
+                                       "centroid_distance": centroid_distance,
+                                       "novelty_score": open_set_score,
+                                       "rationale": ("Centroid distance or calibrated novelty score exceeded its known-data threshold."
+                                                     if row.verdict in {"UNKNOWN_CANDIDATE", "UNKNOWN_NOVEL"} else None)})
 
-    def shap_unavailable(reason: str):
-        return {
-            "available": False,
-            "reason": reason,
-            "overall_risk_score": inc.overall_risk_score,
-            "risk_breakdown": risk_detail.risk_breakdown,
-        }
+    # TreeSHAP is best-effort and only applies to detections with tabular flow features.
+    flow_detection = next((row for row in detections if (row.details or {}).get("cicids_features")), None)
+    if flow_detection:
+        details = flow_detection.details or {}
+        stored = details.get("shap_feature_importance")
+        if stored is None and risk_detail and risk_detail.top_contributing_features:
+            stored = risk_detail.top_contributing_features
+        tree_shap = _SHAP_CACHE.get(flow_detection.detection_id) or stored or []
+        if not tree_shap:
+            try:
+                from app.detection.engine import load_model_bundle
+                import numpy as np
+                import shap
+                from ml.preprocessing.cicids_pipeline import apply_log1p_columns
+                bundle = load_model_bundle()
+                if bundle:
+                    feature_names = bundle["feature_names"]
+                    raw = details["cicids_features"]
+                    row_values = np.asarray([[raw[name] for name in feature_names]], dtype=np.float32)
+                    transformed = apply_log1p_columns(row_values, np.asarray(bundle["log1p_columns"], dtype=bool))
+                    scaled = bundle["scaler"].transform(transformed)
+                    class_index = bundle["class_names"].index(flow_detection.predicted_class)
+                    values = shap.TreeExplainer(bundle["model"]).shap_values(scaled)
+                    if isinstance(values, list):
+                        signed_values = np.asarray(values[class_index])[0]
+                    else:
+                        values = np.asarray(values)
+                        signed_values = values[0, :, class_index] if values.ndim == 3 and values.shape[-1] == len(bundle["class_names"]) else values[0]
+                    top = np.argsort(np.abs(signed_values))[-5:][::-1]
+                    tree_shap = [{"feature": feature_names[int(index)], "value": float(signed_values[index])} for index in top]
+                    _SHAP_CACHE[flow_detection.detection_id] = tree_shap
+                    if risk_detail:
+                        risk_detail.top_contributing_features = tree_shap
+                        db.commit()
+            except Exception:
+                logger.exception("TreeSHAP computation failed for incident %s", incident_id)
 
-    incident_event = (
-        db.query(IncidentEvent)
-        .filter(IncidentEvent.incident_id == incident_id)
-        .order_by(IncidentEvent.order)
-        .first()
-    )
-    detection = None
-    event = None
-    if incident_event:
-        event = db.query(SecurityEvent).filter(SecurityEvent.event_id == incident_event.event_id).first()
-        detection = db.query(DetectionResult).filter(DetectionResult.event_id == incident_event.event_id).first()
-    if not event or not detection or not detection.details or not detection.details.get("cicids_features"):
-        return shap_unavailable("SHAP not computed")
-
-    stored_features = risk_detail.top_contributing_features
-    if stored_features and not all("value" in item for item in stored_features):
-        stored_features = None
-    top_features = _SHAP_CACHE.get(detection.detection_id) or stored_features
-    if not top_features:
-        try:
-            from app.detection.engine import load_model_bundle
-            import numpy as np
-            import shap
-            from ml.preprocessing.cicids_pipeline import apply_log1p_columns
-
-            bundle = load_model_bundle()
-            if not bundle:
-                return shap_unavailable("SHAP not computed")
-            feature_names = bundle["feature_names"]
-            raw = detection.details["cicids_features"]
-            row = np.asarray([[raw[name] for name in feature_names]], dtype=np.float32)
-            transformed = apply_log1p_columns(row, np.asarray(bundle["log1p_columns"], dtype=bool))
-            scaled = bundle["scaler"].transform(transformed)
-            class_index = bundle["class_names"].index(detection.predicted_class)
-            values = shap.TreeExplainer(bundle["model"]).shap_values(scaled)
-            if isinstance(values, list):
-                signed_values = np.asarray(values[class_index])[0]
-            else:
-                values = np.asarray(values)
-                if values.ndim == 3 and values.shape[-1] == len(bundle["class_names"]):
-                    signed_values = values[0, :, class_index]
-                elif values.ndim == 3 and values.shape[0] == len(bundle["class_names"]):
-                    signed_values = values[class_index, 0, :]
-                else:
-                    signed_values = values[0] if values.ndim == 2 else values
-            top_indexes = np.argsort(np.abs(signed_values))[-5:][::-1]
-            top_features = [
-                {"feature": feature_names[int(index)], "value": float(signed_values[index])}
-                for index in top_indexes
-            ]
-            _SHAP_CACHE[detection.detection_id] = top_features
-            risk_detail.top_contributing_features = top_features
-            db.commit()
-        except Exception:
-            logger.exception("TreeSHAP computation failed for incident %s", incident_id)
-            return shap_unavailable("SHAP computation failed")
-
+    risk_score = float(inc.overall_risk_score or 0.0)
+    risk_probability = float(fusion.get("probability", risk_detail.score / 100 if risk_detail else risk_score / 100))
     return {
+        "available": True,
         "incident_id": incident_id,
         "title": inc.title,
-        "overall_risk_score": inc.overall_risk_score,
+        "overall_risk_score": risk_score,
+        "calibrated_risk_score": risk_probability,
         "severity": inc.severity,
         "threat_classification": inc.threat_classification,
-        "shap_feature_importance": top_features,
-        "risk_breakdown": risk_detail.risk_breakdown,
+        "risk_breakdown": risk_breakdown,
+        "per_layer_contributions": contributions,
         "layer_breakdown": {
-            "user_identity": risk_detail.user_risk_component,
-            "endpoint_device": risk_detail.endpoint_risk_component,
-            "network_traffic": risk_detail.network_risk_component,
+            "user_identity": risk_detail.user_risk_component if risk_detail else contributions.get("user_contribution", 0.0),
+            "endpoint_device": risk_detail.endpoint_risk_component if risk_detail else contributions.get("endpoint_contribution", 0.0),
+            "network_traffic": risk_detail.network_risk_component if risk_detail else contributions.get("network_contribution", 0.0),
         },
-        "anomaly_factor": risk_detail.anomaly_factor,
-        "explanation": risk_detail.explanation_summary
+        "anomaly_factor": risk_detail.anomaly_factor if risk_detail else None,
+        "explanation": risk_detail.explanation_summary if risk_detail else inc.description,
+        "explanations": {
+            "tree_shap_feature_attributions": tree_shap,
+            "endpoint_reconstruction_residuals": endpoint_residuals,
+            "user_temporal_attention": temporal_attention,
+            "network_graph_edge_attention": graph_attention,
+            "open_set_novelty": open_set_rationales,
+        },
+        "evidence": evidence,
     }
 
 

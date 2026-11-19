@@ -9,9 +9,9 @@ import uuid
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.detection.risk import compute_correlation_risk
+from app.detection.risk import compute_fused_risk
 from app.models.entities import (
-    Incident, IncidentEvent, MitreTechnique, RiskScore, SecurityEvent, User, Device,
+    DetectionResult, Incident, IncidentEvent, MitreTechnique, RiskScore, SecurityEvent, User, Device,
 )
 from app.correlation.indicators import evaluate_indicators
 
@@ -93,7 +93,7 @@ def correlate_events(events, window_minutes: int | None = None) -> dict:
         distinct_names = {indicator["name"] for indicator in group}
         layers = sorted({indicator["layer"] for indicator in group})
         has_model_flag = "model_flagged_flow" in distinct_names
-        risk = compute_correlation_risk(len(distinct_names), len(layers), has_model_flag)
+        risk = compute_fused_risk({"stage_count": len(distinct_names), "s_network_flow": float(has_model_flag)})
         sequence = []
         for indicator in group:
             item = _serializable_indicator(indicator)
@@ -104,6 +104,7 @@ def correlate_events(events, window_minutes: int | None = None) -> dict:
             "layers": layers,
             "risk_score": risk["score"],
             "risk_breakdown": risk["breakdown"],
+            "risk_fusion": risk,
             "description": NOT_CONFIRMED,
             "status": "open",
         })
@@ -125,6 +126,33 @@ def run_correlation(db: Session, window_minutes: int | None = None) -> dict:
     persisted = []
     for candidate in result["incidents"]:
         indicators = candidate["indicators"]
+        indicator_count = len({item["name"] for item in indicators})
+        event_ids_for_fusion = list(dict.fromkeys(event_id for item in indicators for event_id in item["event_ids"]))
+        detection_rows = (db.query(DetectionResult).filter(DetectionResult.event_id.in_(event_ids_for_fusion)).all()
+                          if event_ids_for_fusion else [])
+        branch_inputs = {"stage_count": indicator_count}
+        for detection_row in detection_rows:
+            detail = detection_row.details or {}
+            user_data = detail.get("user_sequence") or {}
+            graph_data = detail.get("network_graph") or {}
+            branch_inputs["s_user"] = max(float(branch_inputs.get("s_user", 0.0)),
+                                          float(detail.get("s_user", user_data.get("s_user", 0.0)) or 0.0))
+            branch_inputs["s_endpoint"] = max(float(branch_inputs.get("s_endpoint", 0.0)),
+                                               float(detail.get("s_endpoint", 0.0) or 0.0))
+            branch_inputs["s_network_flow"] = max(float(branch_inputs.get("s_network_flow", 0.0)),
+                                                   float(detail.get("s_network_flow", detection_row.attack_probability or 0.0) or 0.0))
+            branch_inputs["s_network_graph"] = max(float(branch_inputs.get("s_network_graph", 0.0)),
+                                                    float(detail.get("s_network_graph", graph_data.get("s_network_graph", 0.0)) or 0.0))
+            open_set_score = detail.get("open_set_score")
+            if open_set_score is None and detection_row.open_set_distance is not None:
+                distance = float(detection_row.open_set_distance)
+                open_set_score = distance / (1.0 + max(distance, 0.0))
+            branch_inputs["s_open_set_distance"] = max(float(branch_inputs.get("s_open_set_distance", 0.0)),
+                                                        float(open_set_score or 0.0))
+        fusion = compute_fused_risk(branch_inputs)
+        candidate["risk_score"] = fusion["score"]
+        candidate["risk_breakdown"] = fusion["breakdown"]
+        candidate["risk_fusion"] = fusion
         signature_source = "|".join(
             f"{item['name']}:{','.join(item['event_ids'])}" for item in indicators
         )
@@ -132,6 +160,20 @@ def run_correlation(db: Session, window_minutes: int | None = None) -> dict:
         incident_id = f"corr_{signature}"
         existing = db.query(Incident).filter(Incident.incident_id == incident_id).first()
         if existing:
+            existing.overall_risk_score = fusion["score"]
+            existing.severity = fusion["severity"]
+            existing_evidence = dict(existing.evidence or {})
+            existing_evidence.update({"risk_fusion": fusion, "risk_breakdown": fusion["breakdown"]})
+            existing.evidence = existing_evidence
+            detail = db.query(RiskScore).filter(RiskScore.incident_id == incident_id).first()
+            if detail:
+                detail.score = fusion["score"]
+                detail.category = fusion["severity"]
+                detail.user_risk_component = fusion["contributions"]["user_contribution"]
+                detail.endpoint_risk_component = fusion["contributions"]["endpoint_contribution"]
+                detail.network_risk_component = fusion["contributions"]["network_contribution"]
+                detail.anomaly_factor = fusion["probability"]
+                detail.risk_breakdown = fusion["breakdown"]
             persisted.append(existing)
             continue
 
@@ -147,9 +189,7 @@ def run_correlation(db: Session, window_minutes: int | None = None) -> dict:
         if device_id and not db.query(Device).filter(Device.device_id == device_id).first():
             device_id = None
         risk_score = candidate["risk_score"]
-        severity = "CRITICAL" if risk_score >= settings.RISK_CRITICAL_THRESHOLD else (
-            "HIGH" if risk_score >= settings.RISK_HIGH_THRESHOLD else "MEDIUM"
-        )
+        severity = candidate["risk_fusion"]["severity"]
         attack_sequence = [
             {"stage": item["name"], "indicator": item["name"], "timestamp": item["timestamp"],
              "event_ids": item["event_ids"], "evidence": item["evidence"], "layer": item["layer"]}
@@ -159,6 +199,7 @@ def run_correlation(db: Session, window_minutes: int | None = None) -> dict:
             "indicators": indicators,
             "layers": candidate["layers"],
             "risk_breakdown": candidate["risk_breakdown"],
+            "risk_fusion": candidate["risk_fusion"],
             "correlation_key": signature,
             "notice": NOT_CONFIRMED,
         }
@@ -195,6 +236,10 @@ def run_correlation(db: Session, window_minutes: int | None = None) -> dict:
             correlation_multiplier=1.0,
             explanation_summary=NOT_CONFIRMED,
             risk_breakdown=candidate["risk_breakdown"],
+            user_risk_component=candidate["risk_fusion"]["contributions"]["user_contribution"],
+            endpoint_risk_component=candidate["risk_fusion"]["contributions"]["endpoint_contribution"],
+            network_risk_component=candidate["risk_fusion"]["contributions"]["network_contribution"],
+            anomaly_factor=candidate["risk_fusion"]["probability"],
         ))
         mitre_names = {item["name"] for item in indicators}
         for name in sorted(mitre_names & MITRE_RULES.keys()):
