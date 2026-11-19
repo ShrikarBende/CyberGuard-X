@@ -32,7 +32,7 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import GroupShuffleSplit, train_test_split
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 
 # ─── Paths ────────────────────────────────────────────────────────────────────
@@ -338,12 +338,41 @@ def build_splits(
     seed: int = 42,
     val_ratio: float = 0.10,
     test_ratio: float = 0.20,
+    split_mode: str = "stratified_random",
 ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Per-file stratified split: 70% train | 10% val | 20% test.
     Scaler is NOT fitted here — that's done in get_feature_matrices().
     No Timestamp column exists in CICIDS2017; we use stratified split and warn.
     """
+    if split_mode not in {"stratified_random", "session_disjoint"}:
+        raise ValueError("split_mode must be 'stratified_random' or 'session_disjoint'")
+    if split_mode == "session_disjoint":
+        # CICIDS2017's source CSVs are capture-day/session files. Keep each
+        # capture intact across splits; within a timestamped source, contiguous
+        # half-day blocks are the smallest independent unit.
+        work = df.copy()
+        if "Timestamp" in work.columns:
+            stamps = pd.to_datetime(work["Timestamp"], errors="coerce", dayfirst=True, utc=True)
+            block = stamps.dt.floor("12h").astype(str)
+            work["_session_group"] = work["_source_file"].astype(str) + "|" + block
+            missing = stamps.isna()
+            work.loc[missing, "_session_group"] = work.loc[missing, "_source_file"].astype(str) + "|unknown"
+        else:
+            work["_session_group"] = work["_source_file"].astype(str)
+        groups = work["_session_group"].to_numpy()
+        first, second = GroupShuffleSplit(n_splits=1, test_size=test_ratio, random_state=seed).split(work, groups=groups).__next__()
+        train_val, test = work.iloc[first], work.iloc[second]
+        val_fraction = val_ratio / (1.0 - test_ratio)
+        train_idx, val_idx = next(GroupShuffleSplit(n_splits=1, test_size=val_fraction, random_state=seed + 1).split(train_val, groups=train_val["_session_group"]))
+        train, val = train_val.iloc[train_idx], train_val.iloc[val_idx]
+        train_groups, val_groups, test_groups = (set(train["_session_group"]), set(val["_session_group"]),
+                                                set(test["_session_group"]))
+        if (not train_groups.isdisjoint(val_groups) or not train_groups.isdisjoint(test_groups)
+                or not val_groups.isdisjoint(test_groups)):
+            raise AssertionError("session-disjoint split leaked a source/day block")
+        train, val, test = train.drop(columns=["_session_group"]), val.drop(columns=["_session_group"]), test.drop(columns=["_session_group"])
+        return train.reset_index(drop=True), val.reset_index(drop=True), test.reset_index(drop=True)
     warning = "No Timestamp column: stratified random split. Near-duplicate flows may leak between train and test; results are optimistic."
     print(f"WARNING: {warning}")
     warnings.warn(
@@ -443,6 +472,7 @@ def get_feature_matrices(
     val_df: pd.DataFrame,
     test_df: pd.DataFrame,
     log1p: bool = False,
+    label_classes: list[str] | None = None,
 ) -> Tuple[
     np.ndarray, np.ndarray,       # X_train, y_train
     np.ndarray, np.ndarray,       # X_val,   y_val
@@ -473,9 +503,14 @@ def get_feature_matrices(
     X_val   = _transform_scaler_in_chunks(scaler, X_val_raw)
     X_test  = _transform_scaler_in_chunks(scaler, X_test_raw)
 
-    # Fit label encoder on train only
+    # Fit numeric scaling on train only. In session-disjoint mode the complete
+    # label vocabulary is known without using any held-out feature values.
     le = LabelEncoder()
-    y_train = le.fit_transform(train_df[LABEL_COL].values)
+    if label_classes is None:
+        y_train = le.fit_transform(train_df[LABEL_COL].values)
+    else:
+        le.fit(np.asarray(label_classes, dtype=str))
+        y_train = le.transform(train_df[LABEL_COL].values)
     y_val   = le.transform(val_df[LABEL_COL].values)
     y_test  = le.transform(test_df[LABEL_COL].values)
 
@@ -498,6 +533,7 @@ def build_full_pipeline(
     seed: int = 42,
     sample: float = 1.0,
     log1p: bool = False,
+    split_mode: str = "stratified_random",
 ) -> dict:
     """
     Load, clean, split, scale — returns a dict with everything downstream needs.
@@ -510,7 +546,7 @@ def build_full_pipeline(
     # Downstream stages need split frames, and callers only use full_df for
     # label/provenance checks. Retain those columns instead of the full feature table.
     full_df = df[[LABEL_COL, "_source_file"]].copy()
-    train_df, val_df, test_df = build_splits(df, seed=seed)
+    train_df, val_df, test_df = build_splits(df, seed=seed, split_mode=split_mode)
     del df
     gc.collect()
 
@@ -522,7 +558,9 @@ def build_full_pipeline(
         scaler,
         le,
         class_names,
-    ) = get_feature_matrices(train_df, val_df, test_df, log1p=log1p)
+    ) = get_feature_matrices(train_df, val_df, test_df, log1p=log1p,
+                             label_classes=(sorted(full_df[LABEL_COL].astype(str).unique())
+                                            if split_mode == "session_disjoint" else None))
 
     return {
         "X_train": X_train, "y_train": y_train,
@@ -540,8 +578,10 @@ def build_full_pipeline(
         "seed":        seed,
         "attack_families": ATTACK_FAMILIES,
         "label_map":       LABEL_MAP,
-        "split_type": "stratified_random",
-        "split_warning": "No Timestamp column: stratified random split. Near-duplicate flows may leak between train and test; results are optimistic.",
+        "split_type": split_mode,
+        "split_warning": ("Capture-session disjoint split; CICIDS source files are held wholly within one split."
+                          if split_mode == "session_disjoint" else
+                          "No Timestamp column: stratified random split. Near-duplicate flows may leak between train and test; results are optimistic."),
         "row_counts": {"train": len(train_df), "validation": len(val_df), "test": len(test_df)},
         "log1p": log1p,
     }

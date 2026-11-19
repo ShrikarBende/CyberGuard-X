@@ -1,0 +1,270 @@
+{
+  "pipeline_stage": "session_disjoint_comparison",
+  "profile": "medium",
+  "sample_fraction": 0.5,
+  "train_row_cap_per_fold": 60000,
+  "classifier_estimators": 80,
+  "seeds": [
+    42,
+    43
+  ],
+  "detector": "confidence",
+  "label_provenance": "CICIDS2017 dataset labels; reported as dataset-labeled metrics, not independently verified incident ground truth",
+  "split_definitions": {
+    "stratified_random": "per-source-file stratified row split",
+    "session_disjoint": "GroupShuffleSplit over source_file plus contiguous 12-hour Timestamp block, or source_file when Timestamp is absent"
+  },
+  "records": [
+    {
+      "split_mode": "stratified_random",
+      "seed": 42,
+      "family": "DosDDoS",
+      "OSCR_AUC": 0.865624,
+      "Unknown_Recall": 0.765084,
+      "Benign_FPR": 0.027843,
+      "Known_Macro_F1": 0.936249,
+      "unknown_support": 32220,
+      "known_support": 217609
+    },
+    {
+      "split_mode": "stratified_random",
+      "seed": 42,
+      "family": "PortScan",
+      "OSCR_AUC": 0.7082,
+      "Unknown_Recall": 0.039761,
+      "Benign_FPR": 0.028692,
+      "Known_Macro_F1": 0.938965,
+      "unknown_support": 9029,
+      "known_support": 240800
+    },
+    {
+      "split_mode": "stratified_random",
+      "seed": 42,
+      "family": "BruteForce",
+      "OSCR_AUC": 0.886016,
+      "Unknown_Recall": 0.281424,
+      "Benign_FPR": 0.032547,
+      "Known_Macro_F1": 0.934631,
+      "unknown_support": 899,
+      "known_support": 248930
+    },
+    {
+      "split_mode": "stratified_random",
+      "seed": 42,
+      "family": "WebAttack",
+      "OSCR_AUC": 0.951735,
+      "Unknown_Recall": 0.921296,
+      "Benign_FPR": 0.031356,
+      "Known_Macro_F1": 0.945568,
+      "unknown_support": 216,
+      "known_support": 249613
+    },
+    {
+      "split_mode": "stratified_random",
+      "seed": 42,
+      "family": "Bot",
+      "OSCR_AUC": 0.525069,
+      "Unknown_Recall": 0.035533,
+      "Benign_FPR": 0.029498,
+      "Known_Macro_F1": 0.981429,
+      "unknown_support": 197,
+      "known_support": 249632
+    },
+    {
+      "split_mode": "stratified_random",
+      "seed": 43,
+      "family": "DosDDoS",
+      "OSCR_AUC": 0.848781,
+      "Unknown_Recall": 0.636313,
+      "Benign_FPR": 0.028731,
+      "Known_Macro_F1": 0.930186,
+      "unknown_support": 32220,
+      "known_support": 217609
+    },
+    {
+      "split_mode": "stratified_random",
+      "seed": 43,
+      "family": "PortScan",
+      "OSCR_AUC": 0.831194,
+      "Unknown_Recall": 0.038985,
+      "Benign_FPR": 0.028832,
+      "Known_Macro_F1": 0.939899,
+      "unknown_support": 9029,
+      "known_support": 240800
+    },
+    {
+      "split_mode": "stratified_random",
+      "seed": 43,
+      "family": "BruteForce",
+      "OSCR_AUC": 0.945307,
+      "Unknown_Recall": 0.241379,
+      "Benign_FPR": 0.030902,
+      "Known_Macro_F1": 0.946508,
+      "unknown_support": 899,
+      "known_support": 248930
+    },
+    {
+      "split_mode": "stratified_random",
+      "seed": 43,
+      "family": "WebAttack",
+      "OSCR_AUC": 0.967915,
+      "Unknown_Recall": 0.935185,
+      "Benign_FPR": 0.028967,
+      "Known_Macro_F1": 0.947341,
+      "unknown_support": 216,
+      "known_support": 249613
+    },
+    {
+      "split_mode": "stratified_random",
+      "seed": 43,
+      "family": "Bot",
+      "OSCR_AUC": 0.708941,
+      "Unknown_Recall": 0.071066,
+      "Benign_FPR": 0.026917,
+      "Known_Macro_F1": 0.980922,
+      "unknown_support": 197,
+      "known_support": 249632
+    },
+    {
+      "split_mode": "session_disjoint",
+      "seed": 42,
+      "family": "PortScan",
+      "OSCR_AUC": 0.403049,
+      "Unknown_Recall": 0.005051,
+      "Benign_FPR": 0.001311,
+      "Known_Macro_F1": 0.198768,
+      "unknown_support": 45142,
+      "known_support": 133821
+    },
+    {
+      "split_mode": "session_disjoint",
+      "seed": 42,
+      "family": "WebAttack",
+      "OSCR_AUC": 0.265681,
+      "Unknown_Recall": 0.0,
+      "Benign_FPR": 0.001311,
+      "Known_Macro_F1": 0.170641,
+      "unknown_support": 1082,
+      "known_support": 177881
+    },
+    {
+      "split_mode": "session_disjoint",
+      "seed": 43,
+      "family": "DosDDoS",
+      "OSCR_AUC": 0.954355,
+      "Unknown_Recall": 0.222934,
+      "Benign_FPR": 0.001122,
+      "Known_Macro_F1": 0.199967,
+      "unknown_support": 97002,
+      "known_support": 452005
+    }
+  ],
+  "summary": {
+    "stratified_random": {
+      "OSCR_AUC": {
+        "mean": 0.8238781999999999,
+        "95CI": [
+          0.7376987667526892,
+          0.9100576332473106
+        ]
+      },
+      "Unknown_Recall": {
+        "mean": 0.3966026,
+        "95CI": [
+          0.16217098927580456,
+          0.6310342107241955
+        ]
+      },
+      "Benign_FPR": {
+        "mean": 0.029428500000000003,
+        "95CI": [
+          0.028374312573219443,
+          0.030482687426780564
+        ]
+      },
+      "Known_Macro_F1": {
+        "mean": 0.9481698,
+        "95CI": [
+          0.9368706177655214,
+          0.9594689822344785
+        ]
+      }
+    },
+    "session_disjoint": {
+      "OSCR_AUC": {
+        "mean": 0.5410283333333333,
+        "95CI": [
+          0.12857880043584746,
+          0.9534778662308192
+        ]
+      },
+      "Unknown_Recall": {
+        "mean": 0.075995,
+        "95CI": [
+          0.0,
+          0.22002357631056596
+        ]
+      },
+      "Benign_FPR": {
+        "mean": 0.001248,
+        "95CI": [
+          0.00112452,
+          0.00137148
+        ]
+      },
+      "Known_Macro_F1": {
+        "mean": 0.189792,
+        "95CI": [
+          0.17101176311969057,
+          0.2085722368803094
+        ]
+      }
+    }
+  },
+  "markdown_report_path": "D:\\MAJOR PROJECT\\backend\\ml\\evaluation\\results\\medium_stratified_vs_session_disjoint.md",
+  "expected_folds_per_split_mode": 10,
+  "skipped_folds": [
+    {
+      "split_mode": "session_disjoint",
+      "seed": 42,
+      "family": "DosDDoS",
+      "reason": "No held-out unknown rows in the session-level test split"
+    },
+    {
+      "split_mode": "session_disjoint",
+      "seed": 42,
+      "family": "BruteForce",
+      "reason": "No held-out unknown rows in the session-level test split"
+    },
+    {
+      "split_mode": "session_disjoint",
+      "seed": 42,
+      "family": "Bot",
+      "reason": "No held-out unknown rows in the session-level test split"
+    },
+    {
+      "split_mode": "session_disjoint",
+      "seed": 43,
+      "family": "PortScan",
+      "reason": "No held-out unknown rows in the session-level test split"
+    },
+    {
+      "split_mode": "session_disjoint",
+      "seed": 43,
+      "family": "BruteForce",
+      "reason": "No held-out unknown rows in the session-level test split"
+    },
+    {
+      "split_mode": "session_disjoint",
+      "seed": 43,
+      "family": "WebAttack",
+      "reason": "No held-out unknown rows in the session-level test split"
+    },
+    {
+      "split_mode": "session_disjoint",
+      "seed": 43,
+      "family": "Bot",
+      "reason": "No held-out unknown rows in the session-level test split"
+    }
+  ]
+}

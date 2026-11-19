@@ -131,12 +131,16 @@ def train_fusion_meta(data_path: Path = DATA_PATH, output_path: Path = ARTIFACT_
         "class_weight": "balanced",
         "seed": SEED,
         "training_source": source,
+        "label_provenance": ("synthetic_proxy_weak_labels" if source == "synthetic_weak_labels_v1"
+                             else "provided_incident_label; ground_truth_status_unspecified"),
         "feedback_samples_used": feedback_count,
         "training_rows": int(len(x_train)),
         "validation_rows": int(len(x_val)),
         "class_balance": {"train_positive_fraction": float(y_train.mean()),
                            "validation_positive_fraction": float(y_val.mean())},
         "validation_metrics": metrics,
+        "validation_metrics_label_provenance": ("synthetic_proxy_weak_labels" if source == "synthetic_weak_labels_v1"
+                                                else "provided_incident_label; ground_truth_status_unspecified"),
         "decision_threshold": decision_threshold,
         "threshold_calibration": "97th percentile of negative validation probabilities",
         "training_date": datetime.now(timezone.utc).isoformat(),

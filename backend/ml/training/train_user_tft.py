@@ -10,7 +10,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from sklearn.metrics import accuracy_score, precision_score, recall_score, roc_auc_score
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import GroupShuffleSplit
 from torch.utils.data import DataLoader, TensorDataset
 
 BACKEND_DIR = Path(__file__).resolve().parents[2]
@@ -52,20 +52,22 @@ def train_user_tft(dataset_dir: Path | None = None, output_path: Path | None = N
         cert_dir is not None and cert_dir.is_dir() and any(cert_dir.rglob("logon.csv"))
     )
     if has_real_files:
-        sequences, labels = load_user_sequences(sysmon_dir, cert_dir, SEQUENCE_LENGTH)
+        sequences, labels, groups = load_user_sequences(sysmon_dir, cert_dir, SEQUENCE_LENGTH, return_groups=True)
         if len(sequences) < 2:
             raise ValueError("User sequence files were found, but did not contain enough parseable user events")
         source = "real_sysmon_cert_weak_labels"
     else:
         sequences, labels = generate_synthetic_user_sequences(512, seed, SEQUENCE_LENGTH)
+        groups = np.asarray([f"synthetic-user-{i // 8}" for i in range(len(labels))], dtype=str)
         source = "synthetic_fallback"
 
     indexes = np.arange(len(labels))
-    class_counts = np.bincount(labels.astype(int), minlength=2)
-    stratify = labels if np.all(class_counts >= 2) else None
-    train_indexes, val_indexes = train_test_split(
-        indexes, test_size=.2, random_state=seed, stratify=stratify
-    )
+    if len(groups) != len(indexes):
+        raise ValueError("one user/host group identifier is required per sequence")
+    train_indexes, val_indexes = next(GroupShuffleSplit(n_splits=1, test_size=.2, random_state=seed)
+                                     .split(indexes, labels, groups=groups))
+    if not set(groups[train_indexes]).isdisjoint(set(groups[val_indexes])):
+        raise AssertionError("user/host group leaked across TFT train and validation")
     # Fit normalization on training sequences only.
     flattened = sequences[train_indexes].reshape(-1, sequences.shape[-1])
     lower = np.quantile(flattened, .01, axis=0).astype(np.float32)
@@ -154,9 +156,12 @@ def train_user_tft(dataset_dir: Path | None = None, output_path: Path | None = N
         "train_score_quantiles": _score_quantiles(train_scores),
         "class_weight": {"positive_weight": positive_weight,
                          "negative_count": int(negatives), "positive_count": int(positives)},
-        "validation_split": "stratified_sequence_level_80_20",
+        "validation_split": "user_group_disjoint_GroupShuffleSplit_80_20",
+        "training_user_groups": int(len(set(groups[train_indexes]))),
+        "validation_user_groups": int(len(set(groups[val_indexes]))),
         "attention_supervision": "risk-indicator-weighted event-step targets; zero-signal sessions use uniform over valid steps",
         "label_note": "heuristic risk labels from logon failures, host transitions, privilege elevation, and command activity; not verified account-takeover ground truth",
+        "validation_label_provenance": "proxy_weak_labels" if source != "synthetic_fallback" else "synthetic_proxy_weak_labels",
         "seed": seed, "training_date": datetime.now(timezone.utc).isoformat(),
     }
     destination.parent.mkdir(parents=True, exist_ok=True)

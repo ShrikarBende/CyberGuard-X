@@ -533,7 +533,7 @@ def evaluate_one_family(
 
     # ── (a) LightGBM max-probability confidence ───────────────────────────
     lgbm = lgb.LGBMClassifier(
-        n_estimators=300, learning_rate=0.05, num_leaves=63,
+        n_estimators=int(pipeline.get("classifier_estimators", 300)), learning_rate=0.05, num_leaves=63,
         class_weight="balanced", random_state=seed, n_jobs=-1, verbosity=-1,
     )
     lgbm.fit(X_tr, y_tr, eval_set=[(X_vl, y_vl_clean)],
@@ -755,6 +755,9 @@ def evaluate_one_family(
             knw_rej = float(flags[test_labels == 0].mean())
         else:
             unk_rej, knw_rej = rejection_metrics(scores, test_labels, thresh)
+            flags = np.asarray(scores) > thresh
+        benign_mask = np.asarray(test_known[label_col].astype(str) == "BENIGN")
+        benign_fpr = float(flags[:len(test_known)][benign_mask].mean()) if benign_mask.any() else None
         oscr_x, oscr_y, oscr_auc = oscr_curve(known_correct, scores[len(X_te_k):], scores[:len(X_te_k)])
         curve_indexes = np.unique(np.linspace(0, len(oscr_x) - 1, min(201, len(oscr_x)), dtype=int))
         auprc = float(average_precision_score(test_labels, scores))
@@ -775,6 +778,7 @@ def evaluate_one_family(
             "FPR_at_95pct_TPR":       round(fpr95, 6),
             "unknown_rejection_rate": round(unk_rej, 6),
             "known_false_reject_rate": round(knw_rej, 6),
+            "benign_false_positive_rate": None if benign_fpr is None else round(benign_fpr, 6),
             "oscr_auc": round(oscr_auc, 6),
             "unknown_recall": round(unk_rej, 6),
             "known_macro_f1": round(known_macro_f1, 6),

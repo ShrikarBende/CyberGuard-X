@@ -123,7 +123,7 @@ def _user_row(record: Mapping[str, Any], prior_host: str = "", previous_time: da
 
 
 def load_user_sequences(sysmon_dir: str | Path, cert_dir: str | Path | None = None,
-                        sequence_length: int = 24) -> tuple[np.ndarray, np.ndarray]:
+                        sequence_length: int = 24, return_groups: bool = False):
     """Parse Sysmon/Windows JSON and optional CERT logon.csv into padded sequences.
 
     Returns ``(sequences, weak_risk_labels)``. Since public OTRF captures do not
@@ -159,7 +159,7 @@ def load_user_sequences(sysmon_dir: str | Path, cert_dir: str | Path | None = No
                     row[1] = int("fail" in activity)
                     per_user[user].append((stamp, row, host))
 
-    sequences, labels = [], []
+    sequences, labels, groups = [], [], []
     for user, events in per_user.items():
         events.sort(key=lambda item: item[0])
         prior_host, previous_time, seen = "", None, set()
@@ -182,8 +182,10 @@ def load_user_sequences(sysmon_dir: str | Path, cert_dir: str | Path | None = No
             risk = values[:, [1, 3, 4, 5, 6]].sum()
             sequences.append(values)
             labels.append(float(risk >= 3))
-    return (np.asarray(sequences, dtype=np.float32).reshape((-1, sequence_length, len(USER_FEATURE_NAMES))),
-            np.asarray(labels, dtype=np.float32))
+            groups.append(user)
+    result = (np.asarray(sequences, dtype=np.float32).reshape((-1, sequence_length, len(USER_FEATURE_NAMES))),
+              np.asarray(labels, dtype=np.float32))
+    return (*result, np.asarray(groups, dtype=str)) if return_groups else result
 
 
 def generate_synthetic_user_sequences(n: int = 512, seed: int = 42, sequence_length: int = 24):
