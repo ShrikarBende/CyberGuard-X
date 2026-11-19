@@ -27,12 +27,21 @@ from app.schemas.schemas import SecurityEventCreate
 from app.services.websocket_manager import ws_manager
 from ml.preprocessing.cicids_pipeline import apply_log1p_columns
 from ml.endpoint_branch import extract_endpoint_features, predict_endpoint
+from ml.sequence_graph import predict_graph_edge, predict_user_sequence, sequence_for_event
 
 logger = logging.getLogger(__name__)
 MODEL_BUNDLE_PATH = Path(settings.MODEL_BUNDLE_PATH)
 _MODEL_BUNDLE_CACHE: Optional[Dict[str, Any]] = None
-ENDPOINT_BUNDLE_PATH = Path(settings.SAVED_MODELS_DIR) / "endpoint_behavior.bundle.pkl"
+_BACKEND_DIR = Path(__file__).resolve().parents[2]
+_SAVED_MODELS_DIR = Path(settings.SAVED_MODELS_DIR).expanduser()
+if not _SAVED_MODELS_DIR.is_absolute():
+    _SAVED_MODELS_DIR = (_BACKEND_DIR / _SAVED_MODELS_DIR).resolve()
+ENDPOINT_BUNDLE_PATH = _SAVED_MODELS_DIR / "endpoint_behavior.bundle.pkl"
 _ENDPOINT_BUNDLE_CACHE: Optional[Dict[str, Any]] = None
+USER_BUNDLE_PATH = _SAVED_MODELS_DIR / "user_tft.bundle.pkl"
+NETWORK_GAT_BUNDLE_PATH = _SAVED_MODELS_DIR / "network_gat.bundle.pkl"
+_USER_BUNDLE_CACHE: Optional[Dict[str, Any]] = None
+_NETWORK_GAT_BUNDLE_CACHE: Optional[Dict[str, Any]] = None
 
 
 def load_endpoint_bundle() -> Optional[Dict[str, Any]]:
@@ -47,6 +56,43 @@ def load_endpoint_bundle() -> Optional[Dict[str, Any]]:
             raise ValueError(f"Endpoint model bundle is missing fields: {sorted(missing)}")
         _ENDPOINT_BUNDLE_CACHE = bundle
     return _ENDPOINT_BUNDLE_CACHE
+
+
+def load_user_bundle() -> Optional[Dict[str, Any]]:
+    """Load the optional user-sequence TFT bundle once per process."""
+    global _USER_BUNDLE_CACHE
+    if _USER_BUNDLE_CACHE is None and USER_BUNDLE_PATH.is_file():
+        bundle = joblib.load(USER_BUNDLE_PATH)
+        required = {"model", "feature_names", "feature_min", "feature_range", "sequence_length", "model_version"}
+        missing = required.difference(bundle)
+        if missing:
+            raise ValueError(f"User TFT bundle is missing fields: {sorted(missing)}")
+        _USER_BUNDLE_CACHE = bundle
+    return _USER_BUNDLE_CACHE
+
+
+def load_network_gat_bundle() -> Optional[Dict[str, Any]]:
+    """Load the optional communication-graph GAT bundle once per process."""
+    global _NETWORK_GAT_BUNDLE_CACHE
+    if _NETWORK_GAT_BUNDLE_CACHE is None and NETWORK_GAT_BUNDLE_PATH.is_file():
+        bundle = joblib.load(NETWORK_GAT_BUNDLE_PATH)
+        required = {"model", "host_index", "node_features_by_host", "incoming_by_host", "model_version"}
+        missing = required.difference(bundle)
+        if missing:
+            raise ValueError(f"Network GAT bundle is missing fields: {sorted(missing)}")
+        _NETWORK_GAT_BUNDLE_CACHE = bundle
+    return _NETWORK_GAT_BUNDLE_CACHE
+
+
+def _predict_user_event(event: SecurityEvent, bundle: Dict[str, Any], db: Session) -> Dict[str, Any]:
+    """Score this event with the user's latest persisted event history."""
+    query = db.query(SecurityEvent).filter(
+        SecurityEvent.user_id == event.user_id,
+        SecurityEvent.event_id != event.event_id,
+    ).order_by(SecurityEvent.timestamp.desc())
+    history = list(reversed(query.limit(max(0, int(bundle["sequence_length"]) - 1)).all()))
+    sequence = sequence_for_event(event, bundle["sequence_length"], history=history)
+    return predict_user_sequence(sequence, bundle)
 
 
 def _upsert_grouped_flow_incident(event: SecurityEvent, prediction: Dict[str, Any], bundle: Dict[str, Any],
@@ -407,6 +453,21 @@ async def process_single_event(event_in: SecurityEventCreate, db: Session) -> Di
         except ValueError as exc:
             return await _save_and_broadcast_unscored(event_in, db, db_event, event_id, str(exc))
         score = prediction["s_endpoint"]
+        user_prediction = None
+        user_bundle = load_user_bundle() if event_in.user_id else None
+        if user_bundle:
+            user_prediction = _predict_user_event(db_event, user_bundle, db)
+        graph_prediction = None
+        endpoint_payload = event_in.raw_payload or {}
+        source_host = event_in.source_ip or endpoint_payload.get("srcip")
+        destination_host = event_in.destination_ip or endpoint_payload.get("dstip")
+        graph_bundle = load_network_gat_bundle() if source_host and destination_host else None
+        if graph_bundle:
+            graph_features = dict(endpoint_payload)
+            supplied_graph_features = endpoint_payload.get("network_graph_features", {})
+            if isinstance(supplied_graph_features, dict):
+                graph_features.update(supplied_graph_features)
+            graph_prediction = predict_graph_edge(str(source_host), str(destination_host), graph_features, graph_bundle)
         verdict = "KNOWN_THREAT" if score >= 0.65 else "BENIGN"
         detection_id = f"det_{uuid.uuid4().hex[:12]}"
         db.add(DetectionResult(
@@ -415,6 +476,8 @@ async def process_single_event(event_in: SecurityEventCreate, db: Session) -> Di
             probability=score, score=score, attack_probability=score,
             open_set_distance=None, reconstruction_error=prediction["reconstruction_error"],
             layer="endpoint", details={**prediction, "endpoint_features": features,
+                **({"user_sequence": user_prediction} if user_prediction else {}),
+                **({"network_graph": graph_prediction} if graph_prediction else {}),
                 "score_name": "s_endpoint", "model_version": bundle["model_version"]},
             model_version=bundle["model_version"], tau=0.65,
         ))
@@ -425,11 +488,41 @@ async def process_single_event(event_in: SecurityEventCreate, db: Session) -> Di
             reconstruction_error=prediction["reconstruction_error"],
             feature_residuals=prediction["feature_residuals"],
             top_contributing_features=prediction["top_contributing_features"],
-            model_version=bundle["model_version"], tau=0.65)
+            model_version=bundle["model_version"], tau=0.65,
+            **({"s_user": user_prediction["s_user"],
+                "temporal_attention": user_prediction["temporal_attention"],
+                "variable_selection_weights": user_prediction["variable_selection_weights"]}
+               if user_prediction else {}),
+            **({"s_network_graph": graph_prediction["s_network_graph"],
+                "top_suspicious_edges": graph_prediction["top_suspicious_edges"]}
+               if graph_prediction else {}))
         await ws_manager.broadcast(result)
         return result
 
     if event_in.event_category != "network":
+        user_bundle = load_user_bundle() if event_in.user_id else None
+        if user_bundle:
+            user_prediction = _predict_user_event(db_event, user_bundle, db)
+            score = user_prediction["s_user"]
+            verdict = "KNOWN_THREAT" if score >= 0.65 else "BENIGN"
+            detection_id = f"det_{uuid.uuid4().hex[:12]}"
+            db.add(DetectionResult(
+                detection_id=detection_id, event_id=event_id, verdict=verdict,
+                predicted_class="AccountTakeoverRisk" if verdict == "KNOWN_THREAT" else "BaselineUserSequence",
+                probability=score, score=score, attack_probability=score, open_set_distance=None,
+                reconstruction_error=None, layer="user", details={**user_prediction,
+                    "score_name": "s_user", "model_version": user_bundle["model_version"]},
+                model_version=user_bundle["model_version"], tau=0.65,
+            ))
+            db.commit()
+            result = _event_payload(event_in, event_id, verdict, detection_id=detection_id,
+                predicted_class="AccountTakeoverRisk" if verdict == "KNOWN_THREAT" else "BaselineUserSequence",
+                score=score, s_user=score, score_name="s_user",
+                temporal_attention=user_prediction["temporal_attention"],
+                variable_selection_weights=user_prediction["variable_selection_weights"],
+                model_version=user_bundle["model_version"], tau=0.65)
+            await ws_manager.broadcast(result)
+            return result
         return await _save_and_broadcast_unscored(
             event_in, db, db_event, event_id, "no trained model for this layer"
         )
@@ -472,6 +565,22 @@ async def process_single_event(event_in: SecurityEventCreate, db: Session) -> Di
     probabilities = prediction["probabilities"]
     attack_probability = float(1.0 - probabilities[benign_index])
     risk_result = compute_risk(attack_probability, probability, verdict)
+    user_prediction = None
+    if event_in.user_id:
+        user_bundle = load_user_bundle()
+        if user_bundle:
+            user_prediction = _predict_user_event(db_event, user_bundle, db)
+    graph_prediction = None
+    source_host = event_in.source_ip or flow.get("srcip")
+    destination_host = event_in.destination_ip or flow.get("dstip")
+    if source_host and destination_host:
+        graph_bundle = load_network_gat_bundle()
+        if graph_bundle:
+            graph_features = dict(flow)
+            supplied_graph_features = (event_in.raw_payload or {}).get("network_graph_features", {})
+            if isinstance(supplied_graph_features, dict):
+                graph_features.update(supplied_graph_features)
+            graph_prediction = predict_graph_edge(str(source_host), str(destination_host), graph_features, graph_bundle)
     probability_by_class = prediction["probability_by_class"]
     detection_id = f"det_{uuid.uuid4().hex[:12]}"
     details = {
@@ -480,6 +589,9 @@ async def process_single_event(event_in: SecurityEventCreate, db: Session) -> Di
         "score_name": bundle["score_name"],
         "score": score,
         "risk_breakdown": risk_result["breakdown"],
+        "s_network_flow": attack_probability,
+        **({"user_sequence": user_prediction} if user_prediction else {}),
+        **({"network_graph": graph_prediction} if graph_prediction else {}),
     }
     detection = DetectionResult(
         detection_id=detection_id,
@@ -528,6 +640,14 @@ async def process_single_event(event_in: SecurityEventCreate, db: Session) -> Di
         risk_breakdown=risk_result["breakdown"],
         mitre_mappings=[{"tactic": mitre_mapping[0], "technique_id": mitre_mapping[1]}]
         if incident_id and verdict == "KNOWN_THREAT" and mitre_mapping and probability >= settings.MITRE_MIN_PROBABILITY else [],
+        s_network_flow=attack_probability,
+        **({"s_user": user_prediction["s_user"],
+            "temporal_attention": user_prediction["temporal_attention"],
+            "variable_selection_weights": user_prediction["variable_selection_weights"]}
+           if user_prediction else {}),
+        **({"s_network_graph": graph_prediction["s_network_graph"],
+            "top_suspicious_edges": graph_prediction["top_suspicious_edges"]}
+           if graph_prediction else {}),
     )
     await ws_manager.broadcast(result)
     return result
