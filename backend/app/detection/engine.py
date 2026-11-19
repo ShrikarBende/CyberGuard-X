@@ -26,10 +26,27 @@ from app.models.entities import (
 from app.schemas.schemas import SecurityEventCreate
 from app.services.websocket_manager import ws_manager
 from ml.preprocessing.cicids_pipeline import apply_log1p_columns
+from ml.endpoint_branch import extract_endpoint_features, predict_endpoint
 
 logger = logging.getLogger(__name__)
 MODEL_BUNDLE_PATH = Path(settings.MODEL_BUNDLE_PATH)
 _MODEL_BUNDLE_CACHE: Optional[Dict[str, Any]] = None
+ENDPOINT_BUNDLE_PATH = Path(settings.SAVED_MODELS_DIR) / "endpoint_behavior.bundle.pkl"
+_ENDPOINT_BUNDLE_CACHE: Optional[Dict[str, Any]] = None
+
+
+def load_endpoint_bundle() -> Optional[Dict[str, Any]]:
+    """Load endpoint behavioral model bundle when it has been trained."""
+    global _ENDPOINT_BUNDLE_CACHE
+    if _ENDPOINT_BUNDLE_CACHE is None and ENDPOINT_BUNDLE_PATH.is_file():
+        bundle = joblib.load(ENDPOINT_BUNDLE_PATH)
+        required = {"dae", "isolation_forest", "feature_names", "feature_min", "feature_range",
+                    "reconstruction_bounds", "iforest_bounds", "model_version"}
+        missing = required.difference(bundle)
+        if missing:
+            raise ValueError(f"Endpoint model bundle is missing fields: {sorted(missing)}")
+        _ENDPOINT_BUNDLE_CACHE = bundle
+    return _ENDPOINT_BUNDLE_CACHE
 
 
 def _upsert_grouped_flow_incident(event: SecurityEvent, prediction: Dict[str, Any], bundle: Dict[str, Any],
@@ -376,6 +393,41 @@ async def process_single_event(event_in: SecurityEventCreate, db: Session) -> Di
         dataset=event_in.dataset,
     )
     db.add(db_event)
+
+    if event_in.event_category == "endpoint":
+        bundle = load_endpoint_bundle()
+        if bundle is None:
+            return await _save_and_broadcast_unscored(
+                event_in, db, db_event, event_id, "endpoint behavioral model bundle is not ready",
+                verdict="MODEL_NOT_READY",
+            )
+        try:
+            features = extract_endpoint_features(event_in.raw_payload, event_in)
+            prediction = predict_endpoint(features, bundle)
+        except ValueError as exc:
+            return await _save_and_broadcast_unscored(event_in, db, db_event, event_id, str(exc))
+        score = prediction["s_endpoint"]
+        verdict = "KNOWN_THREAT" if score >= 0.65 else "BENIGN"
+        detection_id = f"det_{uuid.uuid4().hex[:12]}"
+        db.add(DetectionResult(
+            detection_id=detection_id, event_id=event_id, verdict=verdict,
+            predicted_class="EndpointBehaviorAnomaly" if verdict == "KNOWN_THREAT" else "Baseline",
+            probability=score, score=score, attack_probability=score,
+            open_set_distance=None, reconstruction_error=prediction["reconstruction_error"],
+            layer="endpoint", details={**prediction, "endpoint_features": features,
+                "score_name": "s_endpoint", "model_version": bundle["model_version"]},
+            model_version=bundle["model_version"], tau=0.65,
+        ))
+        db.commit()
+        result = _event_payload(event_in, event_id, verdict, detection_id=detection_id,
+            predicted_class="EndpointBehaviorAnomaly" if verdict == "KNOWN_THREAT" else "Baseline",
+            score=score, s_endpoint=score, score_name="s_endpoint",
+            reconstruction_error=prediction["reconstruction_error"],
+            feature_residuals=prediction["feature_residuals"],
+            top_contributing_features=prediction["top_contributing_features"],
+            model_version=bundle["model_version"], tau=0.65)
+        await ws_manager.broadcast(result)
+        return result
 
     if event_in.event_category != "network":
         return await _save_and_broadcast_unscored(
