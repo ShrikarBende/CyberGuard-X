@@ -7,6 +7,8 @@ from pathlib import Path
 
 import joblib
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
@@ -49,6 +51,11 @@ def test_successful_retrain_atomically_installs_profile_artifact(tmp_path, monke
     monkeypatch.setattr(detection_engine, "MODEL_BUNDLE_PATH", target)
     monkeypatch.setattr(detection_engine, "_MODEL_BUNDLE_CACHE", {"model_version": "previous"})
 
+    # Simulate a clean CI database: SQLite exists, but application migrations
+    # (including analyst_activity) have not been applied.
+    clean_engine = create_engine(f"sqlite:///{tmp_path / 'clean.sqlite'}", connect_args={"check_same_thread": False})
+    monkeypatch.setattr(endpoints, "SessionLocal", sessionmaker(bind=clean_engine))
+
     def fake_training(profile, output_path):
         joblib.dump({"model_version": "new-light"}, output_path)
         return output_path
@@ -56,6 +63,7 @@ def test_successful_retrain_atomically_installs_profile_artifact(tmp_path, monke
     monkeypatch.setattr(trainer, "train_final", fake_training)
     started = endpoints.retrain_model(endpoints.RetrainRequest(profile="light"))
     status = _wait_for_job(started["job_id"])
-    assert status["status"] == "completed"
+    assert status["status"] == "completed", status.get("error")
     assert joblib.load(target)["model_version"] == "new-light"
     assert detection_engine._MODEL_BUNDLE_CACHE["model_version"] == "new-light"
+    clean_engine.dispose()

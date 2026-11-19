@@ -761,10 +761,26 @@ def retrain_model(
         }
 
     def run_training():
-        feedback_db = SessionLocal()
+        feedback_db = None
         feedback_samples = []
         before_metrics = {}
         try:
+            # Feedback and audit storage are optional for model installation. A
+            # fresh deployment may not have initialized the application schema.
+            try:
+                feedback_db = SessionLocal()
+                feedback_activities = (feedback_db.query(AnalystActivity)
+                                       .filter(AnalystActivity.action_type == "analyst_feedback")
+                                       .order_by(AnalystActivity.timestamp.asc()).all())
+                feedback_samples = [dict(activity.details or {}) for activity in feedback_activities]
+            except Exception:
+                if feedback_db is not None:
+                    try:
+                        feedback_db.rollback()
+                    except Exception:
+                        pass
+                logger.warning("Could not load analyst feedback for retraining; proceeding without it", exc_info=True)
+                feedback_samples = []
             if target.is_file():
                 try:
                     import joblib
@@ -775,10 +791,6 @@ def retrain_model(
                     before_metrics["feedback_samples_used"] = old_bundle.get("feedback_adaptation", {}).get("samples_used", 0)
                 except Exception as exc:
                     before_metrics["artifact_read_error"] = type(exc).__name__
-            feedback_activities = (feedback_db.query(AnalystActivity)
-                                   .filter(AnalystActivity.action_type == "analyst_feedback")
-                                   .order_by(AnalystActivity.timestamp.asc()).all())
-            feedback_samples = [dict(activity.details or {}) for activity in feedback_activities]
             from ml.training.train_final import train_final
             import inspect
             trainer_signature = inspect.signature(train_final)
@@ -834,9 +846,16 @@ def retrain_model(
                              "fusion_adaptation": fusion_metrics}
             before_after = {"feedback_samples_seen": len(feedback_samples),
                             "before": before_metrics, "after": after_metrics}
-            record_analyst_activity(feedback_db, getattr(admin, "username", "system"), "model_retrained", "model", job_id,
-                                    {"profile": request.profile, "before_after_metrics": before_after})
-            feedback_db.commit()
+            if feedback_db is not None:
+                try:
+                    record_analyst_activity(feedback_db, getattr(admin, "username", "system"), "model_retrained", "model", job_id,
+                                            {"profile": request.profile, "before_after_metrics": before_after})
+                    feedback_db.commit()
+                except Exception:
+                    # Audit persistence must not turn an already installed model
+                    # into a failed retraining job (for example, before migrations).
+                    feedback_db.rollback()
+                    logger.warning("Could not write retraining audit record", exc_info=True)
         except Exception as exc:
             try:
                 Path(temporary).unlink(missing_ok=True)
@@ -846,7 +865,8 @@ def retrain_model(
             with _RETRAIN_JOBS_LOCK:
                 _RETRAIN_JOBS[job_id].update(status="failed", error=str(exc))
         finally:
-            feedback_db.close()
+            if feedback_db is not None:
+                feedback_db.close()
 
     threading.Thread(target=run_training, name=f"retrain-{request.profile}-{job_id[:8]}", daemon=True).start()
     return {"status": "running", "job_id": job_id, "profile": request.profile}
