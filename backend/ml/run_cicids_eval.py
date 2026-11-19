@@ -44,6 +44,7 @@ LIGHT_DETECTORS = [
 MEDIUM_DETECTORS = [
     "confidence", "isolation_forest", "mahalanobis",
     "confidence_mahalanobis_rank_average", "union_conf_mahalanobis",
+    "energy", "logit_margin", "compact_mahalanobis", "confidence_energy_compact_union",
 ]
 
 

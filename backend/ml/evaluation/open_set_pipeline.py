@@ -42,11 +42,15 @@ import numpy as np
 import torch
 import torch.nn as nn
 from scipy.spatial.distance import cdist
+from scipy.integrate import trapezoid
 from sklearn.ensemble import IsolationForest
 from sklearn.metrics import roc_auc_score
+from sklearn.metrics import average_precision_score, f1_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.decomposition import PCA
 from ml.preprocessing.cicids_pipeline import apply_log1p_columns, fit_log1p_columns
+from ml.open_set import calibrated_union_score, compute_centroid_statistics, nearest_centroid_distance, temperature_scaled_energy
 from ml.evaluation.provenance import working_tree_is_dirty
 from ml.evaluation.output_paths import get_results_dir
 
@@ -54,7 +58,8 @@ RESULTS_DIR = get_results_dir()
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 SEED = 42
-THRESHOLD_PERCENTILE = 95   # chosen on known-val scores only
+THRESHOLD_PERCENTILE = 97   # target 97% known specificity; selected on known-val scores only
+ENERGY_TEMPERATURE = 1.5
 
 
 # ─── Denoising Autoencoder ────────────────────────────────────────────────────
@@ -216,12 +221,9 @@ def ae_latent(model: DenoisingAutoencoder, X: np.ndarray) -> np.ndarray:
 # ─── Mahalanobis distance ─────────────────────────────────────────────────────
 
 def compute_class_centroids(X: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    """Return per-class centroids and shared covariance (regularised)."""
-    classes = np.unique(y)
-    centroids = np.array([X[y == c].mean(axis=0) for c in classes])
-    # Shared within-class covariance
-    cov = np.cov(X.T) + 1e-6 * np.eye(X.shape[1])
-    return centroids, cov
+    """Return per-class centroids and pooled within-class covariance."""
+    _, centroids, covariance = compute_centroid_statistics(X, y)
+    return centroids, covariance
 
 
 def mahalanobis_to_nearest(
@@ -276,6 +278,40 @@ def rejection_metrics(
     unk_reject  = float((scores[unknown_mask] > threshold).mean()) if unknown_mask.any() else 0.0
     knw_reject  = float((scores[known_mask]   > threshold).mean()) if known_mask.any()   else 0.0
     return unk_reject, knw_reject
+
+
+def oscr_curve(known_correct: np.ndarray, unknown_scores: np.ndarray,
+               known_scores: np.ndarray) -> Tuple[np.ndarray, np.ndarray, float]:
+    """Return OSCR (unknown FPR, known CCR, AUC), sweeping an anomaly-score cutoff.
+
+    Lower anomaly scores are accepted as known. Known CCR counts only correctly
+    classified known rows; unknown FPR counts unknown rows accepted as known.
+    """
+    correct = np.asarray(known_correct, dtype=bool)
+    kscore = np.asarray(known_scores, dtype=np.float64)
+    uscore = np.asarray(unknown_scores, dtype=np.float64)
+    if not len(correct) or not len(kscore) or not len(uscore) or len(correct) != len(kscore):
+        raise ValueError("OSCR requires non-empty, aligned known correctness/scores and unknown scores")
+    scores = np.concatenate([kscore, uscore])
+    is_unknown = np.concatenate([np.zeros(len(kscore), dtype=bool), np.ones(len(uscore), dtype=bool)])
+    order = np.argsort(scores, kind="mergesort")
+    sorted_scores = scores[order]
+    sorted_unknown = is_unknown[order]
+    sorted_correct = np.concatenate([correct, np.zeros(len(uscore), dtype=bool)])[order]
+    x = [0.0]; y = [0.0]
+    accepted_unknown = accepted_correct = 0
+    i = 0
+    while i < len(order):
+        j = i + 1
+        while j < len(order) and sorted_scores[j] == sorted_scores[i]:
+            j += 1
+        accepted_unknown += int(sorted_unknown[i:j].sum())
+        accepted_correct += int(sorted_correct[i:j].sum())
+        x.append(accepted_unknown / len(uscore))
+        y.append(accepted_correct / len(kscore))
+        i = j
+    x_arr = np.asarray(x); y_arr = np.asarray(y)
+    return x_arr, y_arr, float(trapezoid(y_arr, x_arr))
 
 
 def bootstrap_metric_intervals(
@@ -454,6 +490,11 @@ def evaluate_one_family(
     # Anomaly score: 1 - max_probability (high = more anomalous)
     prob_vl  = lgbm.predict_proba(X_vl)
     prob_all = lgbm.predict_proba(X_test_all)
+    logits_vl = np.asarray(lgbm.predict(X_vl, raw_score=True), dtype=np.float64)
+    logits_all = np.asarray(lgbm.predict(X_test_all, raw_score=True), dtype=np.float64)
+    predicted_all = lgbm.predict(X_test_all)
+    known_correct = predicted_all[:len(X_te_k)] == y_test_known
+    known_macro_f1 = float(f1_score(y_test_known, predicted_all[:len(X_te_k)], average="macro", zero_division=0))
     score_conf_vl  = 1.0 - prob_vl.max(axis=1)
     score_conf_all = 1.0 - prob_all.max(axis=1)
 
@@ -484,7 +525,9 @@ def evaluate_one_family(
         thresh_if    = threshold_from_known_validation(score_if_vl, np.ones(len(score_if_vl), dtype=bool))
 
     enabled = pipeline.get("detectors", ["confidence", "isolation_forest", "autoencoder", "mahalanobis",
-                                          "mahalanobis_mlp", "confidence_mahalanobis_rank_average"])
+                                          "mahalanobis_mlp", "confidence_mahalanobis_rank_average",
+                                          "energy", "logit_margin", "compact_mahalanobis",
+                                          "confidence_energy_compact_union"])
     detector_validation = {"confidence": score_conf_vl}
     detector_test = {"confidence": score_conf_all}
     detector_threshold = {"confidence": thresh_conf}
@@ -522,6 +565,55 @@ def evaluate_one_family(
         detector_validation["mahalanobis"] = score_mh_vl
         detector_test["mahalanobis"] = score_mh_all
         detector_threshold["mahalanobis"] = threshold_from_known_validation(score_mh_vl, np.ones(len(score_mh_vl), dtype=bool))
+    compact_pca = None
+    if "compact_mahalanobis" in enabled or "confidence_energy_compact_union" in enabled:
+        compact_scaler = StandardScaler().fit(X_tr)
+        compact_pca = PCA(n_components=min(16, X_tr.shape[1], X_tr.shape[0]), random_state=seed)
+        compact_train = compact_pca.fit_transform(compact_scaler.transform(X_tr))
+        compact_validation = compact_pca.transform(compact_scaler.transform(X_vl))
+        compact_all = compact_pca.transform(compact_scaler.transform(X_test_all))
+        compact_classes, compact_centroids, compact_covariance = compute_centroid_statistics(compact_train, y_tr)
+        score_compact_vl = nearest_centroid_distance(compact_validation, compact_centroids, compact_covariance)
+        score_compact_all = nearest_centroid_distance(compact_all, compact_centroids, compact_covariance)
+        detector_validation["compact_mahalanobis"] = score_compact_vl
+        detector_test["compact_mahalanobis"] = score_compact_all
+        detector_threshold["compact_mahalanobis"] = threshold_from_known_validation(
+            score_compact_vl, np.ones(len(score_compact_vl), dtype=bool))
+    if "energy" in enabled or "confidence_energy_compact_union" in enabled:
+        score_energy_vl = temperature_scaled_energy(logits_vl, ENERGY_TEMPERATURE)
+        score_energy_all = temperature_scaled_energy(logits_all, ENERGY_TEMPERATURE)
+        detector_validation["energy"] = score_energy_vl
+        detector_test["energy"] = score_energy_all
+        detector_threshold["energy"] = threshold_from_known_validation(
+            score_energy_vl, np.ones(len(score_energy_vl), dtype=bool))
+    sorted_logits_vl = np.sort(logits_vl, axis=1)
+    sorted_logits_all = np.sort(logits_all, axis=1)
+    score_margin_vl = -(sorted_logits_vl[:, -1] - sorted_logits_vl[:, -2])
+    score_margin_all = -(sorted_logits_all[:, -1] - sorted_logits_all[:, -2])
+    if "logit_margin" in enabled:
+        detector_validation["logit_margin"] = score_margin_vl
+        detector_test["logit_margin"] = score_margin_all
+        detector_threshold["logit_margin"] = threshold_from_known_validation(
+            score_margin_vl, np.ones(len(score_margin_vl), dtype=bool))
+    if "confidence_energy_compact_union" in enabled:
+        union_components_vl = {
+            "confidence": detector_validation["confidence"],
+            "energy": detector_validation["energy"],
+            "logit_margin": score_margin_vl,
+            "compact_mahalanobis": detector_validation["compact_mahalanobis"],
+        }
+        union_components_all = {
+            "confidence": detector_test["confidence"],
+            "energy": detector_test["energy"],
+            "logit_margin": score_margin_all,
+            "compact_mahalanobis": detector_test["compact_mahalanobis"],
+        }
+        union_val = calibrated_union_score(union_components_vl, union_components_vl)
+        union_all = calibrated_union_score(union_components_vl, union_components_all)
+        detector_validation["confidence_energy_compact_union"] = union_val
+        detector_test["confidence_energy_compact_union"] = union_all
+        detector_threshold["confidence_energy_compact_union"] = threshold_from_known_validation(
+            union_val, np.ones(len(union_val), dtype=bool), percentile=97.0)
     if "mahalanobis_mlp" in enabled:
         mlp = train_known_mlp(X_tr, y_tr, n_classes, seed)
         E_vl = mlp_embedding(mlp, X_vl)
@@ -611,6 +703,9 @@ def evaluate_one_family(
             knw_rej = float(flags[test_labels == 0].mean())
         else:
             unk_rej, knw_rej = rejection_metrics(scores, test_labels, thresh)
+        oscr_x, oscr_y, oscr_auc = oscr_curve(known_correct, scores[len(X_te_k):], scores[:len(X_te_k)])
+        curve_indexes = np.unique(np.linspace(0, len(oscr_x) - 1, min(201, len(oscr_x)), dtype=int))
+        auprc = float(average_precision_score(test_labels, scores))
         bootstrap = bootstrap_metric_intervals(
             scores, test_labels, thresh,
             seed + zlib.crc32(f"{held_out_family}:{name}".encode("utf-8")) % (2**31),
@@ -628,6 +723,14 @@ def evaluate_one_family(
             "FPR_at_95pct_TPR":       round(fpr95, 6),
             "unknown_rejection_rate": round(unk_rej, 6),
             "known_false_reject_rate": round(knw_rej, 6),
+            "oscr_auc": round(oscr_auc, 6),
+            "unknown_recall": round(unk_rej, 6),
+            "known_macro_f1": round(known_macro_f1, 6),
+            "auprc": round(auprc, 6),
+            "oscr_curve": {"unknown_fpr": oscr_x[curve_indexes].tolist(),
+                           "known_ccr": oscr_y[curve_indexes].tolist(),
+                           "points_sampled": int(len(curve_indexes)),
+                           "points_total": int(len(oscr_x))},
             "threshold_value": union_thresholds if name == "union_conf_mahalanobis" else round(thresh, 6),
             "threshold_percentile": 97.5 if name == "union_conf_mahalanobis" else THRESHOLD_PERCENTILE,
             **bootstrap,
@@ -674,7 +777,9 @@ def run_open_set_evaluation(pipeline: dict) -> dict:
     seed = pipeline["seed"]
     t0 = time.perf_counter()
     detector_names = pipeline.get("detectors", ["confidence", "isolation_forest", "autoencoder", "mahalanobis",
-                                                 "mahalanobis_mlp", "confidence_mahalanobis_rank_average"])
+                                                 "mahalanobis_mlp", "confidence_mahalanobis_rank_average",
+                                                 "energy", "logit_margin", "compact_mahalanobis",
+                                                 "confidence_energy_compact_union"])
     run_id = pipeline.get("run_id", datetime.utcnow().strftime("%Y%m%d_%H%M%S"))
     if not run_id or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-" for ch in run_id) or ".." in run_id:
         raise ValueError("run_id may contain only letters, numbers, '.', '_' and '-'")
@@ -723,7 +828,8 @@ def run_open_set_evaluation(pipeline: dict) -> dict:
 
     # ── Macro-average across families ─────────────────────────────────────
     family_metric_tables = print_family_metric_tables(family_results, detector_names)
-    metric_keys    = ["AUROC", "FPR_at_95pct_TPR", "unknown_rejection_rate", "known_false_reject_rate"]
+    metric_keys    = ["AUROC", "FPR_at_95pct_TPR", "unknown_rejection_rate", "known_false_reject_rate",
+                      "oscr_auc", "unknown_recall", "known_macro_f1", "auprc"]
 
     macro_avg = {}
     for det in detector_names:
@@ -793,6 +899,11 @@ def run_open_set_evaluation(pipeline: dict) -> dict:
         "per_family":        family_results,
         "per_family_tables": family_metric_tables,
         "macro_average":     macro_avg,
+        "open_set_summary": {
+            detector: {metric: macro_avg[detector].get(metric) for metric in
+                       ("oscr_auc", "unknown_recall", "known_macro_f1", "auprc")}
+            for detector in detector_names if detector in macro_avg
+        },
         "bootstrap": {"method": "stratified bootstrap resampling of known and unknown test rows",
                       "resamples": pipeline.get("bootstrap_resamples", 1000), "confidence_level": 0.95},
         "warnings":          warnings_list,
@@ -803,6 +914,17 @@ def run_open_set_evaluation(pipeline: dict) -> dict:
     results["results_path"] = str(out_path)
     _write_json_atomic(out_path, results)
     _write_json_atomic(partial_path, {**results, "status": "done"})
+    markdown_path = RESULTS_DIR / f"open_set_{run_id}.md"
+    report_lines = [f"# Open-set evaluation: {run_id}", "", "| Detector | OSCR AUC | Unknown recall | Known macro F1 | AUPRC |",
+                    "|---|---:|---:|---:|---:|"]
+    for detector, metrics in results["open_set_summary"].items():
+        fmt = lambda value: "n/a" if value is None else f"{value:.4f}"
+        report_lines.append(f"| {detector} | {fmt(metrics['oscr_auc'])} | {fmt(metrics['unknown_recall'])} | {fmt(metrics['known_macro_f1'])} | {fmt(metrics['auprc'])} |")
+    report_lines.extend(["", "Metrics are macro-averaged across held-out attack families. Unknown recall uses the known-validation calibrated rejection threshold.",
+                         "OSCR sweeps anomaly thresholds; known CCR counts only correctly classified known samples and unknown FPR counts unknown samples accepted as known."])
+    markdown_path.write_text("\n".join(report_lines) + "\n", encoding="utf-8")
+    results["markdown_report_path"] = str(markdown_path)
+    _write_json_atomic(out_path, results)
     print(f"\n[open_set] Results saved -> {out_path}")
 
     # Print warnings

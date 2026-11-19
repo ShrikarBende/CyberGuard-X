@@ -26,6 +26,8 @@ from app.models.entities import (
 from app.schemas.schemas import SecurityEventCreate
 from app.services.websocket_manager import ws_manager
 from ml.preprocessing.cicids_pipeline import apply_log1p_columns
+from ml.open_set import (calibrated_open_set_score, calibrated_union_score, decide_open_set,
+                         nearest_centroid_distance, temperature_scaled_energy)
 from ml.endpoint_branch import extract_endpoint_features, predict_endpoint
 from ml.sequence_graph import predict_graph_edge, predict_user_sequence, sequence_for_event
 
@@ -119,7 +121,7 @@ def _upsert_grouped_flow_incident(event: SecurityEvent, prediction: Dict[str, An
     )
     score_value = float(prediction["score"])
     if is_new:
-        unknown = verdict == "UNKNOWN_CANDIDATE"
+        unknown = verdict in {"UNKNOWN_CANDIDATE", "UNKNOWN_NOVEL"}
         incident = Incident(
             incident_id=f"inc_{uuid.uuid4().hex[:12]}",
             group_key=group_key,
@@ -292,14 +294,61 @@ def predict_flow(flow: Dict[str, Any], bundle: Dict[str, Any]) -> Dict[str, Any]
     score = float(np.max(raw_scores) - np.partition(raw_scores, -2)[-2])
     probability = float(probabilities[index])
     tau = float(bundle["tau"])
-    verdict = "UNKNOWN_CANDIDATE" if score < tau else (
-        "BENIGN" if predicted_class == "BENIGN" else "KNOWN_THREAT"
-    )
+    open_set_details = {}
+    if "class_centroids" in bundle and "centroid_covariance" in bundle:
+        centroid_input = scaled
+        if bundle.get("compact_pca") is not None:
+            centroid_input = bundle["compact_pca"].transform(bundle["compact_scaler"].transform(scaled))
+        distance = float(nearest_centroid_distance(centroid_input, bundle["class_centroids"], bundle["centroid_covariance"])[0])
+        anomaly = None
+        anomaly_score = None
+        if bundle.get("open_set_isolation_forest") is not None:
+            anomaly_score = float(-bundle["open_set_isolation_forest"].score_samples(scaled)[0])
+            anomaly = np.asarray([anomaly_score])
+        raw_component_values = {
+            "confidence": np.asarray([1.0 - float(probabilities.max())]),
+            "compact_mahalanobis": np.asarray([distance]),
+        }
+        ordered_logits = np.sort(raw_scores)
+        raw_component_values["logit_margin"] = np.asarray([-(ordered_logits[-1] - ordered_logits[-2])])
+        energy = None
+        if bundle.get("energy_temperature") is not None:
+            energy = float(temperature_scaled_energy(raw_scores.reshape(1, -1), bundle["energy_temperature"])[0])
+            raw_component_values["energy"] = np.asarray([energy])
+        if anomaly_score is not None:
+            raw_component_values["isolation_forest"] = anomaly
+        if bundle.get("open_set_component_references"):
+            references = {name: bundle["open_set_component_references"][name]
+                          for name in raw_component_values if name in bundle["open_set_component_references"]}
+            values = {name: raw_component_values[name] for name in references}
+            open_set_score = float(calibrated_union_score(references, values)[0])
+            rejected = open_set_score > float(bundle["open_set_union_threshold"])
+        else:
+            rejected = bool(decide_open_set(
+                probabilities.reshape(1, -1), np.asarray([score]), np.asarray([distance]),
+                float(bundle["centroid_distance_threshold"]), float(bundle["confidence_threshold"]),
+                anomaly, bundle.get("anomaly_score_threshold"), tau,
+            )[0])
+            open_set_score = float(calibrated_open_set_score(
+                probabilities.reshape(1, -1), np.asarray([distance]), bundle["centroid_distance_bounds"],
+                anomaly, bundle.get("anomaly_score_bounds"),
+            )[0])
+        open_set_details = {"open_set_label": "UNKNOWN_NOVEL" if rejected else predicted_class,
+                            "centroid_distance": distance, "open_set_score": open_set_score,
+                            "branch_anomaly_score": anomaly_score, "energy_anomaly_score": energy}
+        verdict = "UNKNOWN_NOVEL" if rejected else (
+            "BENIGN" if predicted_class == "BENIGN" else "KNOWN_THREAT"
+        )
+    else:
+        verdict = "UNKNOWN_CANDIDATE" if score < tau else (
+            "BENIGN" if predicted_class == "BENIGN" else "KNOWN_THREAT"
+        )
     return {
         "class_names": names, "probabilities": probabilities,
         "probability_by_class": {name: float(probabilities[i]) for i, name in enumerate(names)},
         "predicted_class": predicted_class, "score": score, "probability": probability,
         "tau": tau, "verdict": verdict,
+        **open_set_details,
     }
 
 
@@ -331,12 +380,57 @@ def score_batch(frame, bundle: Dict[str, Any]) -> list[Dict[str, Any]]:
     results = []
     for row_index, best_index in enumerate(best_indexes):
         predicted_class = class_names[int(best_index)]
+        row_probabilities = probabilities[row_index]
         probability = float(probabilities[row_index, best_index])
         score = float(margins[row_index])
         verdict = "UNKNOWN_CANDIDATE" if score < tau else (
             "BENIGN" if predicted_class == "BENIGN" else "KNOWN_THREAT"
         )
-        row_probabilities = probabilities[row_index]
+        open_set_details = {}
+        if "class_centroids" in bundle and "centroid_covariance" in bundle:
+            one_scaled = scaled[row_index:row_index + 1]
+            centroid_input = one_scaled
+            if bundle.get("compact_pca") is not None:
+                centroid_input = bundle["compact_pca"].transform(bundle["compact_scaler"].transform(one_scaled))
+            distance = float(nearest_centroid_distance(centroid_input, bundle["class_centroids"], bundle["centroid_covariance"])[0])
+            anomaly = None
+            anomaly_value = None
+            if bundle.get("open_set_isolation_forest") is not None:
+                anomaly_value = float(-bundle["open_set_isolation_forest"].score_samples(one_scaled)[0])
+                anomaly = np.asarray([anomaly_value])
+            raw_component_values = {
+                "confidence": np.asarray([1.0 - float(row_probabilities.max())]),
+                "compact_mahalanobis": np.asarray([distance]),
+            }
+            ordered_logits = np.sort(raw_scores[row_index])
+            raw_component_values["logit_margin"] = np.asarray([-(ordered_logits[-1] - ordered_logits[-2])])
+            energy_value = None
+            if bundle.get("energy_temperature") is not None:
+                energy_value = float(temperature_scaled_energy(raw_scores[row_index:row_index + 1], bundle["energy_temperature"])[0])
+                raw_component_values["energy"] = np.asarray([energy_value])
+            if anomaly_value is not None:
+                raw_component_values["isolation_forest"] = anomaly
+            if bundle.get("open_set_component_references"):
+                references = {name: bundle["open_set_component_references"][name]
+                              for name in raw_component_values if name in bundle["open_set_component_references"]}
+                values = {name: raw_component_values[name] for name in references}
+                open_set_score = float(calibrated_union_score(references, values)[0])
+                rejected = open_set_score > float(bundle["open_set_union_threshold"])
+            else:
+                rejected = bool(decide_open_set(
+                    row_probabilities.reshape(1, -1), np.asarray([score]), np.asarray([distance]),
+                    float(bundle["centroid_distance_threshold"]), float(bundle["confidence_threshold"]),
+                    anomaly, bundle.get("anomaly_score_threshold"), tau,
+                )[0])
+                open_set_score = float(calibrated_open_set_score(
+                    row_probabilities.reshape(1, -1), np.asarray([distance]),
+                    bundle["centroid_distance_bounds"], anomaly, bundle.get("anomaly_score_bounds"))[0])
+            verdict = "UNKNOWN_NOVEL" if rejected else ("BENIGN" if predicted_class == "BENIGN" else "KNOWN_THREAT")
+            open_set_details = {"open_set_label": "UNKNOWN_NOVEL" if rejected else predicted_class,
+                                "centroid_distance": distance,
+                                "open_set_score": open_set_score,
+                                "branch_anomaly_score": anomaly_value,
+                                "energy_anomaly_score": energy_value}
         results.append({
             "class_names": class_names,
             "probabilities": row_probabilities,
@@ -348,6 +442,7 @@ def score_batch(frame, bundle: Dict[str, Any]) -> list[Dict[str, Any]]:
             "probability": probability,
             "tau": tau,
             "verdict": verdict,
+            **open_set_details,
         })
     return results
 
@@ -391,7 +486,7 @@ def persist_scored_batch(events: list[SecurityEvent], predictions: list[Dict[str
             model_version=bundle["model_version"],
             tau=prediction["tau"],
         ))
-        if verdict in {"KNOWN_THREAT", "UNKNOWN_CANDIDATE"}:
+        if verdict in {"KNOWN_THREAT", "UNKNOWN_CANDIDATE", "UNKNOWN_NOVEL"}:
             grouped_incident_ids[event.event_id] = (prediction, risk_result, attack_probability)
     db.add_all(detection_rows)
     db.flush()
@@ -616,7 +711,7 @@ async def process_single_event(event_in: SecurityEventCreate, db: Session) -> Di
         "DosDDoS": ("Impact", "T1498"),
     }.get(predicted_class)
     incident_id = None
-    if verdict in {"KNOWN_THREAT", "UNKNOWN_CANDIDATE"}:
+    if verdict in {"KNOWN_THREAT", "UNKNOWN_CANDIDATE", "UNKNOWN_NOVEL"}:
         incident_id = _upsert_grouped_flow_incident(
             db_event, prediction, bundle, risk_result, attack_probability, db
         )

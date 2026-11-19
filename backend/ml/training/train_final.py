@@ -22,6 +22,11 @@ from ml.preprocessing.cicids_pipeline import (  # noqa: E402
     build_full_pipeline,
     fit_log1p_columns,
 )
+from ml.open_set import compute_centroid_statistics, nearest_centroid_distance  # noqa: E402
+from sklearn.ensemble import IsolationForest  # noqa: E402
+from sklearn.decomposition import PCA  # noqa: E402
+from sklearn.preprocessing import StandardScaler  # noqa: E402
+from ml.open_set import calibrated_union_score, temperature_scaled_energy  # noqa: E402
 
 SEED = 42
 LIGHT_SAMPLE = 0.15
@@ -33,6 +38,8 @@ EVALUATION_DIR = BACKEND_DIR / "ml" / "evaluation" / "results"
 
 
 SCORE_NAME = "logit_margin"
+OPEN_SET_SPECIFICITY = 0.97
+ENERGY_TEMPERATURE = 1.5
 
 
 def compute_margin_tau(
@@ -124,6 +131,42 @@ def train_final(
     validation_labels = pipeline["le"].inverse_transform(pipeline["y_val"])
     tau = compute_margin_tau(val_raw_scores, validation_labels, class_names)
 
+    # Centroids/covariance and IF are fit on training rows only. Their rejection
+    # thresholds and score ranges are calibrated on known validation rows only.
+    X_train = np.asarray(pipeline["X_train"], dtype=np.float64)
+    X_val = np.asarray(pipeline["X_val"], dtype=np.float64)
+    y_train = np.asarray(pipeline["y_train"])
+    compact_scaler = StandardScaler().fit(X_train)
+    compact_pca = PCA(n_components=min(16, X_train.shape[1]), random_state=SEED).fit(compact_scaler.transform(X_train))
+    compact_train = compact_pca.transform(compact_scaler.transform(X_train))
+    compact_val = compact_pca.transform(compact_scaler.transform(X_val))
+    centroid_classes, centroids, covariance = compute_centroid_statistics(compact_train, y_train)
+    val_distance = nearest_centroid_distance(compact_val, centroids, covariance)
+    validation_probabilities = model.predict_proba(X_val)
+    val_logits = np.asarray(model.predict(X_val, raw_score=True), dtype=np.float64)
+    val_confidence_anomaly = 1.0 - validation_probabilities.max(axis=1)
+    val_energy_anomaly = temperature_scaled_energy(val_logits, ENERGY_TEMPERATURE)
+    sorted_val_logits = np.sort(val_logits, axis=1)
+    val_margin_anomaly = -(sorted_val_logits[:, -1] - sorted_val_logits[:, -2])
+    confidence_anomaly_threshold = float(np.quantile(val_confidence_anomaly, OPEN_SET_SPECIFICITY))
+    energy_anomaly_threshold = float(np.quantile(val_energy_anomaly, OPEN_SET_SPECIFICITY))
+    compact_distance_threshold = float(np.quantile(val_distance, OPEN_SET_SPECIFICITY))
+    benign_index = class_names.index("BENIGN")
+    benign_train = X_train[y_train == benign_index]
+    iforest = IsolationForest(n_estimators=200, contamination="auto", random_state=SEED, n_jobs=-1)
+    iforest.fit(benign_train)
+    val_anomaly = -iforest.score_samples(X_val)
+    component_references = {
+        "confidence": val_confidence_anomaly,
+        "energy": val_energy_anomaly,
+        "logit_margin": val_margin_anomaly,
+        "compact_mahalanobis": val_distance,
+        "isolation_forest": val_anomaly,
+    }
+    val_union_score = calibrated_union_score(component_references, component_references)
+    union_threshold = float(np.quantile(val_union_score, OPEN_SET_SPECIFICITY))
+    anomaly_bounds = (float(np.quantile(val_anomaly, 0.05)), float(np.quantile(val_anomaly, OPEN_SET_SPECIFICITY)))
+
     raw_train = pipeline["train_df"][pipeline["feat_cols"]].to_numpy(dtype=np.float32)
     log1p_columns = fit_log1p_columns(raw_train)
     split_type = pipeline.get("split_type", "stratified_random")
@@ -135,6 +178,25 @@ def train_final(
         "log1p_columns": log1p_columns,
         "class_names": class_names,
         "tau": tau,
+        "centroid_classes": centroid_classes,
+        "class_centroids": centroids,
+        "centroid_covariance": covariance,
+        "compact_scaler": compact_scaler,
+        "compact_pca": compact_pca,
+        "compact_feature_count": int(compact_pca.n_components_),
+        "centroid_distance_threshold": compact_distance_threshold,
+        "centroid_distance_bounds": (float(np.quantile(val_distance, 0.05)), compact_distance_threshold),
+        "confidence_threshold": float(1.0 - confidence_anomaly_threshold),
+        "confidence_anomaly_threshold": confidence_anomaly_threshold,
+        "energy_temperature": ENERGY_TEMPERATURE,
+        "energy_anomaly_threshold": energy_anomaly_threshold,
+        "margin_anomaly_threshold": float(np.quantile(val_margin_anomaly, OPEN_SET_SPECIFICITY)),
+        "open_set_component_references": {name: np.sort(values) for name, values in component_references.items()},
+        "open_set_union_threshold": union_threshold,
+        "open_set_validation_specificity_target": OPEN_SET_SPECIFICITY,
+        "open_set_isolation_forest": iforest,
+        "anomaly_score_bounds": anomaly_bounds,
+        "anomaly_score_threshold": anomaly_bounds[1],
         "score_name": SCORE_NAME,
         "model_version": model_version,
         "data_hash": pipeline["data_hash"],
@@ -173,6 +235,6 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--force-reload", action="store_true")
-    parser.add_argument("--profile", choices=["light", "medium"], default="light")
+    parser.add_argument("--profile", choices=["light", "medium"], default="medium")
     args = parser.parse_args()
     train_final(force_reload=args.force_reload, profile=args.profile)
