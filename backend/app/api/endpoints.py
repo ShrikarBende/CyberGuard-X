@@ -91,7 +91,7 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
     total_events = db.query(func.count(SecurityEvent.event_id)).scalar() or 0
     total_detections = db.query(func.count(DetectionResult.detection_id)).scalar() or 0
     total_threats = db.query(func.count(DetectionResult.detection_id)).filter(DetectionResult.verdict == "KNOWN_THREAT").scalar() or 0
-    known_threats = db.query(func.count(DetectionResult.detection_id)).filter(DetectionResult.verdict == "KNOWN_THREAT").scalar() or 0
+    known_threats = total_threats
     unknown_candidates = db.query(func.count(DetectionResult.detection_id)).filter(DetectionResult.verdict == "UNKNOWN_CANDIDATE").scalar() or 0
     critical_incidents = db.query(func.count(Incident.incident_id)).filter(Incident.severity == "CRITICAL").scalar() or 0
     normal_events = db.query(func.count(DetectionResult.detection_id)).filter(DetectionResult.verdict == "BENIGN").scalar() or 0
@@ -407,22 +407,23 @@ def get_alerts(
 @router.get("/threats")
 def get_threat_intelligence(db: Session = Depends(get_db)):
     """Return categorized threat intelligence summary."""
-    detections = db.query(DetectionResult).all()
-    detection_count = len(detections)
-    known = [d for d in detections if d.verdict == "KNOWN_THREAT"]
-    candidates = [d for d in detections if d.verdict in {"UNKNOWN_CANDIDATE", "UNKNOWN_NOVEL"}]
-    novel = [d for d in detections if d.verdict == "UNKNOWN_NOVEL"]
+    detection_count = db.query(func.count(DetectionResult.detection_id)).scalar() or 0
+    known_count = db.query(func.count(DetectionResult.detection_id)).filter(DetectionResult.verdict == "KNOWN_THREAT").scalar() or 0
+    candidates_count = db.query(func.count(DetectionResult.detection_id)).filter(DetectionResult.verdict.in_(["UNKNOWN_CANDIDATE", "UNKNOWN_NOVEL"])).scalar() or 0
+    novel_count = db.query(func.count(DetectionResult.detection_id)).filter(DetectionResult.verdict == "UNKNOWN_NOVEL").scalar() or 0
+    known_categories = [row[0] for row in db.query(DetectionResult.predicted_class).filter(DetectionResult.verdict == "KNOWN_THREAT", DetectionResult.predicted_class.isnot(None)).distinct().all()]
+    candidates = db.query(DetectionResult).filter(DetectionResult.verdict.in_(["UNKNOWN_CANDIDATE", "UNKNOWN_NOVEL"])).order_by(desc(DetectionResult.created_at)).limit(20).all()
 
     return {
         "detection_count": detection_count,
         "summary": {
             "total_detections": detection_count,
-            "known_threats_count": len(known),
-            "unknown_candidates_count": len(candidates),
-            "unknown_novel_count": len(novel),
-            "candidate_rate": round(len(candidates) / detection_count, 3) if detection_count else 0.0
+            "known_threats_count": known_count,
+            "unknown_candidates_count": candidates_count,
+            "unknown_novel_count": novel_count,
+            "candidate_rate": round(candidates_count / detection_count, 3) if detection_count else 0.0
         },
-        "known_categories": list({d.predicted_class for d in known if d.predicted_class}),
+        "known_categories": known_categories,
         "unknown_candidates": [
             {
                 "detection_id": d.detection_id,

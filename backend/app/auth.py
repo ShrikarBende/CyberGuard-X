@@ -13,7 +13,7 @@ import json
 import threading
 import time
 from collections import deque
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -28,6 +28,26 @@ LOGIN_FAILURE_WINDOW_SECONDS = 15 * 60
 bearer_scheme = HTTPBearer(auto_error=False)
 _LOGIN_FAILURES: dict[tuple[str, str], deque[float]] = {}
 _LOGIN_FAILURES_LOCK = threading.Lock()
+_LOGIN_IP_ATTEMPTS: dict[str, deque[float]] = {}
+_LOGIN_IP_ATTEMPTS_LOCK = threading.Lock()
+LOGIN_IP_LIMIT = 25
+LOGIN_IP_WINDOW_SECONDS = 60
+
+
+def login_ip_is_limited(client_ip: str | None) -> bool:
+    """Apply a cheap per-IP cap before any password hashing work."""
+    if not client_ip:
+        client_ip = "unknown"
+    now = time.monotonic()
+    cutoff = now - LOGIN_IP_WINDOW_SECONDS
+    with _LOGIN_IP_ATTEMPTS_LOCK:
+        attempts = _LOGIN_IP_ATTEMPTS.setdefault(client_ip, deque())
+        while attempts and attempts[0] <= cutoff:
+            attempts.popleft()
+        if len(attempts) >= LOGIN_IP_LIMIT:
+            return True
+        attempts.append(now)
+        return False
 
 
 def _b64url(value: bytes) -> str:
@@ -175,6 +195,7 @@ def clear_login_failures(username: str, client_ip: str | None) -> None:
 def get_current_analyst(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
     db: Session = Depends(get_db),
+    request: Request = None,
 ) -> AnalystAccount:
     unauthorized = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -183,6 +204,9 @@ def get_current_analyst(
     )
     if credentials is None or credentials.scheme.lower() != "bearer":
         raise unauthorized
+    cached_account = getattr(getattr(request, "state", None), "analyst", None)
+    if cached_account is not None:
+        return cached_account
     try:
         account = account_for_token(credentials.credentials, db)
     except (ValueError, TypeError, json.JSONDecodeError, UnicodeError) as exc:

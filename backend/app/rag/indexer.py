@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import sys
 import re
 import time
 from pathlib import Path
@@ -162,6 +163,7 @@ class KnowledgeRetriever:
         if not self.chunks:
             raise RuntimeError(f"No markdown knowledge chunks found under {KNOWLEDGE_DIR}")
         self.embedder = _load_embedder(self.model_name)
+        self.rag_backend = str(settings.RAG_BACKEND).lower()
         self.backend = "numpy"
         self.index = None
         self.vectors: np.ndarray
@@ -178,7 +180,7 @@ class KnowledgeRetriever:
                 and len(metadata.get("chunks", [])) == len(self.chunks)):
             self.chunks = metadata["chunks"]
             self.vectors = np.load(VECTORS_FILE).astype(np.float32, copy=False)
-            if metadata.get("backend") == "faiss" and INDEX_FILE.is_file():
+            if self._faiss_allowed() and metadata.get("backend") == "faiss" and INDEX_FILE.is_file():
                 try:
                     import faiss
                     self.index = faiss.read_index(str(INDEX_FILE))
@@ -199,6 +201,10 @@ class KnowledgeRetriever:
                     self.backend, len(self.chunks), self.model_name, self.build_time_seconds)
 
     def _build_backend(self):
+        if not self._faiss_allowed():
+            self.index = None
+            self.backend = "numpy"
+            return
         try:
             import faiss
 
@@ -209,6 +215,13 @@ class KnowledgeRetriever:
             logger.warning("Using NumPy cosine fallback for RAG retrieval: %s", exc)
             self.index = None
             self.backend = "numpy"
+
+    def _faiss_allowed(self) -> bool:
+        if self.rag_backend == "numpy":
+            return False
+        if self.rag_backend == "faiss":
+            return True
+        return not (self.rag_backend == "auto" and sys.platform == "win32")
 
     def _save(self):
         INDEX_DIR.mkdir(parents=True, exist_ok=True)

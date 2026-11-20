@@ -303,9 +303,11 @@ def process_uploaded_log_file(
         seen_hashes.add(fingerprint)
         accepted.append(row)
 
+    candidate_ids = {row["event_data"]["event_id"] for row in accepted}
     existing_event_ids = {
-        value for (value,) in db.query(SecurityEvent.event_id).all()
-    }
+        value for (value,) in db.query(SecurityEvent.event_id)
+        .filter(SecurityEvent.event_id.in_(candidate_ids)).all()
+    } if candidate_ids else set()
     seen_event_ids = set(existing_event_ids)
     event_rows = []
     flow_rows = []

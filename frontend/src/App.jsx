@@ -1,14 +1,14 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, lazy, Suspense } from 'react';
 import Sidebar from './components/Sidebar';
 import Header from './components/Header';
-import Overview from './pages/Overview';
-import LiveMonitoring from './pages/LiveMonitoring';
-import ThreatIntelligence from './pages/ThreatIntelligence';
-import IncidentManagement from './pages/IncidentManagement';
-import Explainability from './pages/Explainability';
-import AIAssistant from './pages/AIAssistant';
-import DataManagement from './pages/DataManagement';
-import Evaluation from './pages/Evaluation';
+const Overview = lazy(() => import('./pages/Overview'));
+const LiveMonitoring = lazy(() => import('./pages/LiveMonitoring'));
+const ThreatIntelligence = lazy(() => import('./pages/ThreatIntelligence'));
+const IncidentManagement = lazy(() => import('./pages/IncidentManagement'));
+const Explainability = lazy(() => import('./pages/Explainability'));
+const AIAssistant = lazy(() => import('./pages/AIAssistant'));
+const DataManagement = lazy(() => import('./pages/DataManagement'));
+const Evaluation = lazy(() => import('./pages/Evaluation'));
 import { api } from './services/api';
 
 export default function App() {
@@ -206,6 +206,7 @@ export default function App() {
         )}
 
         <main className="flex-1 overflow-y-auto p-8">
+          <Suspense fallback={<div className="p-8 text-center text-slate-400">Loading page…</div>}>
           {activePage === 'overview' && (
             <Overview onSelectIncident={handleSelectIncidentForAssistant} />
           )}
@@ -220,6 +221,7 @@ export default function App() {
           )}
           {activePage === 'data' && <DataManagement role={analyst?.role} />}
           {activePage === 'evaluation' && <Evaluation />}
+          </Suspense>
         </main>
       </div>
     </div>

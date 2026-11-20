@@ -1,7 +1,7 @@
 """
 Pydantic v2 schemas for Enterprise CyberGuard X.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any, Union
 from pydantic import BaseModel, Field, ConfigDict, field_validator
 
@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, ConfigDict, field_validator
 # Security Event Schemas
 # -------------------------------------------------------------------
 class SecurityEventCreate(BaseModel):
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     user_id: Optional[str] = None
     source_ip: Optional[str] = None
     destination_ip: Optional[str] = None

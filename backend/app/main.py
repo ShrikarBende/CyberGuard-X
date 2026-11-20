@@ -175,7 +175,7 @@ def unexpected_exception_response(_request: Request, exc: Exception):
 @app.middleware("http")
 async def require_analyst_token(request: Request, call_next):
     """Require a valid account token on every HTTP endpoint except login/health."""
-    if request.method == "OPTIONS" or (
+    if request.url.path in {"/docs", "/redoc", "/openapi.json", "/favicon.ico"} or request.method == "OPTIONS" or (
         request.method == "POST" and request.url.path == "/api/auth/login"
     ) or (
         request.method == "GET" and request.url.path == "/api/health"

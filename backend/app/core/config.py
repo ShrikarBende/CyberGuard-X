@@ -4,7 +4,7 @@ Enterprise CyberGuard X - Application Settings & Configuration
 from pathlib import Path
 import logging
 import secrets
-from typing import List
+from typing import List, Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field, field_validator, model_validator
 
@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "template"
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
     RAG_TOP_K: int = 4
+    RAG_BACKEND: Literal["auto", "numpy", "faiss"] = "auto"
     RAG_MIN_RETRIEVAL_SCORE: float = 0.25
     RAG_CHUNK_WORDS: int = 250
     RAG_CHUNK_OVERLAP_WORDS: int = 40

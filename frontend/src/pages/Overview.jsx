@@ -60,10 +60,6 @@ export default function Overview({ onSelectIncident }) {
     );
   }
 
-  if (stats?.total_detections === 0) {
-    return <div className="rounded-2xl border border-[#1E293B] bg-[#10182E] p-8 text-center text-slate-300">No detections yet. Ingest an event and run it through the detector to populate this view.</div>;
-  }
-
   const kpis = [
     {
       label: 'Total Events Analyzed',
@@ -98,6 +94,7 @@ export default function Overview({ onSelectIncident }) {
 
   return (
     <div className="space-y-6">
+      {stats?.total_detections === 0 && <div role="status" className="rounded-2xl border border-[#1E293B] bg-[#10182E] p-4 text-sm text-slate-300">No detections yet. Ingest an event and run it through the detector to populate this view.</div>}
       {/* KPI Cards Row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {kpis.map((kpi, idx) => {

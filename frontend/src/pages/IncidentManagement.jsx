@@ -26,6 +26,7 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
   const [correlationRunning, setCorrelationRunning] = useState(false);
   const [correlationMessage, setCorrelationMessage] = useState('');
   const [correlationAlerts, setCorrelationAlerts] = useState([]);
+  const [actionMessage, setActionMessage] = useState('');
   const reviewQueue = incidents.filter((incident) => incident.status === 'NEEDS_REVIEW');
 
   const fetchIncidents = async () => {
@@ -72,8 +73,9 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
       if (selectedIncident?.incident_id === incidentId) {
         setSelectedIncident((prev) => ({ ...prev, status: newStatus }));
       }
+      setActionMessage('Incident status updated.');
     } catch (err) {
-      alert('Failed to update status');
+      setActionMessage(err.message || 'Failed to update status.');
     }
   };
 
@@ -87,13 +89,15 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
         notes: [created, ...(prev.notes || [])],
       }));
       setNewNote('');
+      setActionMessage('Note added.');
     } catch (err) {
-      alert('Failed to add note');
+      setActionMessage(err.message || 'Failed to add note.');
     }
   };
 
   return (
     <div className="space-y-4">
+      {actionMessage && <p role="status" className="rounded-xl border border-blue-500/30 bg-blue-500/10 px-4 py-2 text-xs text-blue-200">{actionMessage}</p>}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#1E293B] bg-[#10182E] p-4">
         <div>
           <h3 className="text-sm font-bold text-slate-200">Rule-based cross-layer correlation</h3>

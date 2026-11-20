@@ -196,4 +196,4 @@ def evaluate_indicators(events: Iterable[Any]) -> list[dict]:
             except (ValueError, TypeError):
                 external = False
             indicator["evidence"]["external_destination"] = external
-    return indicators
+    return sorted(indicators, key=lambda item: item["timestamp"])

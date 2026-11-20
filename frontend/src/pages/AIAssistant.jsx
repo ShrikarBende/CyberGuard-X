@@ -26,7 +26,7 @@ export default function AIAssistant({ initialIncidentId }) {
       }
     }
     loadIncidents();
-  }, [selectedIncidentId]);
+  }, []);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });

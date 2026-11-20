@@ -7,6 +7,7 @@ import hashlib
 import uuid
 
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from app.core.config import settings
 from app.detection.risk import compute_fused_risk
@@ -120,7 +121,15 @@ MITRE_RULES = {
 
 def run_correlation(db: Session, window_minutes: int | None = None) -> dict:
     """Run correlation over stored events and persist only incidents and rule evidence."""
-    events = db.query(SecurityEvent).order_by(SecurityEvent.timestamp.asc()).all()
+    max_ts = db.query(func.max(SecurityEvent.timestamp)).scalar()
+    events_query = db.query(SecurityEvent)
+    has_demo_replay = db.query(SecurityEvent.event_id).filter(
+        SecurityEvent.dataset == "synthetic_demo"
+    ).first() is not None
+    if max_ts is not None and not has_demo_replay:
+        minutes = window_minutes or settings.CORRELATION_WINDOW_MINUTES
+        events_query = events_query.filter(SecurityEvent.timestamp >= max_ts - timedelta(minutes=minutes * 4))
+    events = events_query.order_by(SecurityEvent.timestamp.asc()).all()
     result = correlate_events(events, window_minutes)
     event_lookup = {event.event_id: event for event in events}
     persisted = []
