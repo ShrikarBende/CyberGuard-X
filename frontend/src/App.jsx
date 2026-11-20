@@ -19,6 +19,7 @@ export default function App() {
   const [activePage, setActivePage] = useState('overview');
   const [selectedIncidentIdForAssistant, setSelectedIncidentIdForAssistant] = useState(null);
   const [liveEvents, setLiveEvents] = useState([]);
+  const [unreadLiveEvents, setUnreadLiveEvents] = useState(0);
   const [wsConnected, setWsConnected] = useState(false);
   const [hasSyntheticDemo, setHasSyntheticDemo] = useState(false);
   const [authToken, setAuthToken] = useState(() => window.sessionStorage.getItem('cyberguardx_access_token'));
@@ -34,6 +35,18 @@ export default function App() {
   const wsRef = useRef(null);
   const shellRef = useRef(null);
   const pageRef = useRef(null);
+  const lastSeenLiveEventId = useRef(null);
+
+  useEffect(() => {
+    if (activePage === 'live') setUnreadLiveEvents(0);
+  }, [activePage]);
+
+  useEffect(() => {
+    const newestEventId = liveEvents[0]?.event_id;
+    if (!newestEventId || newestEventId === lastSeenLiveEventId.current) return;
+    lastSeenLiveEventId.current = newestEventId;
+    setUnreadLiveEvents((count) => (activePage === 'live' ? 0 : count + 1));
+  }, [liveEvents, activePage]);
 
   useGSAP(() => {
     if (!authToken) return undefined;
@@ -201,7 +214,7 @@ export default function App() {
   return (
     <div ref={shellRef} className="flex h-screen w-screen overflow-hidden bg-soc-bg text-soc-text">
       {/* Sidebar Navigation */}
-      <div className="shell-sidebar flex"><Sidebar activePage={activePage} setActivePage={setActivePage} role={analyst?.role} /></div>
+      <div className="shell-sidebar flex"><Sidebar activePage={activePage} setActivePage={setActivePage} role={analyst?.role} liveEventsCount={unreadLiveEvents} wsConnected={wsConnected} analyst={analyst} onLogout={handleLogout} /></div>
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">

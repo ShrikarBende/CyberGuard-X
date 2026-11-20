@@ -56,7 +56,6 @@ export default function Header({ pageTitle, wsConnected, analyst, onLogout }) {
             <p className="text-[10px] text-slate-500 font-mono uppercase">{analyst?.role || 'viewer'}</p>
           </div>
         </div>
-        <button onClick={onLogout} className="text-[10px] font-semibold text-slate-400 hover:text-white">Log out</button>
       </div>
     </header>
   );
