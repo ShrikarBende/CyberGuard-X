@@ -200,6 +200,7 @@ export default function AIAssistant({ initialIncidentId }) {
       <form onSubmit={(e) => { e.preventDefault(); handleSend(); }} className="p-4 bg-[#0D1527] border-t border-[#1E293B] flex gap-3">
         <input
           type="text"
+          aria-label="Ask about detected anomalies, attack classification, or containment"
           placeholder="Ask about detected anomalies, attack classification, or containment..."
           value={inputQuery}
           onChange={(e) => setInputQuery(e.target.value)}

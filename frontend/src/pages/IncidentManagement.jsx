@@ -144,10 +144,12 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
               const isRuleCorrelated = inc.threat_classification === 'RULE_CORRELATED_SUSPICIOUS_ACTIVITY';
               const isDemo = (inc.evidence?.indicators || []).some((indicator) => indicator.dataset === 'synthetic_demo' || indicator.is_demo);
             return (
-              <div
+              <button
+                type="button"
                 key={inc.incident_id}
+                aria-pressed={isSelected}
                 onClick={() => setSelectedIncident(inc)}
-                className={`p-3.5 rounded-xl border cursor-pointer transition-all ${
+                className={`w-full text-left p-3.5 rounded-xl border cursor-pointer transition-all ${
                   isSelected
                     ? 'bg-blue-600/10 border-blue-500 shadow-md'
                     : 'bg-[#0D1527] border-[#1E293B] hover:border-slate-700'
@@ -178,7 +180,7 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
                   <span>{inc.user_id || 'host_sys'}</span>
                   <span>{inc.device_id || 'unknown_host'}</span>
                 </div>
-              </div>
+              </button>
             );
           })}
         </div>
