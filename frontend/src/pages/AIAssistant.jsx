@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Bot, Send, BookOpen, AlertCircle, User, Loader2 } from 'lucide-react';
 import { api } from '../services/api';
+import { gsap } from 'gsap';
+import { useGSAP } from '@gsap/react';
+import { createMotionScope, motion } from '../lib/motion';
 
 export default function AIAssistant({ initialIncidentId }) {
   const [incidents, setIncidents] = useState([]);
@@ -11,6 +14,15 @@ export default function AIAssistant({ initialIncidentId }) {
   const [retrievalError, setRetrievalError] = useState('');
   const [incidentLoadError, setIncidentLoadError] = useState('');
   const messagesEndRef = useRef(null);
+  const chatRef = useRef(null);
+  const animatedMessageCount = useRef(0);
+
+  useGSAP(() => createMotionScope(chatRef.current, (reduced) => {
+    if (messages.length <= animatedMessageCount.current) return;
+    animatedMessageCount.current = messages.length;
+    const newest = chatRef.current?.querySelector(`[data-message-index="${messages.length - 1}"]`);
+    if (newest) gsap.fromTo(newest, { autoAlpha: 0, y: reduced ? 0 : 8 }, { autoAlpha: 1, y: 0, duration: reduced ? 0.18 : motion.duration.base, ease: motion.ease });
+  }), { scope: chatRef, dependencies: [messages], revertOnUpdate: true });
 
   useEffect(() => {
     async function loadIncidents() {
@@ -67,7 +79,7 @@ export default function AIAssistant({ initialIncidentId }) {
   ];
 
   return (
-    <div className="flex flex-col h-[calc(100vh-140px)] bg-[#10182E] border border-[#1E293B] rounded-2xl overflow-hidden">
+    <div ref={chatRef} className="flex flex-col h-[calc(100vh-140px)] bg-[#10182E] border border-[#1E293B] rounded-2xl overflow-hidden">
       {/* Top Incident Context Bar */}
       <div className="p-4 border-b border-[#1E293B] bg-[#0D1527] flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -119,6 +131,7 @@ export default function AIAssistant({ initialIncidentId }) {
           return (
             <div
               key={idx}
+              data-message-index={idx}
               className={`flex gap-3 max-w-3xl ${isUser ? 'ml-auto flex-row-reverse' : 'mr-auto'}`}
             >
               <div
@@ -153,7 +166,7 @@ export default function AIAssistant({ initialIncidentId }) {
                     {msg.sources.map((source, cIdx) => (
                       <span
                         key={cIdx}
-                        className="px-2 py-0.5 rounded bg-purple-500/10 border border-purple-500/20 text-[10px] font-mono text-purple-300"
+                        className="rounded-lg border border-purple-400/20 bg-purple-400/[0.06] px-2.5 py-1 text-[10px] font-mono text-purple-200"
                       >
                         {source.chunk_id}: {source.title} · {Number(source.score).toFixed(3)}
                       </span>
