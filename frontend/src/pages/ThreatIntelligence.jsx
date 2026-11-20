@@ -1,12 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { lazy, Suspense, useState, useEffect } from 'react';
 import { ShieldAlert, AlertTriangle, Cpu, Layers, HelpCircle, CheckCircle2 } from 'lucide-react';
 import { api } from '../services/api';
+
+const MitreMatrix = lazy(() => import('../components/MitreMatrix'));
 
 export default function ThreatIntelligence() {
   const [threatData, setThreatData] = useState(null);
   const [novelAlerts, setNovelAlerts] = useState([]);
   const [novelOnly, setNovelOnly] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('overview');
 
   useEffect(() => {
     async function loadData() {
@@ -23,18 +26,20 @@ export default function ThreatIntelligence() {
     loadData();
   }, []);
 
-  if (loading && !threatData) {
-    return (
-      <div className="h-full flex items-center justify-center text-slate-500">
-        Loading Threat Intelligence Matrix...
-      </div>
-    );
-  }
-
   const { summary, known_categories } = threatData || {};
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
+      <div role="tablist" aria-label="Threat intelligence views" onKeyDown={(event) => {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+        event.preventDefault();
+        setActiveTab((current) => current === 'overview' ? 'mitre' : 'overview');
+        event.currentTarget.querySelector(`[data-view-tab="${activeTab === 'overview' ? 'mitre' : 'overview'}"]`)?.focus();
+      }} className="flex gap-1 border-b border-white/[0.07]">
+        <button type="button" id="threat-overview-tab" role="tab" aria-controls="threat-overview-panel" data-view-tab="overview" aria-selected={activeTab === 'overview'} tabIndex={activeTab === 'overview' ? 0 : -1} onClick={() => setActiveTab('overview')} className={`border-b-2 px-3 py-2.5 text-xs font-semibold transition-colors ${activeTab === 'overview' ? 'border-blue-400 text-slate-100' : 'border-transparent text-slate-400 hover:text-slate-200'}`}>Threat intelligence</button>
+        <button type="button" id="threat-mitre-tab" role="tab" aria-controls="threat-mitre-panel" data-view-tab="mitre" aria-selected={activeTab === 'mitre'} tabIndex={activeTab === 'mitre' ? 0 : -1} onClick={() => setActiveTab('mitre')} className={`border-b-2 px-3 py-2.5 text-xs font-semibold transition-colors ${activeTab === 'mitre' ? 'border-blue-400 text-slate-100' : 'border-transparent text-slate-400 hover:text-slate-200'}`}>MITRE ATT&amp;CK</button>
+      </div>
+      {activeTab === 'mitre' ? <div id="threat-mitre-panel" role="tabpanel" aria-labelledby="threat-mitre-tab"><Suspense fallback={<div aria-busy="true" className="space-y-3 rounded-2xl border border-white/[0.07] bg-[#10182E] p-5"><div className="h-4 w-44 animate-pulse rounded bg-white/[0.07]" /><div className="h-24 animate-pulse rounded bg-white/[0.07]" /></div>}><MitreMatrix /></Suspense></div> : loading && !threatData ? <div id="threat-overview-panel" role="tabpanel" aria-labelledby="threat-overview-tab" className="h-full flex items-center justify-center text-slate-500">Loading Threat Intelligence Matrix...</div> : <div id="threat-overview-panel" role="tabpanel" aria-labelledby="threat-overview-tab" className="space-y-6">
       <section className="rounded-2xl border border-fuchsia-500/40 bg-fuchsia-500/[0.06] p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div><p className="text-[10px] font-bold uppercase tracking-widest text-fuchsia-300">Open-set triage</p><h2 className="mt-1 text-base font-extrabold text-slate-100">Unknown / Novel Threat View</h2><p className="mt-1 text-xs text-slate-400">Review behavior that falls outside known-class confidence or centroid boundaries.</p></div>
@@ -136,6 +141,7 @@ export default function ThreatIntelligence() {
           </div>
         </div>
       </div>
+      </div>}
     </div>
   );
 }
