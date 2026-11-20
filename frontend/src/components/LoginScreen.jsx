@@ -19,7 +19,11 @@ export default function LoginScreen({ loginName, setLoginName, loginPassword, se
   }, { scope: root });
 
   useGSAP(() => {
-    if (loginError) gsap.fromTo('.login-form', { x: -5 }, { x: 0, duration: 0.28, ease: 'elastic.out(1, 0.35)' });
+    if (!loginError) return undefined;
+    return createMotionScope(root.current, (reduced) => {
+      if (reduced) gsap.fromTo('.login-form', { autoAlpha: 0.8 }, { autoAlpha: 1, duration: 0.18 });
+      else gsap.fromTo('.login-form', { x: -5 }, { x: 0, duration: 0.28, ease: 'elastic.out(1, 0.35)' });
+    });
   }, { scope: root, dependencies: [loginError], revertOnUpdate: true });
 
   const magnet = (event) => {
