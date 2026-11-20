@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   ShieldAlert,
   Users,
@@ -23,13 +23,28 @@ import {
   CartesianGrid,
 } from 'recharts';
 import { api } from '../services/api';
+import Card from '../components/ui/Card';
+import StatTile from '../components/ui/StatTile';
+import { gsap } from 'gsap';
+import { useGSAP } from '@gsap/react';
+import { createMotionScope, prefersReducedMotion, motion } from '../lib/motion';
+import ChartTooltip from '../charts/ChartTooltip';
+import { chartTheme } from '../charts/chartTheme';
 
-const COLORS = ['#3B82F6', '#EF4444', '#F59E0B', '#10B981', '#A855F7'];
+const COLORS = chartTheme.palette;
 
 export default function Overview({ onSelectIncident }) {
+  const root = useRef(null);
   const [stats, setStats] = useState(null);
   const [recentAlerts, setRecentAlerts] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  useGSAP(() => createMotionScope(root.current, (reduced) => {
+    gsap.fromTo('.overview-entrance', { autoAlpha: 0, y: reduced ? 0 : 10 }, {
+      autoAlpha: 1, y: 0, duration: reduced ? 0.18 : motion.duration.base,
+      stagger: reduced ? 0 : 0.06, ease: motion.ease,
+    });
+  }), { scope: root, dependencies: [loading], revertOnUpdate: true });
 
   useEffect(() => {
     async function loadData() {
@@ -93,34 +108,22 @@ export default function Overview({ onSelectIncident }) {
   ];
 
   return (
-    <div className="space-y-6">
+    <div ref={root} className="space-y-6">
       {stats?.total_detections === 0 && <div role="status" className="rounded-2xl border border-[#1E293B] bg-[#10182E] p-4 text-sm text-slate-300">No detections yet. Ingest an event and run it through the detector to populate this view.</div>}
       {/* KPI Cards Row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {kpis.map((kpi, idx) => {
           const Icon = kpi.icon;
           return (
-            <div
+            <StatTile
               key={idx}
-              className="bg-[#10182E] border border-[#1E293B] rounded-2xl p-5 flex flex-col justify-between"
-            >
-              <div className="flex items-center justify-between mb-3">
-                <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
-                  {kpi.label}
-                </span>
-                <div className={`p-2 rounded-xl border ${kpi.bg}`}>
-                  <Icon className={`w-4 h-4 ${kpi.color}`} />
-                </div>
-              </div>
-              <div className="flex items-baseline justify-between">
-                <span className="text-3xl font-extrabold text-slate-100">{kpi.value}</span>
-                {kpi.tag && (
-                  <span className="text-[10px] font-mono font-semibold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                    {kpi.tag}
-                  </span>
-                )}
-              </div>
-            </div>
+              className="overview-entrance min-h-32"
+              label={kpi.label}
+              value={kpi.value}
+              icon={Icon}
+              tone={idx === 1 ? 'medium' : idx === 2 ? 'novel' : idx === 3 ? 'critical' : 'low'}
+              detail={kpi.tag && <span className="rounded-full border border-purple-400/30 bg-purple-400/10 px-2 py-0.5 text-[10px] font-mono font-semibold text-purple-200">{kpi.tag}</span>}
+            />
           );
         })}
       </div>
@@ -128,7 +131,7 @@ export default function Overview({ onSelectIncident }) {
       {/* Charts Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Risk Trend Chart (2 cols) */}
-        <div className="lg:col-span-2 bg-[#10182E] border border-[#1E293B] rounded-2xl p-6">
+        <Card className="overview-entrance lg:col-span-2 p-6">
           <div className="flex items-center justify-between mb-6">
             <div>
               <h3 className="text-sm font-bold text-slate-200">Enterprise Risk Score Trend (Last 60 Min)</h3>
@@ -142,33 +145,27 @@ export default function Overview({ onSelectIncident }) {
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={stats?.risk_trend || []}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1E293B" />
-                <XAxis dataKey="time" stroke="#64748B" fontSize={11} tickLine={false} />
-                <YAxis domain={[0, 100]} stroke="#64748B" fontSize={11} tickLine={false} />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#0D1527',
-                    borderColor: '#1E293B',
-                    borderRadius: '8px',
-                    color: '#F8FAFC',
-                    fontSize: '12px',
-                  }}
-                />
+                <CartesianGrid strokeDasharray="3 5" stroke={chartTheme.grid} />
+                <XAxis dataKey="time" tick={{ fill: chartTheme.axis, fontSize: 10, fontFamily: 'var(--soc-font-mono)' }} axisLine={false} tickLine={false} />
+                <YAxis domain={[0, 100]} tick={{ fill: chartTheme.axis, fontSize: 10, fontFamily: 'var(--soc-font-mono)' }} axisLine={false} tickLine={false} />
+                <Tooltip content={<ChartTooltip />} />
                 <Line
                   type="monotone"
                   dataKey="risk"
-                  stroke="#EF4444"
+                  stroke="#fb5b68"
                   strokeWidth={2.5}
-                  dot={{ r: 3, fill: '#EF4444' }}
-                  activeDot={{ r: 6 }}
+                  dot={{ r: 3, fill: '#fb5b68', strokeWidth: 0 }}
+                  activeDot={{ r: 6, fill: '#fb5b68', stroke: '#fff', strokeWidth: 2 }}
+                  isAnimationActive={!prefersReducedMotion()}
+                  animationDuration={850}
                 />
               </LineChart>
             </ResponsiveContainer>
           </div>
-        </div>
+        </Card>
 
         {/* Threat Distribution Donut (1 col) */}
-        <div className="bg-[#10182E] border border-[#1E293B] rounded-2xl p-6 flex flex-col justify-between">
+        <Card className="overview-entrance flex flex-col justify-between p-6">
           <div>
             <h3 className="text-sm font-bold text-slate-200 mb-1">Threat Category Breakdown</h3>
             <p className="text-xs text-slate-500 mb-4">MITRE ATT&CK & Open-Set Classification</p>
@@ -185,20 +182,14 @@ export default function Overview({ onSelectIncident }) {
                   outerRadius={75}
                   paddingAngle={5}
                   dataKey="value"
+                  isAnimationActive={!prefersReducedMotion()}
+                  animationDuration={850}
                 >
                   {(stats?.threat_distribution || []).map((entry, index) => (
                     <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                   ))}
                 </Pie>
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#0D1527',
-                    borderColor: '#1E293B',
-                    borderRadius: '8px',
-                    color: '#F8FAFC',
-                    fontSize: '12px',
-                  }}
-                />
+                <Tooltip content={<ChartTooltip />} />
               </PieChart>
             </ResponsiveContainer>
           </div>
@@ -217,7 +208,7 @@ export default function Overview({ onSelectIncident }) {
               </div>
             ))}
           </div>
-        </div>
+        </Card>
       </div>
 
       {/* Layer-Wise Detection Statistics */}

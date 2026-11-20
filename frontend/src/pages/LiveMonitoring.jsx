@@ -1,12 +1,25 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Radar, Filter, Search, ShieldAlert, AlertTriangle, CheckCircle, RefreshCw } from 'lucide-react';
 import { api } from '../services/api';
+import { gsap } from 'gsap';
+import { useGSAP } from '@gsap/react';
+import { createMotionScope, motion } from '../lib/motion';
 
 export default function LiveMonitoring({ liveEvents }) {
   const [initialEvents, setInitialEvents] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  const seenLiveId = useRef(null);
+  const streamRef = useRef(null);
+
+  useGSAP(() => createMotionScope(streamRef.current, (reduced) => {
+    const newestId = liveEvents[0]?.event_id;
+    if (!newestId || newestId === seenLiveId.current) return;
+    seenLiveId.current = newestId;
+    const row = streamRef.current?.querySelector(`[data-live-id="${CSS.escape(String(newestId))}"]`);
+    if (row) gsap.fromTo(row, { autoAlpha: 0, y: reduced ? 0 : -8 }, { autoAlpha: 1, y: 0, duration: reduced ? 0.18 : motion.duration.base, ease: motion.ease });
+  }), { scope: streamRef, dependencies: [liveEvents], revertOnUpdate: true });
 
   useEffect(() => {
     async function loadInitial() {
@@ -72,6 +85,7 @@ export default function LiveMonitoring({ liveEvents }) {
           <Search className="w-4 h-4 text-slate-500 absolute left-3 top-2.5" />
           <input
             type="text"
+            aria-label="Search user, device, IP, type"
             placeholder="Search user, device, IP, type..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -81,7 +95,7 @@ export default function LiveMonitoring({ liveEvents }) {
       </div>
 
       {/* Live Stream Table */}
-      <div className="bg-[#10182E] border border-[#1E293B] rounded-2xl p-6">
+      <div ref={streamRef} className="bg-[#10182E] border border-[#1E293B] rounded-2xl p-6">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2">
             <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></div>
@@ -106,13 +120,13 @@ export default function LiveMonitoring({ liveEvents }) {
                 <th className="pb-3">Status</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-[#1E293B]/60 text-slate-300 font-mono">
+            <tbody aria-live="polite" aria-relevant="additions" aria-atomic="false" className="divide-y divide-[#1E293B]/60 text-slate-300 font-mono">
               {filteredEvents.map((ev, idx) => {
                 const cat = ev.event_category || ev.category || 'endpoint';
                 const status = ev.status || 'success';
                 const isFailed = status === 'failure' || status === 'blocked';
                 return (
-                  <tr key={ev.event_id || idx} className="hover:bg-[#131D38]/50 transition-colors">
+                  <tr key={ev.event_id || idx} data-live-id={liveEvents.includes(ev) ? ev.event_id : undefined} className="hover:bg-[#131D38]/50 transition-colors">
                     <td className="py-2.5 text-slate-500">
                       {new Date(ev.timestamp).toLocaleTimeString()}
                     </td>

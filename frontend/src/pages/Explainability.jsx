@@ -3,6 +3,10 @@ import { Sparkles, X, ClipboardCheck, LoaderCircle } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, CartesianGrid } from 'recharts';
 import { api } from '../services/api';
 import RiskFusion from '../components/RiskFusion';
+import ChartTooltip from '../charts/ChartTooltip';
+import { chartTheme } from '../charts/chartTheme';
+import { prefersReducedMotion } from '../lib/motion';
+import Modal from '../components/ui/Modal';
 
 const readable = (value) => value == null ? '—' : (typeof value === 'string' ? value : JSON.stringify(value, null, 2));
 
@@ -89,7 +93,7 @@ export default function Explainability() {
       <div className="grid gap-5 xl:grid-cols-2">
         <section className="rounded-2xl border border-[#1E293B] bg-[#10182E] p-5">
           <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">TreeSHAP feature attributions</h3><p className="mb-3 mt-1 text-[11px] text-slate-500">Signed values show whether each feature raises or lowers the predicted class score.</p>
-          {chartData.length ? <div className="h-64"><ResponsiveContainer width="100%" height="100%"><BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 12, left: 60, bottom: 4 }}><CartesianGrid strokeDasharray="3 3" stroke="#1E293B" horizontal={false} /><XAxis type="number" stroke="#64748B" fontSize={10} /><YAxis dataKey="feature" type="category" stroke="#94A3B8" fontSize={10} width={120} /><Tooltip contentStyle={{ backgroundColor: '#0D1527', borderColor: '#1E293B', color: '#F8FAFC' }} formatter={(_v, _n, context) => [`${context.payload.signedValue.toFixed(6)}`, 'SHAP']} /><Bar dataKey="importance" radius={[0, 5, 5, 0]}>{chartData.map((row, index) => <Cell key={index} fill={row.signedValue >= 0 ? '#EF4444' : '#3B82F6'} />)}</Bar></BarChart></ResponsiveContainer></div> : <p className="mt-4 text-xs text-slate-500">No TreeSHAP values are stored for this incident.</p>}
+          {chartData.length ? <div className="h-64"><ResponsiveContainer width="100%" height="100%"><BarChart data={chartData} layout="vertical" margin={{ top: 4, right: 12, left: 60, bottom: 4 }}><CartesianGrid strokeDasharray="3 5" stroke={chartTheme.grid} horizontal={false} /><XAxis type="number" tick={{ fill: chartTheme.axis, fontSize: 10, fontFamily: 'var(--soc-font-mono)' }} axisLine={false} tickLine={false} /><YAxis dataKey="feature" type="category" tick={{ fill: chartTheme.axis, fontSize: 10 }} axisLine={false} tickLine={false} width={120} /><Tooltip content={<ChartTooltip formatter={(_v, _n, context) => [`${context.payload.signedValue.toFixed(6)}`, 'SHAP']} />} /><Bar dataKey="importance" radius={[0, 5, 5, 0]} isAnimationActive={!prefersReducedMotion()} animationDuration={750}>{chartData.map((row, index) => <Cell key={index} fill={row.signedValue >= 0 ? '#fb5b68' : '#579cff'} />)}</Bar></BarChart></ResponsiveContainer></div> : <p className="mt-4 text-xs text-slate-500">No TreeSHAP values are stored for this incident.</p>}
         </section>
         <section className="rounded-2xl border border-[#1E293B] bg-[#10182E] p-5">
           <h3 className="text-xs font-bold uppercase tracking-wider text-slate-300">Open-set novelty</h3>
@@ -102,8 +106,7 @@ export default function Explainability() {
     </>}
     {loading && <p className="text-xs text-slate-500">Loading incident evidence…</p>}
 
-    {investigationOpen && <div className="fixed inset-0 z-50 flex justify-end bg-black/60" role="dialog" aria-modal="true" aria-label="Agentic investigation report">
-      <div className="h-full w-full max-w-2xl overflow-y-auto border-l border-[#26344D] bg-[#0A0F1D] p-5 shadow-2xl sm:p-7">
+    <Modal open={investigationOpen} onClose={() => setInvestigationOpen(false)} title="Agentic investigation report" side className="h-full rounded-l-2xl border-l border-[#26344D] bg-[#0A0F1D] p-5 shadow-2xl sm:p-7">
         <div className="mb-5 flex items-start justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-widest text-purple-300">Read-only workflow</p><h2 className="mt-1 text-lg font-bold text-white">Agentic investigation report</h2><p className="mt-1 text-xs text-slate-400">retrieve → analyze → map → summarize → recommend</p></div><button onClick={() => setInvestigationOpen(false)} className="rounded-lg border border-[#26344D] p-2 text-slate-300" aria-label="Close investigation"><X className="h-4 w-4" /></button></div>
         {investigationLoading && <div className="flex items-center gap-2 py-8 text-sm text-slate-400"><LoaderCircle className="h-4 w-4 animate-spin" /> Gathering cited evidence…</div>}
         {investigationError && <p role="alert" className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-200">{investigationError}</p>}
@@ -118,7 +121,6 @@ export default function Explainability() {
             {step.step === 'recommend' && <><p className="text-xs text-slate-400">{step.statement}</p>{(step.actions || []).map((action, i) => <p key={i} className="mt-2 rounded-lg bg-[#0D1527] p-2 text-xs text-slate-300">{action.action}</p>)}<div className="mt-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs font-bold text-amber-200">Analyst approval required before any recommended action. No action was executed.</div></>}
           </section>)}</div>
         </>}
-      </div>
-    </div>}
+    </Modal>
   </div>;
 }

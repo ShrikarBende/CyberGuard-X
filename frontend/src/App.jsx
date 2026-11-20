@@ -10,6 +10,10 @@ const AIAssistant = lazy(() => import('./pages/AIAssistant'));
 const DataManagement = lazy(() => import('./pages/DataManagement'));
 const Evaluation = lazy(() => import('./pages/Evaluation'));
 import { api } from './services/api';
+import LoginScreen from './components/LoginScreen';
+import { gsap } from 'gsap';
+import { useGSAP } from '@gsap/react';
+import { createMotionScope, motion } from './lib/motion';
 
 export default function App() {
   const [activePage, setActivePage] = useState('overview');
@@ -28,6 +32,24 @@ export default function App() {
   const [loginPending, setLoginPending] = useState(false);
   const [forbiddenMessage, setForbiddenMessage] = useState('');
   const wsRef = useRef(null);
+  const shellRef = useRef(null);
+  const pageRef = useRef(null);
+
+  useGSAP(() => {
+    if (!authToken) return undefined;
+    return createMotionScope(shellRef.current, (reduced) => {
+      const duration = reduced ? 0.18 : motion.duration.base;
+      gsap.fromTo('.shell-sidebar', { autoAlpha: 0, x: reduced ? 0 : -10 }, { autoAlpha: 1, x: 0, duration, ease: motion.ease });
+      gsap.fromTo('.shell-header', { autoAlpha: 0, y: reduced ? 0 : -8 }, { autoAlpha: 1, y: 0, duration, ease: motion.ease, delay: reduced ? 0 : 0.08 });
+    });
+  }, { scope: shellRef, dependencies: [authToken], revertOnUpdate: true });
+
+  useGSAP(() => {
+    if (!authToken || !pageRef.current) return undefined;
+    return createMotionScope(pageRef.current, (reduced) => {
+      gsap.fromTo(pageRef.current, { autoAlpha: 0, y: reduced ? 0 : 12 }, { autoAlpha: 1, y: 0, duration: reduced ? 0.18 : 0.25, ease: motion.ease });
+    });
+  }, { scope: pageRef, dependencies: [activePage, authToken], revertOnUpdate: true });
 
   useEffect(() => {
     const expired = () => {
@@ -172,26 +194,18 @@ export default function App() {
 
   if (!authToken) {
     return (
-      <div className="min-h-screen bg-[#0A0F1D] text-slate-100 flex items-center justify-center p-6">
-        <form onSubmit={handleLogin} className="w-full max-w-sm rounded-2xl border border-[#1E293B] bg-[#10182E] p-7 space-y-4">
-          <div><h1 className="text-lg font-bold">CyberGuard X analyst sign in</h1><p className="mt-1 text-xs text-slate-400">Sign in with your assigned analyst account.</p></div>
-          {loginError && <p role="alert" className="rounded-lg bg-rose-500/10 border border-rose-500/30 p-3 text-xs text-rose-300">{loginError}</p>}
-          <label className="block text-xs text-slate-400">Username<input value={loginName} onChange={(event) => setLoginName(event.target.value)} autoComplete="username" required className="mt-1 w-full rounded-lg bg-[#0D1527] border border-[#1E293B] p-3 text-sm text-white" /></label>
-          <label className="block text-xs text-slate-400">Password<input type="password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} autoComplete="current-password" required className="mt-1 w-full rounded-lg bg-[#0D1527] border border-[#1E293B] p-3 text-sm text-white" /></label>
-          <button disabled={loginPending} className="w-full rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold disabled:opacity-50">{loginPending ? 'Signing in…' : 'Sign in'}</button>
-        </form>
-      </div>
+      <LoginScreen loginName={loginName} setLoginName={setLoginName} loginPassword={loginPassword} setLoginPassword={setLoginPassword} loginError={loginError} loginPending={loginPending} handleLogin={handleLogin} />
     );
   }
 
   return (
-    <div className="flex h-screen w-screen bg-[#0A0F1D] text-[#F8FAFC] overflow-hidden">
+    <div ref={shellRef} className="flex h-screen w-screen overflow-hidden bg-soc-bg text-soc-text">
       {/* Sidebar Navigation */}
-      <Sidebar activePage={activePage} setActivePage={setActivePage} role={analyst?.role} />
+      <div className="shell-sidebar flex"><Sidebar activePage={activePage} setActivePage={setActivePage} role={analyst?.role} /></div>
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        <Header pageTitle={pageTitles[activePage] || 'SOC Dashboard'} wsConnected={wsConnected} analyst={analyst} onLogout={handleLogout} />
+        <div className="shell-header"><Header pageTitle={pageTitles[activePage] || 'SOC Dashboard'} wsConnected={wsConnected} analyst={analyst} onLogout={handleLogout} /></div>
 
         {forbiddenMessage && (
           <div role="alert" className="mx-8 mt-4 flex items-center justify-between rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-xs text-rose-200">
@@ -205,8 +219,9 @@ export default function App() {
           </div>
         )}
 
-        <main className="flex-1 overflow-y-auto p-8">
+        <main className="flex-1 overflow-y-auto p-soc-page">
           <Suspense fallback={<div className="p-8 text-center text-slate-400">Loading page…</div>}>
+          <div ref={pageRef} key={activePage}>
           {activePage === 'overview' && (
             <Overview onSelectIncident={handleSelectIncidentForAssistant} />
           )}
@@ -221,6 +236,7 @@ export default function App() {
           )}
           {activePage === 'data' && <DataManagement role={analyst?.role} />}
           {activePage === 'evaluation' && <Evaluation />}
+          </div>
           </Suspense>
         </main>
       </div>

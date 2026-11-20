@@ -1,15 +1,43 @@
-import React from 'react';
-import { Shield, Bell, Cpu, Radio } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Accessibility, Radio } from 'lucide-react';
 
 export default function Header({ pageTitle, wsConnected, analyst, onLogout }) {
+  const [reduceMotion, setReduceMotion] = useState(() => {
+    const saved = window.localStorage.getItem('cyberguardx_reduce_motion');
+    return saved === null ? window.matchMedia('(prefers-reduced-motion: reduce)').matches : saved === 'true';
+  });
+
+  useEffect(() => {
+    const media = window.matchMedia('(prefers-reduced-motion: reduce)');
+    document.documentElement.classList.toggle('motion-reduced', reduceMotion);
+    document.documentElement.classList.toggle('motion-full', window.localStorage.getItem('cyberguardx_reduce_motion') === 'false');
+    const onPreferenceChange = () => {
+      if (window.localStorage.getItem('cyberguardx_reduce_motion') === null) setReduceMotion(media.matches);
+    };
+    media.addEventListener?.('change', onPreferenceChange);
+    return () => media.removeEventListener?.('change', onPreferenceChange);
+  }, [reduceMotion]);
+
+  const toggleMotion = () => {
+    const next = !reduceMotion;
+    setReduceMotion(next);
+    window.localStorage.setItem('cyberguardx_reduce_motion', String(next));
+    document.documentElement.classList.toggle('motion-reduced', next);
+    document.documentElement.classList.toggle('motion-full', !next);
+    window.dispatchEvent(new Event('cyberguardx-motion-change'));
+  };
+
   return (
-    <header className="h-16 bg-[#0D1527] border-b border-[#1E293B] px-8 flex items-center justify-between shrink-0">
-      <div>
+    <header className="flex h-16 shrink-0 items-center justify-between border-b border-white/[0.07] bg-[#0D1527] px-4 md:px-8">
+      <div className="pl-12 md:pl-0">
         <h2 className="text-lg font-bold text-slate-100">{pageTitle}</h2>
         <p className="text-xs text-slate-400">Continuous Behavioral Analysis & Multi-Layer Defense</p>
       </div>
 
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-2 sm:gap-4">
+        <button type="button" onClick={toggleMotion} aria-pressed={reduceMotion} aria-label={reduceMotion ? 'Enable motion' : 'Reduce motion'} title={reduceMotion ? 'Enable motion' : 'Reduce motion'} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-2 py-1.5 text-[10px] font-medium text-slate-300 hover:bg-white/5">
+          <Accessibility className="h-3.5 w-3.5" /><span className="hidden lg:inline">Reduce motion</span>
+        </button>
         {/* WebSocket Live Status */}
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#10182E] border border-[#1E293B] text-xs">
           <Radio className={`w-3.5 h-3.5 ${wsConnected ? 'text-emerald-400 animate-pulse' : 'text-amber-400'}`} />
