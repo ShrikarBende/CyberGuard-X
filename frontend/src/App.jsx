@@ -14,12 +14,15 @@ import LoginScreen from './components/LoginScreen';
 import { gsap } from 'gsap';
 import { useGSAP } from '@gsap/react';
 import { createMotionScope, motion } from './lib/motion';
+import Modal from './components/ui/Modal';
 
 export default function App() {
   const [activePage, setActivePage] = useState('overview');
   const [selectedIncidentIdForAssistant, setSelectedIncidentIdForAssistant] = useState(null);
   const [liveEvents, setLiveEvents] = useState([]);
   const [unreadLiveEvents, setUnreadLiveEvents] = useState(0);
+  const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
   const [hasSyntheticDemo, setHasSyntheticDemo] = useState(false);
   const [authToken, setAuthToken] = useState(() => window.sessionStorage.getItem('cyberguardx_access_token'));
@@ -36,6 +39,57 @@ export default function App() {
   const shellRef = useRef(null);
   const pageRef = useRef(null);
   const lastSeenLiveEventId = useRef(null);
+  const gPrefixActive = useRef(false);
+  const gPrefixTimeout = useRef(null);
+
+  useEffect(() => {
+    if (!authToken) return undefined;
+    const pagesByShortcut = { o: 'overview', l: 'live', i: 'incidents', t: 'threats', e: 'explain', a: 'assistant', d: 'data', v: 'evaluation' };
+    const isEditableTarget = (target) => target instanceof HTMLElement && (
+      target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || Boolean(target.closest('[contenteditable="true"]'))
+    );
+    const clearGPrefix = () => {
+      gPrefixActive.current = false;
+      if (gPrefixTimeout.current) window.clearTimeout(gPrefixTimeout.current);
+      gPrefixTimeout.current = null;
+    };
+    const onKeyDown = (event) => {
+      if (isEditableTarget(event.target)) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        clearGPrefix();
+        setCommandPaletteOpen(true);
+        return;
+      }
+      if (event.key === '?') {
+        event.preventDefault();
+        clearGPrefix();
+        setShortcutsOpen(true);
+        return;
+      }
+      if (event.key === '[') {
+        event.preventDefault();
+        clearGPrefix();
+        window.dispatchEvent(new Event('cyberguardx-toggle-sidebar'));
+        return;
+      }
+      if (gPrefixActive.current) {
+        clearGPrefix();
+        const page = pagesByShortcut[event.key.toLowerCase()];
+        if (page && !(page === 'assistant' && analyst?.role === 'viewer')) setActivePage(page);
+        return;
+      }
+      if (!event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === 'g') {
+        gPrefixActive.current = true;
+        gPrefixTimeout.current = window.setTimeout(clearGPrefix, 900);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      clearGPrefix();
+    };
+  }, [authToken, analyst?.role]);
 
   useEffect(() => {
     if (activePage === 'live') setUnreadLiveEvents(0);
@@ -218,7 +272,7 @@ export default function App() {
 
       {/* Main Content Area */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        <div className="shell-header"><Header pageTitle={pageTitles[activePage] || 'SOC Dashboard'} wsConnected={wsConnected} analyst={analyst} onLogout={handleLogout} /></div>
+        <div className="shell-header"><Header pageTitle={pageTitles[activePage] || 'SOC Dashboard'} wsConnected={wsConnected} analyst={analyst} onLogout={handleLogout} liveEvents={liveEvents} role={analyst?.role} setActivePage={setActivePage} commandPaletteOpen={commandPaletteOpen} setCommandPaletteOpen={setCommandPaletteOpen} /></div>
 
         {forbiddenMessage && (
           <div role="alert" className="mx-8 mt-4 flex items-center justify-between rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-xs text-rose-200">
@@ -253,6 +307,20 @@ export default function App() {
           </Suspense>
         </main>
       </div>
+      <Modal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} title="Keyboard shortcuts" className="p-5 sm:p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div><p className="text-[9px] font-bold uppercase tracking-[0.18em] text-blue-300">Keyboard shortcuts</p><h2 className="mt-1 font-display text-lg font-semibold text-slate-100">Navigate CyberGuard X</h2></div>
+          <button type="button" onClick={() => setShortcutsOpen(false)} aria-label="Close keyboard shortcuts" className="rounded-lg border border-white/10 px-2 py-1 font-mono text-[10px] text-slate-400 hover:text-white">Esc</button>
+        </div>
+        <dl className="mt-5 divide-y divide-white/[0.06]">
+          <div className="flex items-center justify-between gap-4 py-3"><dt className="text-xs text-slate-300">Open command palette</dt><dd><kbd className="rounded-md border border-white/10 px-2 py-1 font-mono text-[10px] text-slate-200">Ctrl / ⌘ + K</kbd></dd></div>
+          <div className="flex items-center justify-between gap-4 py-3"><dt className="text-xs text-slate-300">Open this help</dt><dd><kbd className="rounded-md border border-white/10 px-2 py-1 font-mono text-[10px] text-slate-200">?</kbd></dd></div>
+          <div className="flex items-center justify-between gap-4 py-3"><dt className="text-xs text-slate-300">Toggle sidebar</dt><dd><kbd className="rounded-md border border-white/10 px-2 py-1 font-mono text-[10px] text-slate-200">[</kbd></dd></div>
+          <div className="py-3"><dt className="mb-2 text-xs text-slate-300">Go to a page</dt><dd className="flex flex-wrap gap-2">{[
+            ['o', 'Overview'], ['l', 'Live Feed'], ['i', 'Incidents'], ['t', 'Threats'], ['e', 'Explainability'], ...(analyst?.role === 'viewer' ? [] : [['a', 'AI Assistant']]), ['d', 'Data & Models'], ['v', 'Evaluation'],
+          ].map(([key, label]) => <span key={key} className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.07] bg-white/[0.025] px-2 py-1"><kbd className="font-mono text-[9px] text-blue-200">g {key}</kbd><span className="text-[9px] text-slate-400">{label}</span></span>)}</dd></div>
+        </dl>
+      </Modal>
     </div>
   );
 }
