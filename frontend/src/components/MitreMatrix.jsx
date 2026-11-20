@@ -1,8 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw, ShieldAlert } from 'lucide-react';
+import { gsap } from 'gsap';
 import { api } from '../services/api';
 import EmptyState from './ui/EmptyState';
 import Skeleton from './ui/Skeleton';
+import { createMotionScope, motion } from '../lib/motion';
 
 const CACHE_MS = 30000;
 const incidentCache = new Map();
@@ -82,6 +84,8 @@ export default function MitreMatrix() {
   const [clock, setClock] = useState(Date.now());
   const [reloadKey, setReloadKey] = useState(0);
   const [selectedTechnique, setSelectedTechnique] = useState(null);
+  const matrixRef = useRef(null);
+  const cellsAnimated = useRef(false);
 
   useEffect(() => {
     let active = true;
@@ -112,6 +116,16 @@ export default function MitreMatrix() {
     : [];
   const retrySeconds = Math.max(0, Math.ceil((retryAt - clock) / 1000));
 
+  useEffect(() => createMotionScope(matrixRef, (reduced) => {
+    const root = matrixRef.current;
+    if (!root || loading || error || cellsAnimated.current) return;
+    const cells = root.querySelectorAll('[data-mitre-cell]');
+    if (!cells.length) return;
+    cellsAnimated.current = true;
+    gsap.set(cells, { opacity: 0, y: reduced ? 0 : 8 });
+    gsap.to(cells, { opacity: 1, y: 0, duration: reduced ? 0.18 : 0.35, ease: motion.ease, stagger: reduced ? 0 : 0.018, clearProps: 'all' });
+  }), [loading, error, incidents]);
+
   if (loading) return <section aria-label="MITRE ATT&CK matrix loading" aria-busy="true" className="space-y-4 rounded-2xl border border-white/[0.07] bg-[#10182E] p-5">
     <Skeleton className="h-5 w-44" /><Skeleton className="h-4 w-72 max-w-full" />
     <div className="flex gap-4 overflow-hidden pt-2">{[0, 1, 2, 3].map((item) => <div key={item} className="min-w-56 flex-1 space-y-2"><Skeleton className="h-8" /><Skeleton className="h-20" /><Skeleton className="h-14" /></div>)}</div>
@@ -125,21 +139,21 @@ export default function MitreMatrix() {
 
   if (tactics.length === 0) return <EmptyState icon={ShieldAlert} title="No MITRE-mapped incidents yet" description="Incident records do not currently include MITRE ATT&CK technique mappings." className="bg-[#10182E]" />;
 
-  return <div className="space-y-5">
-    <div className="flex flex-wrap items-end justify-between gap-3"><div><p className="text-[9px] font-bold uppercase tracking-[0.18em] text-blue-300">MITRE ATT&CK</p><h2 className="mt-1 text-sm font-semibold text-slate-100">Mapped techniques by tactic</h2><p className="mt-1 text-xs text-slate-400">Counts reflect incidents with a stored technique mapping. Showing tactics present in incident data.</p></div><span className="font-mono text-[10px] text-slate-500">{incidents.length} incidents scanned</span></div>
-    <div className="overflow-x-auto rounded-2xl border border-white/[0.07] bg-[#10182E] p-3" aria-label="MITRE ATT&CK tactic and technique matrix">
+  return <div ref={matrixRef} className="space-y-5">
+    <div className="flex flex-wrap items-end justify-between gap-3"><div><p className="text-[11px] font-bold uppercase tracking-[0.18em] text-blue-300">MITRE ATT&CK</p><h2 className="mt-1 text-sm font-semibold text-slate-100">Mapped techniques by tactic</h2><p className="mt-1 text-xs text-slate-400">Counts reflect incidents with a stored technique mapping. Showing tactics present in incident data.</p></div><span className="font-mono text-[11px] tabular-nums text-slate-400">{incidents.length} incidents scanned</span></div>
+    <div className="overflow-x-auto rounded-2xl border border-white/[0.08] bg-[var(--soc-raised)] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]" aria-label="MITRE ATT&CK tactic and technique matrix">
       <div className="grid min-w-max gap-3" style={{ gridTemplateColumns: `repeat(${tactics.length}, minmax(14rem, 1fr))` }}>
-        {tactics.map((tactic) => <section key={tactic.name} aria-label={`${tactic.name} tactic`} className="min-w-56 rounded-xl border border-white/[0.06] bg-slate-950/20 p-2.5">
-          <h3 className="mb-2 border-b border-white/[0.07] px-1 pb-2 text-[10px] font-bold uppercase tracking-wider text-slate-300">{tactic.name}</h3>
+        {tactics.map((tactic) => <section key={tactic.name} aria-label={`${tactic.name} tactic`} className="min-w-56 rounded-xl border border-white/[0.07] bg-slate-950/25 p-2.5">
+          <h3 className="mb-2 border-b border-white/[0.07] px-1 pb-2 text-[11px] font-bold uppercase tracking-wider text-slate-300">{tactic.name}</h3>
           <div className="space-y-2">{tactic.techniques.map((technique) => {
             const severity = severityColors[technique.severity];
             const color = severity?.variable || '--soc-muted';
             const tint = 14 + Math.round((technique.count / maxCount) * 42);
             const isSelected = selectedTechnique?.id === technique.id && selectedTechnique?.tactic === tactic.name;
             const incidentList = technique.incidentIds.join(', ');
-            return <button key={technique.id} type="button" aria-pressed={isSelected} aria-label={`${technique.id}, ${technique.name}, ${technique.count} incidents. Linked incidents: ${incidentList}`} title={`${technique.id} · ${technique.name} · ${technique.count} incidents · ${incidentList}`} onClick={() => setSelectedTechnique(isSelected ? null : { ...technique, tactic: tactic.name })} className={`group w-full rounded-lg border p-2.5 text-left transition-transform hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 ${severity?.border || 'border-white/10'} ${severity?.text || 'text-slate-200'} ${isSelected ? 'ring-2 ring-blue-300/70' : ''}`} style={{ backgroundColor: `color-mix(in srgb, var(${color}) ${tint}%, var(--soc-raised))` }}>
-              <span className="flex items-start justify-between gap-2"><span className="min-w-0"><span className="block font-mono text-[10px] font-bold">{technique.id}</span><span className="mt-1 block line-clamp-2 text-[10px] leading-4 text-slate-200">{technique.name}</span></span><span className="shrink-0 rounded-md border border-white/10 bg-black/20 px-1.5 py-0.5 font-mono text-[9px] font-bold text-white">{technique.count}</span></span>
-              <span className="mt-2 flex items-center justify-between gap-2 text-[9px] text-slate-300"><span>{technique.severity || 'Severity unavailable'}</span><span>{technique.incidentIds.length} incidents</span></span>
+            return <button key={technique.id} data-mitre-cell type="button" aria-pressed={isSelected} aria-label={`${technique.id}, ${technique.name}, ${technique.count} incidents. Linked incidents: ${incidentList}`} title={`${technique.id} · ${technique.name} · ${technique.count} incidents · ${incidentList}`} onClick={() => setSelectedTechnique(isSelected ? null : { ...technique, tactic: tactic.name })} className={`group w-full rounded-lg border p-2.5 text-left transition-[transform,border-color,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 ${severity?.border || 'border-white/10'} ${severity?.text || 'text-slate-200'} ${isSelected ? 'ring-2 ring-blue-300/70' : ''}`} style={{ backgroundColor: `color-mix(in srgb, var(${color}) ${tint}%, var(--soc-raised))` }}>
+              <span className="flex items-start justify-between gap-2"><span className="min-w-0"><span className="block font-mono text-[11px] font-bold tabular-nums">{technique.id}</span><span className="mt-1 block line-clamp-2 text-[11px] leading-4 text-slate-200">{technique.name}</span></span><span className="shrink-0 rounded-md border border-white/10 bg-black/25 px-1.5 py-0.5 font-mono text-[11px] font-bold tabular-nums text-white">{technique.count}</span></span>
+              <span className="mt-2 flex items-center justify-between gap-2 text-[11px] text-slate-300"><span>{technique.severity || 'Severity unavailable'}</span><span>{technique.incidentIds.length} incidents</span></span>
             </button>;
           })}</div>
         </section>)}
