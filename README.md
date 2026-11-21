@@ -2,6 +2,46 @@
 
 Enterprise CyberGuard X is a SOC investigation prototype that combines network-flow classification and open-set recognition with endpoint, user-sequence, and host-graph detectors. Its SOC dashboard shows unified incident risk, branch evidence, unknown/novel triage, multi-modal explainability, and read-only RAG investigations.
 
+## Screenshots
+
+> Taken from a local development workspace with synthetic demo events and a held-out CICIDS2017 replay loaded. They illustrate the interface and are **not** evidence of detection performance; see [docs/RESULTS.md](docs/RESULTS.md) for evaluated results.
+
+### Analyst sign-in
+
+Signed bearer-token login with `viewer`, `analyst` and `admin` roles. There is no default account; the first admin is created from the command line.
+
+![Analyst sign-in page](Screenshots/01-login.png)
+
+### Live telemetry stream
+
+Events arrive over a WebSocket. The amber banner appears whenever `synthetic_demo` events are present: those are developer-written demo scenarios, not real attacks.
+
+![Live Feed showing synthetic demo events streamed over WebSocket](Screenshots/02-live-feed.png)
+
+### Incident management and correlation
+
+Grouped incidents with a unified risk score and per-branch contribution bars. This example is a CICIDS2017 PortScan incident from the held-out replay. Branches that receive no input for a flow replay (user sequence, endpoint) show 0%. The unified score is a calibrated triage score from a meta-model trained on weakly labeled synthetic rows, not a real-world incident probability.
+
+![Incident Management showing a grouped PortScan incident with unified risk and branch contributions](Screenshots/03-incidents.png)
+
+### Unknown / novel triage
+
+Events outside known-class confidence or centroid boundaries, with centroid distance and novelty score. `UNKNOWN_NOVEL` means "needs analyst review", not a confirmed new attack.
+
+![Threat Intelligence page showing the Unknown / Novel Threat view](Screenshots/04-threats-open-set.png)
+
+### Grounded AI assistant
+
+Read-only assistant with FAISS retrieval and cited evidence. It recommends steps for human approval and cannot execute actions.
+
+![Grounded AI Security Assistant with incident context selector and suggested prompts](Screenshots/05-ai-assistant.png)
+
+### Explainability and risk scoring
+
+Signed TreeSHAP feature attributions for the LightGBM flow classifier, the unified risk breakdown, and open-set novelty distances.
+
+![SHAP explainability page with unified risk, TreeSHAP attributions and open-set novelty](Screenshots/06-explainability.png)
+
 ## Active model and decision pipeline
 
 The codebase contains four trained model families:
