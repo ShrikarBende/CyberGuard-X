@@ -15,6 +15,7 @@ import { gsap } from 'gsap';
 import { useGSAP } from '@gsap/react';
 import { createMotionScope, motion } from './lib/motion';
 import Modal from './components/ui/Modal';
+import ErrorBoundary from './components/ErrorBoundary';
 
 export default function App() {
   const [activePage, setActivePage] = useState('overview');
@@ -287,6 +288,7 @@ export default function App() {
         )}
 
         <main className="flex-1 overflow-y-auto p-soc-page">
+          <ErrorBoundary resetKey={activePage}>
           <Suspense fallback={<div className="p-8 text-center text-slate-400">Loading page…</div>}>
           <div ref={pageRef} key={activePage}>
           {activePage === 'overview' && (
@@ -305,6 +307,7 @@ export default function App() {
           {activePage === 'evaluation' && <Evaluation />}
           </div>
           </Suspense>
+          </ErrorBoundary>
         </main>
       </div>
       <Modal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} title="Keyboard shortcuts" className="p-5 sm:p-6">
