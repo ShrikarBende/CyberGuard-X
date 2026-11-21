@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  ShieldAlert, Activity, Radar, FileWarning, Sparkles, Bot, Database, Layers,
+  ShieldAlert, ShieldCheck, Activity, Radar, FileWarning, Sparkles, Bot, Database,
   BarChart3, Menu, X, PanelLeftClose, PanelLeftOpen, LogOut, Clock3,
 } from 'lucide-react';
 import { api } from '../services/api';
@@ -168,8 +168,8 @@ export default function Sidebar({
     {mobileOpen && <button type="button" onClick={() => setMobileOpen(false)} aria-label="Close navigation" className="fixed inset-0 z-40 bg-black/60 md:hidden" />}
     <aside aria-label="CyberGuard X sidebar" className={`z-50 flex h-full shrink-0 flex-col border-r border-white/[0.07] bg-[#0d1527] transition-[width,transform] duration-200 ${mobile ? `fixed inset-y-0 left-0 w-64 ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}` : collapsed ? 'w-16' : 'w-64'}`}>
       <div className={`flex h-16 shrink-0 items-center gap-3 border-b border-white/[0.07] px-3 ${collapsed && !mobileOpen ? 'justify-center' : ''}`}>
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-blue-400/25 bg-blue-400/10 text-blue-200"><Layers aria-hidden="true" className="h-4 w-4" /></div>
-        {(!collapsed || mobileOpen) && <div className="min-w-0 flex-1"><h1 className="font-display text-sm font-bold tracking-wide text-slate-100">CyberGuard X</h1><p className="font-mono text-[9px] uppercase tracking-[0.14em] text-blue-300">Enterprise SOC</p></div>}
+        <div className={`flex shrink-0 items-center justify-center border border-blue-300/20 bg-blue-400/10 text-blue-200 ${collapsed && !mobileOpen ? 'h-9 w-9 rounded-xl' : 'h-11 w-11 rounded-2xl'}`}><ShieldCheck aria-hidden="true" className={collapsed && !mobileOpen ? 'h-4 w-4' : 'h-5 w-5'} /></div>
+        {(!collapsed || mobileOpen) && <div className="min-w-0 flex-1"><h1 className="font-display text-sm font-bold tracking-wide text-slate-100">CyberGuard X</h1><p className="font-mono text-[9px] leading-3 uppercase tracking-[0.12em] text-blue-300">Enterprise Security Operations</p></div>}
         {mobile && <button type="button" onClick={() => setMobileOpen(false)} aria-label="Close navigation" className="rounded-lg p-2 text-slate-400 hover:bg-white/5 hover:text-white"><X className="h-4 w-4" /></button>}
       </div>
 
