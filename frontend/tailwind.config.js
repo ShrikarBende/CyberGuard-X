@@ -26,8 +26,8 @@ export default {
         }
       },
       fontFamily: {
-        sans: ["Inter Variable", "sans-serif"],
-        display: ["Space Grotesk Variable", "Inter Variable", "sans-serif"],
+        sans: ["Urbanist Variable", "sans-serif"],
+        display: ["Urbanist Variable", "sans-serif"],
         mono: ["JetBrains Mono", "monospace"],
       },
       borderRadius: {

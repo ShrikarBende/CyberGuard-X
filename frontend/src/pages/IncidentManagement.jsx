@@ -18,6 +18,7 @@ import Badge from '../components/ui/Badge';
 import Card from '../components/ui/Card';
 import EmptyState from '../components/ui/EmptyState';
 import Skeleton from '../components/ui/Skeleton';
+import RiskTicks from '../components/ui/RiskTicks';
 
 function severityTone(severity) {
   const value = String(severity || '').toUpperCase();
@@ -37,6 +38,11 @@ function statusTone(status) {
   if (value === 'INVESTIGATING') return 'high';
   if (value === 'NEEDS_REVIEW') return 'medium';
   return 'neutral';
+}
+
+function formatFixed(value, digits) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric.toFixed(digits) : '—';
 }
 
 function IncidentLoading() {
@@ -266,7 +272,7 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
       <Card className="incident-entrance min-h-[28rem] overflow-hidden p-4 sm:p-5 lg:col-span-1 lg:flex lg:flex-col">
         <div className="mb-4 flex items-center justify-between gap-3">
           <h3 className="text-sm font-semibold text-slate-100">Correlated incidents</h3>
-          <span className="rounded-full border border-white/[0.08] bg-white/[0.035] px-2.5 py-1 font-mono text-[11px] text-slate-300">{incidents.length} Active</span>
+          <span className="rounded-full border border-white/[0.08] bg-white/[0.035] px-2.5 py-1 text-[14px] text-slate-300">{incidents.length} active</span>
         </div>
 
         <div className="space-y-2 overflow-y-auto pr-1 lg:min-h-0 lg:flex-1">
@@ -290,19 +296,19 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
               >
                 <span aria-hidden="true" className={`absolute inset-y-0 left-0 w-[3px] ${tone === 'critical' ? 'bg-rose-400' : tone === 'high' ? 'bg-orange-400' : tone === 'medium' ? 'bg-amber-300' : tone === 'low' ? 'bg-blue-300' : tone === 'normal' ? 'bg-emerald-300' : tone === 'novel' ? 'bg-purple-300' : 'bg-slate-500'}`} />
                 <div className="flex items-start justify-between gap-3">
-                  <Badge tone={tone} className="shrink-0 px-2 py-1 font-mono text-[11px]">{inc.severity}</Badge>
-                  <span className="font-mono text-lg font-semibold leading-none tracking-tight text-slate-100 tabular-nums"><span className="mr-1 text-[11px] font-medium text-slate-400">Risk:</span>{inc.overall_risk_score.toFixed(1)}</span>
+                  <Badge tone={tone} className="shrink-0 px-2 py-1 text-[13px]">{inc.severity}</Badge>
+                  <span className="flex shrink-0 items-center gap-2"><span className="text-[13px] text-slate-400">Risk</span><RiskTicks value={inc.overall_risk_score} suffix="" /></span>
                 </div>
 
                 <p className="mt-3 line-clamp-1 text-xs font-semibold text-slate-100">{inc.title}</p>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <Badge tone={statusTone(inc.status)} className="px-2 py-0.5 text-[11px]">{inc.status}</Badge>
+                  <Badge tone={statusTone(inc.status)} className="px-2 py-0.5 text-[13px] font-normal">{inc.status}</Badge>
                 </div>
                 {isRuleCorrelated && <div className="mt-2 flex flex-wrap gap-1.5">
                   {isDemo && <Badge tone="medium" className="px-2 py-0.5 text-[11px]">DEMO</Badge>}
-                  <span className="rounded-full border border-blue-300/20 bg-blue-300/[0.06] px-2 py-0.5 text-[11px] font-bold tracking-wide text-blue-200">RULE-CORRELATED</span>
+                  <span className="rounded-full border border-blue-300/20 bg-blue-300/[0.06] px-2 py-0.5 text-[13px] font-medium text-blue-200">Rule correlated</span>
                 </div>}
-                <p className="mt-2 text-[11px] text-slate-400">{inc.flow_count || 1} flows</p>
+                <p className="mt-2 text-[13px] text-slate-300">{inc.flow_count || 1} flows</p>
                 <div className="flex items-center justify-between text-[11px] text-slate-400 mt-2">
                   <span className="max-w-[48%] truncate font-mono">{inc.user_id || 'host_sys'}</span>
                   <span className="max-w-[48%] truncate font-mono">{inc.device_id || 'unknown_host'}</span>
@@ -321,8 +327,8 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
             <div className="flex flex-wrap items-start justify-between gap-4 border-b border-white/[0.07] pb-5">
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-mono text-[11px] font-semibold tracking-wide text-blue-200">
-                    INCIDENT #{selectedIncident.incident_id.slice(-8).toUpperCase()}
+                  <span className="font-mono text-[13px] font-medium text-blue-200">
+                    INCIDENT #{(selectedIncident.incident_id || '').slice(-8).toUpperCase() || '—'}
                   </span>
                   <button type="button" aria-label="Copy incident ID" title="Copy incident ID" onClick={() => navigator.clipboard?.writeText(selectedIncident.incident_id).catch((error) => console.warn('Unable to copy incident ID:', error))} className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.025] text-slate-400 transition hover:bg-white/[0.07] hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400">
                     <Copy aria-hidden="true" className="h-3.5 w-3.5" />
@@ -366,7 +372,7 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
               const isDemo = (selectedIncident.evidence?.indicators || []).some((indicator) => indicator.dataset === 'synthetic_demo' || indicator.is_demo);
               return <div className="flex flex-wrap gap-2" aria-label="Incident provenance badges">
                 {isDemo && <Badge tone="medium" className="text-[11px]">DEMO</Badge>}
-                <span className="rounded-full border border-blue-300/20 bg-blue-300/[0.06] px-2.5 py-1 text-[11px] font-bold tracking-wide text-blue-200">RULE-CORRELATED</span>
+                <span className="rounded-full border border-blue-300/20 bg-blue-300/[0.06] px-2.5 py-1 text-[13px] font-medium text-blue-200">Rule correlated</span>
               </div>;
             })()}
 
@@ -384,25 +390,25 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
             {/* Target Entities Row */}
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               <div className="rounded-xl border border-white/[0.07] bg-slate-950/30 p-3.5">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Compromised User</span>
+                <span className="text-[13px] font-normal text-slate-400">Compromised User</span>
                 <p className={`mt-1 font-mono text-xs font-semibold ${selectedIncident.user_id ? 'text-slate-100' : 'text-slate-500'}`}>{selectedIncident.user_id || 'N/A'}</p>
               </div>
               <div className="rounded-xl border border-white/[0.07] bg-slate-950/30 p-3.5">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Target Device</span>
+                <span className="text-[13px] font-normal text-slate-400">Target Device</span>
                 <p className={`mt-1 font-mono text-xs font-semibold ${selectedIncident.device_id ? 'text-slate-100' : 'text-slate-500'}`}>{selectedIncident.device_id || 'N/A'}</p>
               </div>
               <div className="rounded-xl border border-white/[0.07] bg-slate-950/30 p-3.5">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Classification</span>
+                <span className="text-[13px] font-normal text-slate-400">Classification</span>
                 <p className={`mt-1 break-words font-mono text-xs font-semibold ${severityTone(selectedIncident.threat_classification) === 'novel' ? 'text-purple-200' : severityTone(selectedIncident.threat_classification) === 'normal' ? 'text-emerald-200' : 'text-slate-100'}`}>{selectedIncident.threat_classification}</p>
               </div>
               <div className="rounded-xl border border-white/[0.07] bg-slate-950/30 p-3.5">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">First Detected</span>
+                <span className="text-[13px] font-normal text-slate-400">First Detected</span>
                 <p className="mt-1 font-mono text-xs text-slate-200" title={new Date(selectedIncident.first_detected_at).toLocaleString()}>
                   {new Date(selectedIncident.first_detected_at).toLocaleTimeString()}
                 </p>
               </div>
               <div className="rounded-xl border border-white/[0.07] bg-slate-950/30 p-3.5">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Flow Count</span>
+                <span className="text-[13px] font-normal text-slate-400">Flow Count</span>
                 <p className="mt-1 font-mono text-xs font-semibold tabular-nums text-slate-100">{selectedIncident.flow_count || 1}</p>
               </div>
             </div>
@@ -410,8 +416,8 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
             {selectedIncident.evidence?.score_summary && (() => {
               const rawJson = JSON.stringify(selectedIncident.evidence.risk_breakdown || {}, null, 2);
               return <div className="rounded-2xl border border-white/[0.07] bg-gradient-to-br from-[var(--soc-panel)] to-[var(--soc-raised)] p-4 shadow-[inset_0_1px_rgba(255,255,255,.035)]">
-                <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-300">Model score summary</h4>
-                <p className="font-mono text-xs tabular-nums text-slate-200">Score mean {Number(selectedIncident.evidence.score_summary.mean).toFixed(4)} · min {Number(selectedIncident.evidence.score_summary.min).toFixed(4)} · max {Number(selectedIncident.evidence.score_summary.max).toFixed(4)} · {selectedIncident.evidence.score_summary.count} scored flows</p>
+                <h4 className="mb-2 text-[14px] font-normal text-slate-300">Model score summary</h4>
+                <p className="text-[14px] tabular-nums text-slate-200">Score mean {formatFixed(selectedIncident.evidence.score_summary.mean, 4)} · min {formatFixed(selectedIncident.evidence.score_summary.min, 4)} · max {formatFixed(selectedIncident.evidence.score_summary.max, 4)} · {selectedIncident.evidence.score_summary.count} scored flows</p>
                 {selectedIncident.evidence.review_text && <p className="mt-2 text-xs text-amber-200">{selectedIncident.evidence.review_text}</p>}
                 <JsonCodeViewer key={selectedIncident.incident_id} value={rawJson} lineCount={rawJson.split('\n').length} />
               </div>;
@@ -421,7 +427,7 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
               <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 space-y-4">
                 <p className="text-xs font-semibold text-amber-200">Correlated suspicious activity; not a confirmed attack.</p>
                 <div>
-                  <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">Attack sequence</h4>
+                  <h4 className="mb-2 text-[14px] font-normal text-slate-300">Attack sequence</h4>
                   {(selectedIncident.attack_sequence || []).length > 0 ? <ol className="ml-2 space-y-3 border-l border-blue-300/20">
                     {(selectedIncident.attack_sequence || []).map((stage, index) => (
                       <li key={`${stage.indicator}-${index}`} className="pl-4 relative">
@@ -434,7 +440,7 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
                   </ol> : <p className="text-xs text-slate-400">No attack sequence is stored for this incident.</p>}
                 </div>
                 <div>
-                  <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-1">Risk component breakdown</h4>
+                  <h4 className="mb-1 text-[14px] font-normal text-slate-300">Risk component breakdown</h4>
                   <pre className="whitespace-pre-wrap font-mono text-[11px] text-slate-300">{JSON.stringify(selectedIncident.evidence?.risk_breakdown || selectedIncident.risk_score_detail?.risk_breakdown || {}, null, 2)}</pre>
                 </div>
               </div>
@@ -442,7 +448,7 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
 
             {/* MITRE ATT&CK Mapping */}
             <div>
-              <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
+              <h4 className="mb-2 text-[14px] font-normal text-slate-300">
                 Evidence-Gated MITRE ATT&CK Techniques
               </h4>
               {(selectedIncident.mitre_mappings || []).length > 0 ? <div className="flex flex-wrap gap-2">
@@ -461,7 +467,7 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
 
             {/* Investigation Notes & Audit Log */}
             <div className="space-y-3">
-              <h4 className="text-xs font-bold text-slate-300 uppercase tracking-wider">
+              <h4 className="text-[14px] font-normal text-slate-300">
                 Analyst Investigation Notes
               </h4>
 

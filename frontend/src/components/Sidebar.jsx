@@ -135,7 +135,7 @@ export default function Sidebar({
       const items = section.ids.map((id) => itemsById.get(id)).filter(Boolean);
       if (!items.length) return null;
       return <div key={section.title} className="mb-5">
-        {!iconRail && <h2 className="mb-2 px-3 text-[9px] font-bold uppercase tracking-[0.18em] text-slate-500">{section.title}</h2>}
+        {!iconRail && <h2 className="mb-2 px-3 text-[13px] font-normal text-slate-400">{section.title}</h2>}
         <div className="space-y-1">
           {items.map(({ id, label, fullLabel, icon: Icon }) => {
             const isActive = activePage === id;
@@ -148,11 +148,11 @@ export default function Sidebar({
               aria-label={fullLabel}
               aria-current={isActive ? 'page' : undefined}
               title={iconRail ? fullLabel : undefined}
-              className={`group relative flex w-full items-center gap-3 rounded-xl border-l-[3px] px-2.5 py-2.5 text-left text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/80 ${iconRail ? 'justify-center' : ''} ${isActive ? 'border-blue-400 bg-blue-400/[0.09] text-slate-100' : 'border-transparent text-slate-400 hover:bg-white/[0.045] hover:text-slate-100'}`}
+              className={`group relative flex min-h-12 w-full items-center gap-3 rounded-full border px-3 py-2.5 text-left text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/80 ${iconRail ? 'justify-center' : ''} ${isActive ? 'border-white/[0.16] bg-gradient-to-r from-white/[0.075] to-white/[0.025] text-slate-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]' : 'border-transparent text-slate-300 hover:bg-white/[0.045] hover:text-slate-100'}`}
             >
               <Icon aria-hidden="true" className={`h-4 w-4 shrink-0 ${isActive ? 'text-blue-200' : 'text-slate-400'}`} />
               {!iconRail && <span className="min-w-0 flex-1 truncate">{label}</span>}
-              {badgeCount != null && badgeCount > 0 && <span aria-live={id === 'live' ? 'polite' : undefined} aria-atomic={id === 'live' ? 'true' : undefined} aria-label={id === 'live' ? `${badgeCount} new events` : `${badgeCount} critical incidents`} className={`${iconRail ? 'absolute -right-1 -top-1' : 'ml-auto'} min-w-5 rounded-full border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-center font-mono text-[9px] font-bold text-slate-200`}>
+              {badgeCount != null && badgeCount > 0 && <span aria-live={id === 'live' ? 'polite' : undefined} aria-atomic={id === 'live' ? 'true' : undefined} aria-label={id === 'live' ? `${badgeCount} new events` : `${badgeCount} critical incidents`} className={`${iconRail ? 'absolute -right-1 -top-1' : 'ml-auto'} min-w-5 rounded-full border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-center text-[11px] font-semibold text-slate-200`}>
                 {badgeCount > 99 ? '99+' : badgeCount}
               </span>}
               {iconRail && <span role="tooltip" className="pointer-events-none absolute left-full top-1/2 z-[60] ml-2 -translate-y-1/2 whitespace-nowrap rounded-lg border border-white/10 bg-slate-950 px-2.5 py-1.5 text-[10px] text-slate-100 opacity-0 shadow-xl transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">{fullLabel}</span>}
@@ -166,25 +166,25 @@ export default function Sidebar({
   return <>
     {mobile && !mobileOpen && <button type="button" onClick={() => setMobileOpen(true)} aria-label="Open navigation" aria-expanded="false" className="fixed left-3 top-3 z-50 flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-slate-900 text-slate-200 shadow-xl md:hidden"><Menu className="h-5 w-5" /></button>}
     {mobileOpen && <button type="button" onClick={() => setMobileOpen(false)} aria-label="Close navigation" className="fixed inset-0 z-40 bg-black/60 md:hidden" />}
-    <aside aria-label="CyberGuard X sidebar" className={`z-50 flex h-full shrink-0 flex-col border-r border-white/[0.07] bg-[#0d1527] transition-[width,transform] duration-200 ${mobile ? `fixed inset-y-0 left-0 w-64 ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}` : collapsed ? 'w-16' : 'w-64'}`}>
-      <div className={`flex h-16 shrink-0 items-center gap-3 border-b border-white/[0.07] px-3 ${collapsed && !mobileOpen ? 'justify-center' : ''}`}>
+    <aside aria-label="CyberGuard X sidebar" className={`z-50 flex h-full shrink-0 flex-col bg-transparent transition-[width,transform] duration-200 ${mobile ? `fixed inset-y-0 left-0 w-64 bg-[#070611] ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}` : collapsed ? 'w-16' : 'w-[250px]'}`}>
+      <div className={`flex h-16 shrink-0 items-center gap-3 px-3 ${collapsed && !mobileOpen ? 'justify-center' : ''}`}>
         <div className={`flex shrink-0 items-center justify-center border border-blue-300/20 bg-blue-400/10 text-blue-200 ${collapsed && !mobileOpen ? 'h-9 w-9 rounded-xl' : 'h-11 w-11 rounded-2xl'}`}><ShieldCheck aria-hidden="true" className={collapsed && !mobileOpen ? 'h-4 w-4' : 'h-5 w-5'} /></div>
-        {(!collapsed || mobileOpen) && <div className="min-w-0 flex-1"><h1 className="font-display text-sm font-bold tracking-wide text-slate-100">CyberGuard X</h1><p className="font-mono text-[9px] leading-3 uppercase tracking-[0.12em] text-blue-300">Enterprise Security Operations</p></div>}
+        {(!collapsed || mobileOpen) && <div className="min-w-0 flex-1"><h1 className="font-display text-base font-semibold text-slate-100">CyberGuard X</h1><p className="text-[13px] leading-4 text-slate-400">Enterprise Security Operations</p></div>}
         {mobile && <button type="button" onClick={() => setMobileOpen(false)} aria-label="Close navigation" className="rounded-lg p-2 text-slate-400 hover:bg-white/5 hover:text-white"><X className="h-4 w-4" /></button>}
       </div>
 
       {navContent}
 
-      <div className={`shrink-0 border-t border-white/[0.07] p-2 ${collapsed && !mobileOpen ? 'items-center' : ''}`}>
+      <div className={`shrink-0 border-t border-white/[0.08] p-2 ${collapsed && !mobileOpen ? 'items-center' : ''}`}>
         {(!collapsed || mobileOpen) ? <>
-          <div className="mb-2 rounded-xl bg-slate-950/35 p-2.5 text-[10px]">
-            <div className="flex items-center justify-between gap-2"><span className="text-slate-400">Engine</span><span className="max-w-28 truncate font-mono text-slate-200">{systemStatus || '—'}</span></div>
-            <div className="mt-1.5 flex items-center justify-between gap-2"><span className="text-slate-400">WebSocket</span><span className={`font-mono ${wsConnected ? 'text-emerald-300' : 'text-amber-200'}`}>{wsConnected ? 'Connected' : 'Polling'}</span></div>
-            <div className="mt-1.5 flex items-center justify-between gap-2"><span className="text-slate-400">Last updated</span><span className="font-mono text-slate-300">{formatUpdatedAt(statsUpdatedAt)}</span></div>
+          <div className="mb-2 rounded-xl bg-slate-950/35 p-2.5 text-[13px]">
+            <div className="flex items-center justify-between gap-2"><span className="text-slate-400">Engine</span><span className="max-w-28 truncate text-slate-200">{systemStatus || '—'}</span></div>
+            <div className="mt-1.5 flex items-center justify-between gap-2"><span className="text-slate-400">WebSocket</span><span className={wsConnected ? 'text-emerald-300' : 'text-amber-200'}>{wsConnected ? 'Connected' : 'Polling'}</span></div>
+            <div className="mt-1.5 flex items-center justify-between gap-2"><span className="text-slate-400">Last updated</span><span className="text-slate-300">{formatUpdatedAt(statsUpdatedAt)}</span></div>
           </div>
-          <div className="flex items-center gap-2 rounded-xl px-1.5 py-1.5">
+          <div className="flex items-center gap-2 rounded-full border border-white/[0.10] bg-white/[0.035] px-2 py-2">
             <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-blue-400/25 bg-blue-400/10 text-[10px] font-bold text-blue-100">{(analyst?.username || 'A').slice(0, 2).toUpperCase()}</div>
-            <div className="min-w-0 flex-1"><p className="truncate text-[11px] font-semibold text-slate-200">{analyst?.username || 'Analyst'}</p><p className="font-mono text-[9px] uppercase text-slate-400">{analyst?.role || role || 'viewer'}</p></div>
+            <div className="min-w-0 flex-1"><p className="truncate text-[13px] font-semibold text-slate-200">{analyst?.username || 'Analyst'}</p><p className="text-[13px] text-slate-400">{analyst?.role || role || 'viewer'}</p></div>
             <button type="button" onClick={onLogout} aria-label="Log out" title="Log out" className="rounded-lg p-2 text-slate-400 transition-colors hover:bg-white/5 hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"><LogOut className="h-4 w-4" /></button>
           </div>
         </> : <div className="flex flex-col items-center gap-2 py-2">

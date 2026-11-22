@@ -276,18 +276,19 @@ export default function App() {
         <div className="shell-header"><Header pageTitle={pageTitles[activePage] || 'SOC Dashboard'} wsConnected={wsConnected} analyst={analyst} onLogout={handleLogout} liveEvents={liveEvents} role={analyst?.role} setActivePage={setActivePage} commandPaletteOpen={commandPaletteOpen} setCommandPaletteOpen={setCommandPaletteOpen} /></div>
 
         {forbiddenMessage && (
-          <div role="alert" className="mx-8 mt-4 flex items-center justify-between rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-xs text-rose-200">
+          <div role="alert" className="mx-8 mt-4 flex items-center justify-between rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-[13px] text-rose-200">
             <span>403 — {forbiddenMessage}</span>
             <button onClick={() => setForbiddenMessage('')} aria-label="Dismiss permission message">Dismiss</button>
           </div>
         )}
         {hasSyntheticDemo && (
-          <div role="status" className="mx-8 mt-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-xs font-semibold text-amber-200">
+          <div role="status" className="mx-8 mt-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-[13px] font-medium text-amber-200">
             Synthetic demo data — synthetic_demo events are present in this workspace.
           </div>
         )}
 
-        <main className="flex-1 overflow-y-auto p-soc-page">
+        <main className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 lg:p-5">
+          <div className="soc-workspace min-h-full overflow-hidden p-4 sm:p-6 lg:p-8">
           <ErrorBoundary resetKey={activePage}>
           <Suspense fallback={<div className="p-8 text-center text-slate-400">Loading page…</div>}>
           <div ref={pageRef} key={activePage}>
@@ -308,11 +309,12 @@ export default function App() {
           </div>
           </Suspense>
           </ErrorBoundary>
+          </div>
         </main>
       </div>
       <Modal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} title="Keyboard shortcuts" className="p-5 sm:p-6">
         <div className="flex items-start justify-between gap-4">
-          <div><p className="text-[9px] font-bold uppercase tracking-[0.18em] text-blue-300">Keyboard shortcuts</p><h2 className="mt-1 font-display text-lg font-semibold text-slate-100">Navigate CyberGuard X</h2></div>
+          <div><p className="text-[13px] text-blue-200">Keyboard shortcuts</p><h2 className="mt-1 font-display text-lg font-semibold text-slate-100">Navigate CyberGuard X</h2></div>
           <button type="button" onClick={() => setShortcutsOpen(false)} aria-label="Close keyboard shortcuts" className="rounded-lg border border-white/10 px-2 py-1 font-mono text-[10px] text-slate-400 hover:text-white">Esc</button>
         </div>
         <dl className="mt-5 divide-y divide-white/[0.06]">
@@ -321,7 +323,7 @@ export default function App() {
           <div className="flex items-center justify-between gap-4 py-3"><dt className="text-xs text-slate-300">Toggle sidebar</dt><dd><kbd className="rounded-md border border-white/10 px-2 py-1 font-mono text-[10px] text-slate-200">[</kbd></dd></div>
           <div className="py-3"><dt className="mb-2 text-xs text-slate-300">Go to a page</dt><dd className="flex flex-wrap gap-2">{[
             ['o', 'Overview'], ['l', 'Live Feed'], ['i', 'Incidents'], ['t', 'Threats'], ['e', 'Explainability'], ...(analyst?.role === 'viewer' ? [] : [['a', 'AI Assistant']]), ['d', 'Data & Models'], ['v', 'Evaluation'],
-          ].map(([key, label]) => <span key={key} className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.07] bg-white/[0.025] px-2 py-1"><kbd className="font-mono text-[9px] text-blue-200">g {key}</kbd><span className="text-[9px] text-slate-400">{label}</span></span>)}</dd></div>
+          ].map(([key, label]) => <span key={key} className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.07] bg-white/[0.025] px-2 py-1"><kbd className="font-mono text-[10px] text-blue-200">g {key}</kbd><span className="text-[13px] text-slate-400">{label}</span></span>)}</dd></div>
         </dl>
       </Modal>
     </div>

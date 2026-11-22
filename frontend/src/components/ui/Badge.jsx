@@ -12,5 +12,8 @@ const severityStyles = {
 };
 
 export default function Badge({ tone = 'neutral', className, children, ...props }) {
-  return <span className={cn('inline-flex items-center rounded-full border px-2.5 py-1 text-[10px] font-bold tracking-wide', severityStyles[tone] || severityStyles.neutral, className)} {...props}>{children}</span>;
+  const normalizedTone = String(tone).toUpperCase() === 'UNKNOWN_NOVEL' || String(children).toUpperCase().replaceAll(' ', '_') === 'UNKNOWN_NOVEL'
+    ? 'novel'
+    : String(tone).toLowerCase();
+  return <span className={cn('inline-flex items-center rounded-full border px-2.5 py-1 text-[13px] font-medium', severityStyles[normalizedTone] || severityStyles.neutral, className)} {...props}>{children}</span>;
 }

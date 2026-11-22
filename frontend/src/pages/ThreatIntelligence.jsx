@@ -10,6 +10,7 @@ import Skeleton from '../components/ui/Skeleton';
 import StatTile from '../components/ui/StatTile';
 
 const MitreMatrix = lazy(() => import('../components/MitreMatrix'));
+const DistanceMap = lazy(() => import('../components/viz/DistanceMap'));
 
 export default function ThreatIntelligence() {
   const [threatData, setThreatData] = useState(null);
@@ -18,6 +19,7 @@ export default function ThreatIntelligence() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [activeTab, setActiveTab] = useState('overview');
+  const [distanceOpened, setDistanceOpened] = useState(false);
   const [copiedEvent, setCopiedEvent] = useState('');
   const rootRef = useRef(null);
   const entrancePlayed = useRef(false);
@@ -88,15 +90,21 @@ export default function ThreatIntelligence() {
       <div role="tablist" aria-label="Threat intelligence views" onKeyDown={(event) => {
         if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
         event.preventDefault();
-        setActiveTab((current) => current === 'overview' ? 'mitre' : 'overview');
-        event.currentTarget.querySelector(`[data-view-tab="${activeTab === 'overview' ? 'mitre' : 'overview'}"]`)?.focus();
+        const tabs = ['overview', 'mitre', 'distance'];
+        const currentIndex = Math.max(0, tabs.indexOf(activeTab));
+        const nextTab = tabs[(currentIndex + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length];
+        if (nextTab === 'distance') setDistanceOpened(true);
+        setActiveTab(nextTab);
+        event.currentTarget.querySelector(`[data-view-tab="${nextTab}"]`)?.focus();
       }} className="relative flex w-full max-w-md border-b border-white/[0.08]">
-        <span aria-hidden="true" className={`pointer-events-none absolute bottom-0 left-0 h-0.5 w-1/2 bg-gradient-to-r from-blue-400 to-violet-400 transition-transform duration-200 ${activeTab === 'mitre' ? 'translate-x-full' : ''}`} />
+        <span aria-hidden="true" className={`pointer-events-none absolute bottom-0 left-0 h-0.5 w-1/3 bg-gradient-to-r from-blue-400 to-violet-400 transition-transform duration-200 ${activeTab === 'mitre' ? 'translate-x-full' : activeTab === 'distance' ? 'translate-x-[200%]' : ''}`} />
         <button type="button" id="threat-overview-tab" role="tab" aria-controls="threat-overview-panel" data-view-tab="overview" aria-selected={activeTab === 'overview'} tabIndex={activeTab === 'overview' ? 0 : -1} onClick={() => setActiveTab('overview')} className={`flex-1 px-3 py-2.5 text-xs font-semibold transition-colors ${activeTab === 'overview' ? 'text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>Threat intelligence</button>
         <button type="button" id="threat-mitre-tab" role="tab" aria-controls="threat-mitre-panel" data-view-tab="mitre" aria-selected={activeTab === 'mitre'} tabIndex={activeTab === 'mitre' ? 0 : -1} onClick={() => setActiveTab('mitre')} className={`flex-1 px-3 py-2.5 text-xs font-semibold transition-colors ${activeTab === 'mitre' ? 'text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>MITRE ATT&amp;CK</button>
+        <button type="button" id="threat-distance-tab" role="tab" aria-controls="threat-distance-panel" data-view-tab="distance" aria-selected={activeTab === 'distance'} tabIndex={activeTab === 'distance' ? 0 : -1} onClick={() => { setDistanceOpened(true); setActiveTab('distance'); }} className={`flex-1 px-3 py-2.5 text-xs font-semibold transition-colors ${activeTab === 'distance' ? 'text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>Distance map</button>
       </div>
-      {activeTab === 'mitre' ? <div id="threat-mitre-panel" role="tabpanel" aria-labelledby="threat-mitre-tab"><Suspense fallback={<div aria-busy="true" className="space-y-3 rounded-2xl border border-white/[0.08] bg-[var(--soc-raised)] p-5"><Skeleton className="h-4 w-44" /><Skeleton className="h-24" /></div>}><MitreMatrix /></Suspense></div>
-        : loading && !threatData ? <div id="threat-overview-panel" role="tabpanel" aria-labelledby="threat-overview-tab" aria-busy="true" className="grid gap-5"><Skeleton className="h-48 rounded-2xl" /><div className="grid gap-4 md:grid-cols-4">{[0, 1, 2, 3].map((item) => <Skeleton key={item} className="h-32 rounded-2xl" />)}</div><Skeleton className="h-72 rounded-2xl" /></div>
+      {activeTab === 'mitre' && <div id="threat-mitre-panel" role="tabpanel" aria-labelledby="threat-mitre-tab"><Suspense fallback={<div aria-busy="true" className="space-y-3 rounded-2xl border border-white/[0.08] bg-[var(--soc-raised)] p-5"><Skeleton className="h-4 w-44" /><Skeleton className="h-24" /></div>}><MitreMatrix /></Suspense></div>}
+      {distanceOpened && <div id="threat-distance-panel" role="tabpanel" aria-labelledby="threat-distance-tab" hidden={activeTab !== 'distance'}><Suspense fallback={<div aria-busy="true" className="space-y-3 rounded-2xl border border-white/[0.08] bg-[var(--soc-raised)] p-5"><Skeleton className="h-4 w-44" /><Skeleton className="h-72" /></div>}><DistanceMap /></Suspense></div>}
+      {activeTab === 'overview' && (loading && !threatData ? <div id="threat-overview-panel" role="tabpanel" aria-labelledby="threat-overview-tab" aria-busy="true" className="grid gap-5"><Skeleton className="h-48 rounded-2xl" /><div className="grid gap-4 md:grid-cols-4">{[0, 1, 2, 3].map((item) => <Skeleton key={item} className="h-32 rounded-2xl" />)}</div><Skeleton className="h-72 rounded-2xl" /></div>
         : loadError && !threatData ? <div id="threat-overview-panel" role="tabpanel" aria-labelledby="threat-overview-tab"><EmptyState icon={ShieldAlert} title="Threat intelligence data is unavailable" description="Threat intelligence could not be loaded. Please try again later." className="bg-[var(--soc-raised)]" /></div>
           : <div id="threat-overview-panel" role="tabpanel" aria-labelledby="threat-overview-tab" className="space-y-6">
             <section data-threat-entrance className="relative overflow-hidden rounded-2xl border border-purple-400/25 bg-[radial-gradient(ellipse_at_top_right,rgba(168,85,247,0.13),transparent_56%),var(--soc-raised)] p-5 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
@@ -138,7 +146,7 @@ export default function ThreatIntelligence() {
                 <div className="space-y-2">{(threatData?.unknown_candidates || []).slice(0, 4).map((th, idx) => <div key={idx} className="flex items-center justify-between gap-3 rounded-xl border border-purple-300/10 bg-purple-950/10 p-3.5 transition-colors hover:border-purple-300/20 hover:bg-purple-950/20"><div><div className="flex items-center gap-2"><Badge tone="novel">Unconfirmed candidate</Badge><span className="font-mono text-[11px] tabular-nums text-slate-400">#{th.event_id?.slice(-6)}</span></div><p className="mt-1.5 text-[11px] text-slate-400">Latent Distance: <span className="font-mono font-bold tabular-nums text-purple-200">{th.open_set_distance?.toFixed(2) ?? '—'}</span></p></div><div className="text-right"><span className={`font-mono text-[11px] font-bold ${th.reconstruction_error == null ? 'text-slate-500' : 'text-slate-300'}`}>Recon Err: {th.reconstruction_error?.toFixed(3) ?? '—'}</span><p className="mt-1 text-[11px] text-slate-400">{th.timestamp ? new Date(th.timestamp).toLocaleTimeString() : 'Timestamp unavailable'}</p></div></div>)}{(threatData?.unknown_candidates || []).length === 0 && <EmptyState icon={AlertTriangle} title="No unconfirmed candidates" description="No candidate flows are currently recorded in this queue." />}</div>
               </Card>
             </div>
-          </div>}
+          </div>)}
     </div>
   );
 }

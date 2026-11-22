@@ -185,7 +185,7 @@ export default function LiveMonitoring({ liveEvents }) {
             placeholder="Search user, device, IP, type..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full rounded-xl border border-white/[0.09] bg-slate-950/45 py-2.5 pl-10 pr-20 text-xs text-slate-100 placeholder:text-slate-400 transition focus:border-blue-400/60 focus:outline-none focus:ring-2 focus:ring-blue-400/25"
+            className="w-full rounded-xl border border-white/[0.09] bg-slate-950/45 py-2.5 pl-10 pr-20 text-[14px] text-slate-100 placeholder:text-slate-400 transition focus:border-blue-400/60 focus:outline-none focus:ring-2 focus:ring-blue-400/25"
           />
           {searchQuery ? (
             <button type="button" aria-label="Clear search" onClick={() => setSearchQuery('')} className="absolute right-2 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg text-slate-400 transition hover:bg-white/[0.07] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400">
@@ -205,7 +205,7 @@ export default function LiveMonitoring({ liveEvents }) {
                 type="button"
                 aria-pressed={selectedCategory === cat}
                 onClick={() => setSelectedCategory(cat)}
-                className={`relative z-[1] inline-flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg px-2.5 py-2 text-[11px] font-semibold uppercase tracking-wider transition-colors sm:flex-none sm:px-3 ${selectedCategory === cat ? 'text-white' : 'text-slate-400 hover:text-slate-100'}`}
+                className={`relative z-[1] inline-flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg px-2.5 py-2 text-[14px] font-normal transition-colors sm:flex-none sm:px-3 ${selectedCategory === cat ? 'text-white' : 'text-slate-300 hover:text-slate-100'}`}
               >
                 <span>{cat}</span>
                 <span className={`soc-mono text-[11px] ${selectedCategory === cat ? 'text-white/90' : 'text-slate-500'}`}>{filterCounts[cat]}</span>
@@ -224,7 +224,7 @@ export default function LiveMonitoring({ liveEvents }) {
             </span>
             <div>
               <h2 className="text-sm font-semibold text-slate-100">Continuous Security Telemetry Stream</h2>
-              <span className="mt-1 inline-flex items-center gap-1.5 text-[11px] font-semibold tracking-[0.12em] text-emerald-200">
+              <span className="mt-1 inline-flex items-center gap-1.5 text-[13px] font-normal text-emerald-200">
                 <Activity aria-hidden="true" className="h-3 w-3" /> LIVE
               </span>
             </div>
@@ -236,8 +236,8 @@ export default function LiveMonitoring({ liveEvents }) {
 
         <div ref={streamRef} className="max-h-[min(70vh,52rem)] overflow-auto">
           {loadError && allEvents.length > 0 && <p role="status" className="border-b border-amber-400/15 bg-amber-400/[0.045] px-5 py-2.5 text-xs text-amber-100 sm:px-6">Historical events could not be loaded. Live events will continue to appear here.</p>}
-          <table className="w-full min-w-[1050px] text-left text-xs">
-            <thead className="sticky top-0 z-20 border-b border-white/[0.07] bg-[var(--soc-panel)] text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-400 shadow-[0_1px_0_rgba(255,255,255,.06)]">
+          <table className="w-full min-w-[1180px] border-separate border-spacing-y-1.5 text-left text-[14px]">
+            <thead className="sticky top-0 z-20 bg-[var(--soc-panel)] text-[13px] font-normal text-slate-300 shadow-[0_1px_0_rgba(255,255,255,.06)]">
               <tr>
                 <th scope="col" className="px-4 py-3">Timestamp</th>
                 <th scope="col" className="px-4 py-3">User / Identity</th>
@@ -249,7 +249,7 @@ export default function LiveMonitoring({ liveEvents }) {
                 <th scope="col" className="px-4 py-3">Status</th>
               </tr>
             </thead>
-            <tbody aria-live="polite" aria-relevant="additions" aria-atomic="false" className="divide-y divide-white/[0.05] text-slate-300">
+            <tbody aria-live="polite" aria-relevant="additions" aria-atomic="false" className="text-slate-200">
               {filteredEvents.length === 0 && loading && allEvents.length === 0 ? (
                 <tr role="status" aria-label="Loading events">
                   <td colSpan={8} className="px-4 py-5">
@@ -295,12 +295,12 @@ export default function LiveMonitoring({ liveEvents }) {
                         openEvent(ev);
                       }
                     }}
-                    className="group cursor-pointer transition-colors duration-150 hover:bg-white/[0.035] focus-visible:outline focus-visible:outline-2 focus-visible:outline-inset focus-visible:outline-blue-400"
+                    className="soc-table-row group cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-inset focus-visible:outline-blue-400"
                   >
                     <td className="relative whitespace-nowrap px-4 py-3">
                       <span aria-hidden="true" className={`absolute inset-y-0 left-0 w-[3px] ${failed ? 'bg-rose-400/80' : normalizedStatus === 'success' ? 'bg-emerald-400/65' : 'bg-transparent'}`} />
                       {isLive && <span data-live-flash aria-hidden="true" className={`pointer-events-none absolute inset-0 opacity-0 ${failed ? 'bg-rose-400/10' : 'bg-emerald-400/[0.08]'}`} />}
-                      <time className="relative z-[1] soc-mono text-slate-400" dateTime={validTimestamp ? timestamp.toISOString() : undefined} title={dateLabel}>
+                      <time className="relative z-[1] text-slate-300" dateTime={validTimestamp ? timestamp.toISOString() : undefined} title={dateLabel}>
                         {validTimestamp ? timestamp.toLocaleTimeString() : 'Timestamp unavailable'}
                       </time>
                     </td>
@@ -314,7 +314,7 @@ export default function LiveMonitoring({ liveEvents }) {
                     </td>
                     <td className="relative whitespace-nowrap px-4 py-3">
                       {isLive && <span data-live-flash aria-hidden="true" className={`pointer-events-none absolute inset-0 opacity-0 ${failed ? 'bg-rose-400/10' : 'bg-emerald-400/[0.08]'}`} />}
-                      <span className="relative z-[1] soc-mono">
+                      <span className="relative z-[1] tabular-nums">
                         <span className={isBlank(ev.source_ip) ? 'text-slate-500' : 'text-slate-300'}>{ev.source_ip || '—'}</span>
                         <span className="px-1.5 text-slate-600">→</span>
                         <span className={isBlank(ev.destination_ip) ? 'text-slate-500' : 'text-slate-300'}>{ev.destination_ip || '—'}</span>
@@ -326,7 +326,7 @@ export default function LiveMonitoring({ liveEvents }) {
                     </td>
                     <td className="relative whitespace-nowrap px-4 py-3">
                       {isLive && <span data-live-flash aria-hidden="true" className={`pointer-events-none absolute inset-0 opacity-0 ${failed ? 'bg-rose-400/10' : 'bg-emerald-400/[0.08]'}`} />}
-                      <Badge tone="low" className="relative z-[1] px-2 py-1 text-[11px] font-mono uppercase">{cat}</Badge>
+                      <Badge tone="low" className="relative z-[1] px-2 py-1 text-[13px] font-normal">{cat}</Badge>
                     </td>
                     <td className="relative whitespace-nowrap px-4 py-3">
                       {isLive && <span data-live-flash aria-hidden="true" className={`pointer-events-none absolute inset-0 opacity-0 ${failed ? 'bg-rose-400/10' : 'bg-emerald-400/[0.08]'}`} />}
@@ -334,7 +334,7 @@ export default function LiveMonitoring({ liveEvents }) {
                     </td>
                     <td className="relative whitespace-nowrap px-4 py-3">
                       {isLive && <span data-live-flash aria-hidden="true" className={`pointer-events-none absolute inset-0 opacity-0 ${failed ? 'bg-rose-400/10' : 'bg-emerald-400/[0.08]'}`} />}
-                      <Badge tone={statusTone(status)} className="relative z-[1] px-2 py-1 font-mono">{String(status).toUpperCase()}</Badge>
+                      <Badge tone={statusTone(status)} className="relative z-[1] px-2 py-1 text-[13px] font-normal">{String(status)}</Badge>
                     </td>
                   </tr>
                 );
@@ -349,7 +349,7 @@ export default function LiveMonitoring({ liveEvents }) {
           <div ref={drawerContentRef} className="flex max-h-full flex-col">
             <header className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-white/[0.08] bg-[var(--soc-panel)]/95 px-5 py-4 backdrop-blur-xl sm:px-6">
               <div className="min-w-0">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-blue-200">Read-only event record</p>
+                <p className="text-[13px] font-normal text-blue-200">Read-only event record</p>
                 <h2 className="mt-1 break-all font-[family-name:var(--soc-font-display)] text-lg font-semibold text-slate-100">{selectedEvent.event_type || 'Event details'}</h2>
                 {selectedEvent.event_id && <p className="mt-1 break-all font-mono text-[11px] text-slate-400">{selectedEvent.event_id}</p>}
               </div>
@@ -363,7 +363,7 @@ export default function LiveMonitoring({ liveEvents }) {
                 return (
                   <div key={field} className="rounded-xl border border-white/[0.07] bg-slate-950/30 p-3.5">
                     <div className="mb-2 flex items-center justify-between gap-3">
-                      <span className="text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-400">{field.replace(/_/g, ' ')}</span>
+                      <span className="text-[13px] font-normal text-slate-400">{field.replace(/_/g, ' ')}</span>
                       <button type="button" onClick={() => copyField(field, value)} aria-label={`${copied ? 'Copied' : 'Copy'} ${field}`} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] text-slate-400 transition hover:bg-white/[0.06] hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400">
                         {copied ? <Check aria-hidden="true" className="h-3.5 w-3.5 text-emerald-300" /> : <Copy aria-hidden="true" className="h-3.5 w-3.5" />}
                         {copied ? 'Copied' : 'Copy'}

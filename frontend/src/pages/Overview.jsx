@@ -1,12 +1,8 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import {
   Activity,
-  AlertTriangle,
   Clock3,
-  Network,
-  Server,
   ShieldAlert,
-  Users,
 } from 'lucide-react';
 import {
   Area,
@@ -28,15 +24,10 @@ import Card from '../components/ui/Card';
 import Badge from '../components/ui/Badge';
 import EmptyState from '../components/ui/EmptyState';
 import Skeleton from '../components/ui/Skeleton';
+import RiskTicks from '../components/ui/RiskTicks';
+import FlowOrb from '../components/viz/FlowOrb';
 import { createMotionScope, motion, prefersReducedMotion } from '../lib/motion';
 import { chartTheme } from '../charts/chartTheme';
-
-const KPI_TONES = [
-  { tone: 'low', accent: 'var(--soc-low)' },
-  { tone: 'medium', accent: 'var(--soc-medium)' },
-  { tone: 'novel', accent: 'var(--soc-novel)' },
-  { tone: 'critical', accent: 'var(--soc-critical)' },
-];
 
 function CountUpValue({ value, className = '' }) {
   const valueRef = useRef(null);
@@ -50,8 +41,9 @@ function CountUpValue({ value, className = '' }) {
     }
 
     const target = Number(value);
+    const displayValue = value == null || (typeof value === 'number' && !Number.isFinite(value)) ? '—' : String(value);
     if (!Number.isFinite(target)) {
-      valueRef.current.textContent = String(value);
+      valueRef.current.textContent = displayValue;
       return;
     }
 
@@ -59,12 +51,12 @@ function CountUpValue({ value, className = '' }) {
     let firstMotionPass = true;
     return createMotionScope(valueRef.current, (reduced) => {
       if (!firstMotionPass) {
-        valueRef.current.textContent = String(value);
+      valueRef.current.textContent = displayValue;
         return;
       }
       firstMotionPass = false;
       if (reduced) {
-        valueRef.current.textContent = String(value);
+        valueRef.current.textContent = displayValue;
         return;
       }
 
@@ -77,7 +69,7 @@ function CountUpValue({ value, className = '' }) {
           if (valueRef.current) valueRef.current.textContent = Math.round(counter.value).toLocaleString();
         },
         onComplete: () => {
-          if (valueRef.current) valueRef.current.textContent = String(value);
+          if (valueRef.current) valueRef.current.textContent = displayValue;
         },
       });
     });
@@ -146,7 +138,7 @@ function OverviewTooltip({ active, payload, label, formatter }) {
   if (!active || !payload?.length) return null;
   return (
     <div className="min-w-36 rounded-xl border border-white/10 bg-slate-950/95 p-3 shadow-2xl backdrop-blur-xl">
-      {label != null && <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-slate-400">{label}</p>}
+      {label != null && <p className="mb-2 text-[13px] font-normal text-slate-300">{label}</p>}
       <div className="space-y-1.5">
         {payload.map((item, index) => {
           const formatted = formatter ? formatter(item.value, item.name, item) : [item.value, item.name];
@@ -168,6 +160,8 @@ export default function Overview({ onSelectIncident }) {
   const flashResetTimer = useRef(null);
   const chartId = useId().replace(/:/g, '');
   const [stats, setStats] = useState(null);
+  const [incidents, setIncidents] = useState(null);
+  const [incidentLoadError, setIncidentLoadError] = useState(false);
   const [recentAlerts, setRecentAlerts] = useState([]);
   const [flashAlertIds, setFlashAlertIds] = useState(() => new Set());
   const [loading, setLoading] = useState(true);
@@ -239,13 +233,26 @@ export default function Overview({ onSelectIncident }) {
     };
   }, []);
 
+  useEffect(() => {
+    let mounted = true;
+    api.getIncidents().then((rows) => {
+      if (!mounted) return;
+      setIncidents(Array.isArray(rows) ? rows : []);
+      setIncidentLoadError(false);
+    }).catch(() => {
+      if (!mounted) return;
+      setIncidents(null);
+      setIncidentLoadError(true);
+    });
+    return () => { mounted = false; };
+  }, []);
+
   if (loading && !stats) return <LoadingOverview />;
 
-  const kpis = [
-    { label: 'Total Events Analyzed', value: stats?.total_events ?? '—', icon: Activity },
-    { label: 'Known Threats Detected', value: stats?.known_threats ?? '—', icon: ShieldAlert },
-    { label: 'Unknown Candidates', value: stats?.unknown_candidates ?? '—', icon: AlertTriangle, tag: 'Open-Set Gate' },
-    { label: 'Critical Incidents', value: stats?.critical_incidents ?? '—', icon: ShieldAlert },
+  const extraKpis = [
+    { label: 'Known Threats Detected', value: stats?.known_threats ?? '—' },
+    { label: 'Unknown Candidates', value: stats?.unknown_candidates ?? '—', tag: 'Open-Set Gate' },
+    { label: 'Critical Incidents', value: stats?.critical_incidents ?? '—' },
   ];
   const riskTrend = stats?.risk_trend || [];
   const threatDistribution = stats?.threat_distribution || [];
@@ -255,25 +262,16 @@ export default function Overview({ onSelectIncident }) {
       title: 'User / Identity Layer',
       value: stats?.layer_detection_stats?.user_identity ?? '—',
       suffix: 'Anomaly Flags',
-      detail: 'Impossible travel, auth bursts, off-hours',
-      icon: Users,
-      tone: 'low',
     },
     {
       title: 'Endpoint / Device (Autoencoder + iForest)',
       value: stats?.layer_detection_stats?.endpoint_device ?? '—',
       suffix: 'Process Anomalies',
-      detail: 'LOLBAS, memory inject, high entropy',
-      icon: Server,
-      tone: 'novel',
     },
     {
       title: 'Network Layer (Flows)',
       value: stats?.layer_detection_stats?.network_traffic ?? '—',
       suffix: 'Flow Detections',
-      detail: 'Lateral SMB, covert C2, port scans',
-      icon: Network,
-      tone: 'normal',
     },
   ];
 
@@ -287,27 +285,7 @@ export default function Overview({ onSelectIncident }) {
       )}
       {stats?.total_detections === 0 && <div role="status" className="overview-entrance rounded-2xl border border-white/[0.08] bg-[var(--soc-panel)] p-4 text-sm text-slate-300">No detections yet. Ingest an event and run it through the detector to populate this view.</div>}
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {kpis.map((kpi, index) => {
-          const Icon = kpi.icon;
-          const tone = KPI_TONES[index];
-          return (
-            <Card key={kpi.label} className="overview-entrance group relative min-h-36 overflow-hidden border-white/[0.08] bg-gradient-to-br from-[var(--soc-panel)] to-[var(--soc-raised)] p-5 transition-transform duration-200 hover:-translate-y-0.5">
-              <span aria-hidden="true" className="absolute inset-x-5 top-0 h-px opacity-80" style={{ background: `linear-gradient(90deg, transparent, ${tone.accent}, transparent)`, boxShadow: `0 0 18px ${tone.accent}` }} />
-              <div className="flex items-start justify-between gap-3">
-                <p className="pt-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">{kpi.label}</p>
-                <span className={`rounded-xl border border-white/[0.06] p-2.5 ${tone.tone === 'critical' ? 'bg-rose-400/10 text-rose-200' : tone.tone === 'medium' ? 'bg-amber-400/10 text-amber-200' : tone.tone === 'novel' ? 'bg-purple-400/10 text-purple-200' : 'bg-blue-400/10 text-blue-200'}`}>
-                  <Icon aria-hidden="true" className="h-4 w-4" />
-                </span>
-              </div>
-              <div className="mt-5 flex min-h-10 items-end justify-between gap-3">
-                <CountUpValue value={kpi.value} className="font-[family-name:var(--soc-font-display)] text-3xl font-semibold tracking-tight text-slate-50" />
-                {kpi.tag && <Badge tone="novel" className="shrink-0 font-mono">{kpi.tag}</Badge>}
-              </div>
-            </Card>
-          );
-        })}
-      </div>
+      <FlowOrb totalEvents={stats?.total_events} layers={layers} incidents={incidents} incidentLoadError={incidentLoadError} extraKpis={extraKpis} />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <Card className="overview-entrance min-w-0 p-5 sm:p-6 lg:col-span-2 transition-transform duration-200 hover:-translate-y-0.5">
@@ -386,7 +364,7 @@ export default function Overview({ onSelectIncident }) {
                 </ResponsiveContainer>
                 <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
                   <span className="font-[family-name:var(--soc-font-display)] text-2xl font-semibold text-slate-50">{threatTotal.toLocaleString()}</span>
-                  <span className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400">Total</span>
+                  <span className="mt-0.5 text-[13px] font-normal text-slate-300">Total</span>
                 </div>
               </div>
               <div className="mt-2 flex flex-wrap gap-2">
@@ -410,38 +388,17 @@ export default function Overview({ onSelectIncident }) {
         </Card>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        {layers.map((layer) => {
-          const Icon = layer.icon;
-          return (
-            <Card key={layer.title} className="overview-entrance relative flex min-w-0 items-center gap-4 overflow-hidden p-4 transition-transform duration-200 hover:-translate-y-0.5">
-              <span aria-hidden="true" className={`absolute inset-y-4 left-0 w-px ${layer.tone === 'novel' ? 'bg-purple-300/70' : layer.tone === 'normal' ? 'bg-emerald-300/70' : 'bg-blue-300/70'}`} />
-              <span className={`ml-1 rounded-xl border border-white/[0.06] p-3 ${layer.tone === 'novel' ? 'bg-purple-400/10 text-purple-200' : layer.tone === 'normal' ? 'bg-emerald-400/10 text-emerald-200' : 'bg-blue-400/10 text-blue-200'}`}>
-                <Icon aria-hidden="true" className="h-5 w-5" />
-              </span>
-              <div className="min-w-0">
-                <p className="text-[11px] font-semibold text-slate-400">{layer.title}</p>
-                <p className="mt-1 text-lg font-semibold text-slate-100">
-                  <CountUpValue value={layer.value} /> <span className="text-sm font-medium text-slate-300">{layer.suffix}</span>
-                </p>
-                <span className="mt-1 block text-[11px] text-slate-400">{layer.detail}</span>
-              </div>
-            </Card>
-          );
-        })}
-      </div>
-
       <Card className="overview-entrance min-w-0 overflow-hidden p-0">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.07] px-5 py-4 sm:px-6">
           <div>
-            <h2 className="text-sm font-semibold text-slate-100">Recent Detection Results</h2>
-            <p className="mt-1 text-xs text-slate-400">Real-time open-set inference scores and attack probabilities</p>
+            <h2 className="text-[22px] font-light text-slate-100">Recent Detection Results</h2>
+            <p className="mt-1 text-[14px] font-normal text-slate-300">Real-time open-set inference scores and attack probabilities</p>
           </div>
           <span className="flex items-center gap-1.5 text-[11px] text-slate-400"><Clock3 aria-hidden="true" className="h-3.5 w-3.5" /> Latest detection results</span>
         </div>
         <div className="max-h-[32rem] overflow-auto">
-          <table className="w-full min-w-[820px] text-left text-xs">
-            <thead className="sticky top-0 z-10 bg-[var(--soc-panel)] text-[10px] font-semibold uppercase tracking-[0.1em] text-slate-400 shadow-[0_1px_0_rgba(255,255,255,.06)]">
+          <table className="w-full min-w-[980px] border-separate border-spacing-y-1.5 text-left text-[14px]">
+            <thead className="sticky top-0 z-10 bg-[var(--soc-panel)] text-[13px] font-normal text-slate-300 shadow-[0_1px_0_rgba(255,255,255,.06)]">
               <tr>
                 <th scope="col" className="px-4 py-3">Verdict</th>
                 <th scope="col" className="px-4 py-3">Threat Category</th>
@@ -452,7 +409,7 @@ export default function Overview({ onSelectIncident }) {
                 <th scope="col" className="px-4 py-3">Timestamp</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-white/[0.05] text-slate-300">
+            <tbody className="text-slate-200">
               {recentAlerts.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="px-4 py-6">
@@ -471,24 +428,17 @@ export default function Overview({ onSelectIncident }) {
                 const validDate = date && !Number.isNaN(date.getTime());
                 const flash = flashAlertIds.has(alert.detection_id);
                 return (
-                  <tr key={alert.detection_id} className="transition-colors duration-150 hover:bg-white/[0.035]">
-                    <DetectionCell detectionId={alert.detection_id} flash={flash}><Badge tone={verdictTone(alert.verdict)} className="font-mono text-[11px]">{verdict.replace(/_/g, ' ')}</Badge></DetectionCell>
+                  <tr key={alert.detection_id} className="soc-table-row">
+                    <DetectionCell detectionId={alert.detection_id} flash={flash}><Badge tone={verdictTone(alert.verdict)} className="text-[13px]">{verdict.replace(/_/g, ' ')}</Badge></DetectionCell>
                     <DetectionCell detectionId={alert.detection_id} flash={flash}><span className="font-medium text-slate-200">{alert.predicted_class}</span></DetectionCell>
-                    <DetectionCell detectionId={alert.detection_id} flash={flash}><span className="soc-mono uppercase text-slate-400">{alert.layer}</span></DetectionCell>
-                    <DetectionCell detectionId={alert.detection_id} flash={flash}><span className="soc-mono">{alert.score == null ? '—' : alert.score.toFixed(2)}</span></DetectionCell>
+                    <DetectionCell detectionId={alert.detection_id} flash={flash}><span className="soc-mono text-slate-300">{alert.layer}</span></DetectionCell>
+                    <DetectionCell detectionId={alert.detection_id} flash={flash}><span className="tabular-nums">{alert.score == null || !Number.isFinite(Number(alert.score)) ? '—' : Number(alert.score).toFixed(2)}</span></DetectionCell>
                     <DetectionCell detectionId={alert.detection_id} flash={flash}>
-                      {probability == null || !Number.isFinite(probability) ? <span className="soc-mono text-slate-400">—</span> : (
-                        <div className="flex min-w-36 items-center gap-2.5">
-                          <span className="soc-mono w-12 shrink-0 text-slate-200">{probability.toFixed(1)}%</span>
-                          <span role="progressbar" aria-label={`${probability.toFixed(1)}% attack probability`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.max(0, Math.min(100, probability))} className="h-1.5 w-20 overflow-hidden rounded-full bg-white/[0.08]">
-                            <span className="block h-full rounded-full bg-gradient-to-r from-[var(--soc-low)] to-[var(--soc-accent-end)]" style={{ width: `${Math.max(0, Math.min(100, probability))}%` }} />
-                          </span>
-                        </div>
-                      )}
+                      <RiskTicks value={probability} />
                     </DetectionCell>
-                    <DetectionCell detectionId={alert.detection_id} flash={flash}><span className="soc-mono text-slate-400">{alert.open_set_distance == null ? '—' : alert.open_set_distance.toFixed(2)}</span></DetectionCell>
+                    <DetectionCell detectionId={alert.detection_id} flash={flash}><span className="tabular-nums text-slate-300">{alert.open_set_distance == null || !Number.isFinite(Number(alert.open_set_distance)) ? '—' : Number(alert.open_set_distance).toFixed(2)}</span></DetectionCell>
                     <DetectionCell detectionId={alert.detection_id} flash={flash}>
-                      <time className="soc-mono text-slate-400" dateTime={validDate ? date.toISOString() : undefined} title={validDate ? date.toLocaleString() : undefined}>
+                      <time className="text-slate-300" dateTime={validDate ? date.toISOString() : undefined} title={validDate ? date.toLocaleString() : undefined}>
                         {validDate ? date.toLocaleTimeString() : 'Timestamp unavailable'}
                       </time>
                     </DetectionCell>
