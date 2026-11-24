@@ -12,17 +12,18 @@ Signed bearer-token login with `viewer`, `analyst` and `admin` roles. There is n
 
 ![Analyst sign-in page](Screenshots/01-login.png)
 
+### Executive overview
+
+Event totals per detection layer (user/identity, endpoint, network) alongside incident counts by severity and by review status. In this workspace the counts come from the held-out CICIDS2017 replay plus synthetic demo scenarios, so they illustrate the layout and are not a real-world incident summary. Layers that receive no input for a flow replay (user/identity, endpoint) show 0 flags.
+
+![Executive Overview Dashboard showing total events analyzed, detection layers, and incidents by severity and status](Screenshots/00-overview.png)
+
 ### Live telemetry stream
 
 Events arrive over a WebSocket. The amber banner appears whenever `synthetic_demo` events are present: those are developer-written demo scenarios, not real attacks.
 
-![Live Feed showing synthetic demo events streamed over WebSocket](Screenshots/02-live-feed.png)
+![Live Feed showing synthetic demo events streamed over WebSocket](Screenshots/02-live-feeed.png)
 
-### Incident management and correlation
-
-Grouped incidents with a unified risk score and per-branch contribution bars. This example is a CICIDS2017 PortScan incident from the held-out replay. Branches that receive no input for a flow replay (user sequence, endpoint) show 0%. The unified score is a calibrated triage score from a meta-model trained on weakly labeled synthetic rows, not a real-world incident probability.
-
-![Incident Management showing a grouped PortScan incident with unified risk and branch contributions](Screenshots/03-incidents.png)
 
 ### Unknown / novel triage
 
