@@ -43,3 +43,5 @@ frontend/dist/
 .DS_Store
 Thumbs.db
 .vscode/
+*.db-wal
+*.db-shm
