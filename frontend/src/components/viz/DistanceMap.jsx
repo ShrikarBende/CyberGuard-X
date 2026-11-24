@@ -226,7 +226,7 @@ export default function DistanceMap() {
       <div className="mt-4 rounded-[20px] border border-white/[0.07] bg-[radial-gradient(ellipse_at_top,rgba(50,45,145,0.16),transparent_68%),rgba(4,3,13,0.45)] p-2 sm:p-4">
         <GlassTooltip label={tooltipLabel}>
           <svg viewBox="0 0 760 560" role="img" aria-label={`Distance map of ${plotData.count} detections. ${summaryText}. Each point's angle only spreads detections in chronological order.`} className="block h-auto w-full overflow-visible">
-            <defs><radialGradient id="distance-map-center"><stop offset="0%" stopColor="#080817" /><stop offset="78%" stopColor="#070611" /><stop offset="100%" stopColor="#111032" /></radialGradient></defs>
+            <defs><radialGradient id="distance-map-center"><stop offset="0%" stopColor="#181818" /><stop offset="78%" stopColor="#131209" /><stop offset="100%" stopColor="#1F1F1F" /></radialGradient></defs>
             {plotData.bands.map((band) => <circle key={`ring-${band.index}`} cx={CENTER.x} cy={CENTER.y} r={band.radius} fill="none" stroke="rgba(117,120,255,0.20)" strokeWidth="1" />)}
             <circle cx={CENTER.x} cy={CENTER.y} r="70" fill="url(#distance-map-center)" stroke="rgba(75,91,255,0.55)" strokeWidth="1.5" />
             {Array.from({ length: 72 }, (_, index) => {

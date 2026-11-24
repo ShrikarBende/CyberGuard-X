@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Bot, Send, BookOpen, AlertCircle, User, Loader2 } from 'lucide-react';
+import { Bot, Send, BookOpen, AlertCircle, User, Loader2 } from '../lib/icons';
 import { api } from '../services/api';
 import { gsap } from 'gsap';
 import { useGSAP } from '@gsap/react';
@@ -79,9 +79,9 @@ export default function AIAssistant({ initialIncidentId }) {
   ];
 
   return (
-    <div ref={chatRef} className="flex flex-col h-[calc(100vh-140px)] bg-[#10182E] border border-[#1E293B] rounded-2xl overflow-hidden">
+    <div ref={chatRef} className="flex flex-col h-[calc(100vh-140px)] bg-[#1F1F1F] border border-[#313131] rounded-2xl overflow-hidden">
       {/* Top Incident Context Bar */}
-      <div className="p-4 border-b border-[#1E293B] bg-[#0D1527] flex flex-wrap items-center justify-between gap-4">
+      <div className="p-4 border-b border-[#313131] bg-[#181818] flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-400">
             <Bot className="w-5 h-5" />
@@ -97,7 +97,7 @@ export default function AIAssistant({ initialIncidentId }) {
           <select
             value={selectedIncidentId}
             onChange={(e) => setSelectedIncidentId(e.target.value)}
-            className="bg-[#10182E] border border-[#1E293B] text-xs font-semibold text-slate-200 rounded-xl px-3 py-1.5 focus:outline-none focus:border-purple-500"
+            className="bg-[#1F1F1F] border border-[#313131] text-xs font-semibold text-slate-200 rounded-xl px-3 py-1.5 focus:outline-none focus:border-purple-500"
           >
             <option value="">General Threat Intelligence</option>
             {incidents.map((inc) => (
@@ -146,7 +146,7 @@ export default function AIAssistant({ initialIncidentId }) {
                 className={`p-4 rounded-2xl text-xs space-y-3 leading-relaxed ${
                   isUser
                     ? 'bg-blue-600 text-white rounded-tr-none'
-                    : 'bg-[#0D1527] border border-[#1E293B] text-slate-200 rounded-tl-none shadow-md'
+                    : 'bg-[#181818] border border-[#313131] text-slate-200 rounded-tl-none shadow-md'
                 }`}
               >
                 <div className="whitespace-pre-wrap">{msg.text}</div>
@@ -159,7 +159,7 @@ export default function AIAssistant({ initialIncidentId }) {
 
                 {/* Retrieved sources */}
                 {!isUser && msg.sources && msg.sources.length > 0 && (
-                  <div className="pt-2 border-t border-[#1E293B] flex flex-wrap gap-2">
+                  <div className="pt-2 border-t border-[#313131] flex flex-wrap gap-2">
                     <span className="text-[10px] font-bold text-slate-400 flex items-center gap-1 uppercase">
                       <BookOpen className="w-3 h-3 text-purple-400" /> Retrieved Sources:
                     </span>
@@ -175,7 +175,7 @@ export default function AIAssistant({ initialIncidentId }) {
                 )}
 
                 {!isUser && msg.evidenceUsed?.length > 0 && (
-                  <details className="pt-2 border-t border-[#1E293B]">
+                  <details className="pt-2 border-t border-[#313131]">
                     <summary className="cursor-pointer text-[10px] font-bold uppercase text-slate-400">Stored evidence used</summary>
                     <pre className="mt-2 whitespace-pre-wrap break-all text-[10px] text-slate-400">{JSON.stringify(msg.evidenceUsed, null, 2)}</pre>
                   </details>
@@ -195,14 +195,14 @@ export default function AIAssistant({ initialIncidentId }) {
       )}
 
       {/* Quick Prompts Bar */}
-      <div className="px-6 py-2 bg-[#0D1527] border-t border-[#1E293B] flex items-center gap-2 overflow-x-auto no-scrollbar">
+      <div className="px-6 py-2 bg-[#181818] border-t border-[#313131] flex items-center gap-2 overflow-x-auto no-scrollbar">
         <span className="text-[10px] text-slate-500 font-bold uppercase shrink-0">Prompts:</span>
         {quickPrompts.map((p, idx) => (
           <button
             key={idx}
             onClick={() => handleSend(p)}
             disabled={!selectedIncidentId || loading}
-            className="px-2.5 py-1 rounded-lg bg-[#10182E] hover:bg-[#1E293B] border border-[#1E293B] text-[11px] text-slate-300 whitespace-nowrap transition-colors"
+            className="px-2.5 py-1 rounded-lg bg-[#1F1F1F] hover:bg-[#313131] border border-[#313131] text-[11px] text-slate-300 whitespace-nowrap transition-colors"
           >
             {p}
           </button>
@@ -210,14 +210,14 @@ export default function AIAssistant({ initialIncidentId }) {
       </div>
 
       {/* Input Form */}
-      <form onSubmit={(e) => { e.preventDefault(); handleSend(); }} className="p-4 bg-[#0D1527] border-t border-[#1E293B] flex gap-3">
+      <form onSubmit={(e) => { e.preventDefault(); handleSend(); }} className="p-4 bg-[#181818] border-t border-[#313131] flex gap-3">
         <input
           type="text"
           aria-label="Ask about detected anomalies, attack classification, or containment"
           placeholder="Ask about detected anomalies, attack classification, or containment..."
           value={inputQuery}
           onChange={(e) => setInputQuery(e.target.value)}
-          className="flex-1 bg-[#10182E] border border-[#1E293B] text-slate-200 text-xs rounded-xl px-4 py-3 focus:outline-none focus:border-purple-500"
+          className="flex-1 bg-[#1F1F1F] border border-[#313131] text-slate-200 text-xs rounded-xl px-4 py-3 focus:outline-none focus:border-purple-500"
         />
         <button
           type="submit"

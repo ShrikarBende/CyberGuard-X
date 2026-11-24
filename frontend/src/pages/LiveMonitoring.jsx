@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Activity, Check, Copy, Filter, Search, ShieldAlert, X } from 'lucide-react';
+import { Activity, Check, Copy, Filter, Search, ShieldAlert, X } from '../lib/icons';
 import { api } from '../services/api';
+import './LiveMonitoring.css';
 import { gsap } from 'gsap';
 import { useGSAP } from '@gsap/react';
 import { createMotionScope, motion } from '../lib/motion';
@@ -11,6 +12,7 @@ import Modal from '../components/ui/Modal';
 import Skeleton from '../components/ui/Skeleton';
 
 const CATEGORIES = ['all', 'auth', 'endpoint', 'network', 'access'];
+const MAX_SEEN_LIVE_IDS = 450;
 
 function displayField(value) {
   if (value === null) return 'null';
@@ -32,7 +34,12 @@ function isBlank(value) {
   return value == null || value === '' || value === '—' || value === '-';
 }
 
-export default function LiveMonitoring({ liveEvents }) {
+function displayCell(value, fallback = '-') {
+  if (isBlank(value)) return fallback;
+  return typeof value === 'object' ? JSON.stringify(value) : String(value);
+}
+
+export default function LiveMonitoring({ liveEvents, onInvestigateEvent }) {
   const [initialEvents, setInitialEvents] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -40,42 +47,65 @@ export default function LiveMonitoring({ liveEvents }) {
   const [loadError, setLoadError] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [copiedField, setCopiedField] = useState('');
+  const [highlightedLiveIds, setHighlightedLiveIds] = useState(() => new Set());
   const pageRef = useRef(null);
-  const seenLiveId = useRef(null);
-  const streamRef = useRef(null);
+  const seenLiveIds = useRef(new Set());
+  const seededLiveIds = useRef(false);
+  const highlightTimers = useRef(new Map());
   const filterControlRef = useRef(null);
   const searchRef = useRef(null);
   const drawerContentRef = useRef(null);
   const copyResetTimer = useRef(null);
 
-  useGSAP(() => createMotionScope(pageRef.current, (reduced) => {
-    gsap.fromTo('.live-entrance', { autoAlpha: 0, y: reduced ? 0 : 12 }, {
-      autoAlpha: 1,
-      y: 0,
-      duration: reduced ? 0.18 : 0.48,
-      stagger: reduced ? 0 : 0.06,
-      ease: motion.ease,
-      clearProps: 'transform,visibility',
+  useGSAP(() => {
+    const scope = pageRef.current;
+    if (!scope || loading) return undefined;
+    return createMotionScope(scope, (reduced) => {
+      const items = gsap.utils.toArray('.live-entrance', scope);
+      if (!items.length) return;
+      gsap.fromTo(items, { autoAlpha: 0, y: reduced ? 0 : 12 }, {
+        autoAlpha: 1,
+        y: 0,
+        duration: reduced ? 0.18 : 0.48,
+        stagger: reduced ? 0 : 0.06,
+        ease: motion.ease,
+        clearProps: 'opacity,transform,visibility',
+      });
     });
-  }), { scope: pageRef, dependencies: [], revertOnUpdate: false });
+  }, { scope: pageRef, dependencies: [loading], revertOnUpdate: true });
 
-  useGSAP(() => createMotionScope(streamRef.current, (reduced) => {
-    const newestId = liveEvents[0]?.event_id;
-    if (!newestId || newestId === seenLiveId.current) return;
-    seenLiveId.current = newestId;
-    const row = Array.from(streamRef.current?.querySelectorAll('[data-live-id]') || [])
-      .find((item) => item.dataset.liveId === String(newestId));
-    if (!row) return;
-    gsap.fromTo(row, { autoAlpha: 0, y: reduced ? 0 : -8 }, {
-      autoAlpha: 1,
-      y: 0,
-      duration: reduced ? 0.18 : motion.duration.base,
-      ease: motion.ease,
-      clearProps: 'transform,visibility',
+  useEffect(() => {
+    if (!Array.isArray(liveEvents)) return;
+    const incomingIds = liveEvents.map((event) => event?.event_id).filter((id) => id != null).map(String);
+    if (!seededLiveIds.current) {
+      seededLiveIds.current = true;
+      seenLiveIds.current = new Set(incomingIds.slice(0, MAX_SEEN_LIVE_IDS));
+      return;
+    }
+
+    const freshEvents = liveEvents.filter((event) => event?.event_id != null && !seenLiveIds.current.has(String(event.event_id)));
+    if (!freshEvents.length) return;
+    const freshIds = freshEvents.map((event) => String(event.event_id));
+    freshIds.forEach((id) => seenLiveIds.current.add(id));
+    while (seenLiveIds.current.size > MAX_SEEN_LIVE_IDS) {
+      seenLiveIds.current.delete(seenLiveIds.current.values().next().value);
+    }
+
+    setHighlightedLiveIds((current) => new Set([...current, ...freshIds]));
+    freshIds.forEach((id) => {
+      window.clearTimeout(highlightTimers.current.get(id));
+      const timer = window.setTimeout(() => {
+        setHighlightedLiveIds((current) => {
+          if (!current.has(id)) return current;
+          const next = new Set(current);
+          next.delete(id);
+          return next;
+        });
+        highlightTimers.current.delete(id);
+      }, 1000);
+      highlightTimers.current.set(id, timer);
     });
-    const flash = row.querySelectorAll('[data-live-flash]');
-    if (flash.length) gsap.fromTo(flash, { opacity: 0.8 }, { opacity: 0, duration: reduced ? 0.18 : 1, ease: 'power2.out' });
-  }), { scope: streamRef, dependencies: [liveEvents], revertOnUpdate: true });
+  }, [liveEvents]);
 
   useEffect(() => {
     async function loadInitial() {
@@ -94,6 +124,11 @@ export default function LiveMonitoring({ liveEvents }) {
   }, []);
 
   useEffect(() => () => window.clearTimeout(copyResetTimer.current), []);
+
+  useEffect(() => () => {
+    highlightTimers.current.forEach((timer) => window.clearTimeout(timer));
+    highlightTimers.current.clear();
+  }, []);
 
   useEffect(() => {
     function focusSearch(event) {
@@ -175,6 +210,11 @@ export default function LiveMonitoring({ liveEvents }) {
 
   return (
     <div ref={pageRef} className="mx-auto w-full max-w-[1600px] space-y-6">
+      <header className="live-entrance px-1 pb-1">
+        <h1 className="font-[family-name:var(--soc-font-display)] text-[38px] font-light leading-tight tracking-tight text-slate-50">Live Feed</h1>
+        <p className="mt-1 text-sm text-slate-400">Streaming security telemetry from connected layers</p>
+      </header>
+
       <Card className="live-entrance flex flex-wrap items-center justify-between gap-4 p-4 sm:p-5">
         <div className="relative w-full min-w-0 flex-1 sm:w-auto sm:min-w-[15rem] sm:max-w-md">
           <Search aria-hidden="true" className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
@@ -197,7 +237,7 @@ export default function LiveMonitoring({ liveEvents }) {
         </div>
 
         <div className="flex w-full items-center gap-3 sm:w-auto sm:flex-1 sm:justify-end">
-          <div ref={filterControlRef} role="group" aria-label="Filter events by layer" className="relative flex min-w-0 flex-1 rounded-xl border border-white/[0.08] bg-slate-950/45 p-1 sm:flex-none">
+          <div ref={filterControlRef} role="group" aria-label="Filter events by layer" className="relative flex min-w-0 flex-1 rounded-xl border border-white/[0.08] bg-slate-950/45 p-1 sm:flex-1">
             <span aria-hidden="true" style={{ width: 'calc((100% - 0.5rem) / 5)', transform: `translateX(${selectedFilterIndex * 100}%)` }} className="pointer-events-none absolute bottom-1 left-1 top-1 rounded-lg border border-blue-300/20 bg-gradient-to-r from-blue-500 to-violet-500 shadow-[0_4px_18px_rgba(61,126,255,0.24)] transition-transform duration-200" />
             {CATEGORIES.map((cat) => (
               <button
@@ -205,10 +245,10 @@ export default function LiveMonitoring({ liveEvents }) {
                 type="button"
                 aria-pressed={selectedCategory === cat}
                 onClick={() => setSelectedCategory(cat)}
-                className={`relative z-[1] inline-flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg px-2.5 py-2 text-[14px] font-normal transition-colors sm:flex-none sm:px-3 ${selectedCategory === cat ? 'text-white' : 'text-slate-300 hover:text-slate-100'}`}
+                className={`relative z-[1] inline-flex min-w-0 flex-1 items-center justify-center gap-1 rounded-lg px-1.5 py-2 text-[12px] font-normal transition-colors sm:px-2 sm:text-[14px] ${selectedCategory === cat ? 'text-white' : 'text-slate-300 hover:text-slate-100'}`}
               >
-                <span>{cat}</span>
-                <span className={`soc-mono text-[11px] ${selectedCategory === cat ? 'text-white/90' : 'text-slate-500'}`}>{filterCounts[cat]}</span>
+                <span className="min-w-0 truncate">{cat.toUpperCase()}</span>
+                <span className={`shrink-0 font-mono text-[10px] tabular-nums sm:text-[11px] ${selectedCategory === cat ? 'text-white/90' : 'text-slate-500'}`}>{filterCounts[cat]}</span>
               </button>
             ))}
           </div>
@@ -219,22 +259,22 @@ export default function LiveMonitoring({ liveEvents }) {
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.07] px-5 py-4 sm:px-6">
           <div className="flex items-center gap-3">
             <span className="relative flex h-2.5 w-2.5" aria-hidden="true">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-300/50 [animation-duration:2.4s]" />
+              <span className="live-pulse absolute inline-flex h-full w-full rounded-full bg-emerald-300/50" />
               <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-300 shadow-[0_0_12px_rgba(52,211,153,.45)]" />
             </span>
             <div>
-              <h2 className="text-sm font-semibold text-slate-100">Continuous Security Telemetry Stream</h2>
+              <h2 className="text-base font-medium text-slate-100">Continuous Security Telemetry Stream</h2>
               <span className="mt-1 inline-flex items-center gap-1.5 text-[13px] font-normal text-emerald-200">
                 <Activity aria-hidden="true" className="h-3 w-3" /> LIVE
               </span>
             </div>
           </div>
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[0.035] px-3 py-1.5 text-[11px] text-slate-300">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-white/[0.08] bg-white/[0.035] px-3 py-1.5 text-sm text-slate-300">
             Displaying <span className="font-mono font-semibold tabular-nums text-slate-100">{filteredEvents.length}</span> events
           </span>
         </div>
 
-        <div ref={streamRef} className="max-h-[min(70vh,52rem)] overflow-auto">
+        <div className="max-h-[min(70vh,52rem)] overflow-auto">
           {loadError && allEvents.length > 0 && <p role="status" className="border-b border-amber-400/15 bg-amber-400/[0.045] px-5 py-2.5 text-xs text-amber-100 sm:px-6">Historical events could not be loaded. Live events will continue to appear here.</p>}
           <table className="w-full min-w-[1180px] border-separate border-spacing-y-1.5 text-left text-[14px]">
             <thead className="sticky top-0 z-20 bg-[var(--soc-panel)] text-[13px] font-normal text-slate-300 shadow-[0_1px_0_rgba(255,255,255,.06)]">
@@ -247,12 +287,13 @@ export default function LiveMonitoring({ liveEvents }) {
                 <th scope="col" className="px-4 py-3">Layer</th>
                 <th scope="col" className="px-4 py-3">Dataset</th>
                 <th scope="col" className="px-4 py-3">Status</th>
+                <th scope="col" className="px-2 py-3"><span className="sr-only">Quick actions</span></th>
               </tr>
             </thead>
             <tbody aria-live="polite" aria-relevant="additions" aria-atomic="false" className="text-slate-200">
               {filteredEvents.length === 0 && loading && allEvents.length === 0 ? (
                 <tr role="status" aria-label="Loading events">
-                  <td colSpan={8} className="px-4 py-5">
+                  <td colSpan={9} className="px-4 py-5">
                     <div className="space-y-3" aria-hidden="true">
                       {Array.from({ length: 4 }, (_, index) => <Skeleton key={index} className="h-8 w-full" />)}
                     </div>
@@ -261,7 +302,7 @@ export default function LiveMonitoring({ liveEvents }) {
                 </tr>
               ) : filteredEvents.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-7">
+                  <td colSpan={9} className="px-4 py-7">
                     <EmptyState
                       icon={loadError && allEvents.length === 0 ? ShieldAlert : allEvents.length === 0 ? Activity : Filter}
                       title={loadError && allEvents.length === 0 ? 'Historical events unavailable' : allEvents.length === 0 ? 'No security events yet' : 'No events match these filters'}
@@ -277,14 +318,13 @@ export default function LiveMonitoring({ liveEvents }) {
                 const failed = normalizedStatus === 'failure' || normalizedStatus === 'blocked' || normalizedStatus === 'denied';
                 const timestamp = ev.timestamp ? new Date(ev.timestamp) : null;
                 const validTimestamp = timestamp && !Number.isNaN(timestamp.getTime());
-                const isLive = liveEvents.includes(ev);
+                const isRecentlyArrived = ev.event_id != null && highlightedLiveIds.has(String(ev.event_id));
                 const dateLabel = validTimestamp ? timestamp.toLocaleString() : 'Timestamp unavailable';
                 const eventLabel = ev.event_type || 'Event';
                 const rowLabel = `${eventLabel} · ${ev.user_id || '—'} · ${dateLabel}`;
                 return (
                   <tr
-                    key={ev.event_id || idx}
-                    data-live-id={isLive ? ev.event_id : undefined}
+                    key={ev.event_id || `${ev.timestamp || 'event'}-${ev.user_id || ''}-${ev.event_type || idx}`}
                     tabIndex={0}
                     aria-label={`View event details: ${rowLabel}`}
                     aria-haspopup="dialog"
@@ -295,46 +335,44 @@ export default function LiveMonitoring({ liveEvents }) {
                         openEvent(ev);
                       }
                     }}
-                    className="soc-table-row group cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-inset focus-visible:outline-blue-400"
+                    className={`soc-table-row group cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-inset focus-visible:outline-blue-400 ${isRecentlyArrived ? 'live-row-arrival' : ''}`}
+                    style={isRecentlyArrived ? { '--live-row-highlight': failed ? 'rgba(224,32,43,.18)' : normalizedStatus === 'success' ? 'rgba(32,201,151,.18)' : 'rgba(79,103,255,.16)' } : undefined}
                   >
                     <td className="relative whitespace-nowrap px-4 py-3">
                       <span aria-hidden="true" className={`absolute inset-y-0 left-0 w-[3px] ${failed ? 'bg-rose-400/80' : normalizedStatus === 'success' ? 'bg-emerald-400/65' : 'bg-transparent'}`} />
-                      {isLive && <span data-live-flash aria-hidden="true" className={`pointer-events-none absolute inset-0 opacity-0 ${failed ? 'bg-rose-400/10' : 'bg-emerald-400/[0.08]'}`} />}
-                      <time className="relative z-[1] text-slate-300" dateTime={validTimestamp ? timestamp.toISOString() : undefined} title={dateLabel}>
-                        {validTimestamp ? timestamp.toLocaleTimeString() : 'Timestamp unavailable'}
+                      <time className={`relative z-[1] font-mono tabular-nums ${validTimestamp ? 'text-slate-300' : 'text-slate-500'}`} dateTime={validTimestamp ? timestamp.toISOString() : undefined} title={dateLabel}>
+                        {validTimestamp ? timestamp.toLocaleTimeString() : '-'}
                       </time>
                     </td>
                     <td className="relative whitespace-nowrap px-4 py-3 font-medium">
-                      {isLive && <span data-live-flash aria-hidden="true" className={`pointer-events-none absolute inset-0 opacity-0 ${failed ? 'bg-rose-400/10' : 'bg-emerald-400/[0.08]'}`} />}
-                      <span className={`relative z-[1] ${isBlank(ev.user_id) ? 'text-slate-500' : 'text-slate-200'}`}>{ev.user_id || '—'}</span>
+                      <span className={`relative z-[1] ${isBlank(ev.user_id) ? 'text-slate-500' : 'text-slate-200'}`}>{displayCell(ev.user_id)}</span>
                     </td>
                     <td className="relative whitespace-nowrap px-4 py-3">
-                      {isLive && <span data-live-flash aria-hidden="true" className={`pointer-events-none absolute inset-0 opacity-0 ${failed ? 'bg-rose-400/10' : 'bg-emerald-400/[0.08]'}`} />}
-                      <span className={`relative z-[1] ${isBlank(ev.device_id) ? 'text-slate-500' : 'text-slate-300'}`}>{ev.device_id || '—'}</span>
+                      <span className={`relative z-[1] ${isBlank(ev.device_id) ? 'text-slate-500' : 'text-slate-300'}`}>{displayCell(ev.device_id)}</span>
                     </td>
                     <td className="relative whitespace-nowrap px-4 py-3">
-                      {isLive && <span data-live-flash aria-hidden="true" className={`pointer-events-none absolute inset-0 opacity-0 ${failed ? 'bg-rose-400/10' : 'bg-emerald-400/[0.08]'}`} />}
                       <span className="relative z-[1] tabular-nums">
-                        <span className={isBlank(ev.source_ip) ? 'text-slate-500' : 'text-slate-300'}>{ev.source_ip || '—'}</span>
-                        <span className="px-1.5 text-slate-600">→</span>
-                        <span className={isBlank(ev.destination_ip) ? 'text-slate-500' : 'text-slate-300'}>{ev.destination_ip || '—'}</span>
+                        <span className={`font-mono ${isBlank(ev.source_ip) ? 'text-slate-500' : 'text-slate-300'}`}>{displayCell(ev.source_ip)}</span>
+                        <span className="px-1.5 text-slate-600">-&gt;</span>
+                        <span className={`font-mono ${isBlank(ev.destination_ip) ? 'text-slate-500' : 'text-slate-300'}`}>{displayCell(ev.destination_ip)}</span>
                       </span>
                     </td>
                     <td className="relative whitespace-nowrap px-4 py-3 font-sans font-medium">
-                      {isLive && <span data-live-flash aria-hidden="true" className={`pointer-events-none absolute inset-0 opacity-0 ${failed ? 'bg-rose-400/10' : 'bg-emerald-400/[0.08]'}`} />}
-                      <span className={`relative z-[1] ${isBlank(ev.event_type) ? 'text-slate-500' : 'text-slate-200'}`}>{ev.event_type || '—'}</span>
+                      <span className={`relative z-[1] ${isBlank(ev.event_type) ? 'text-slate-500' : 'text-slate-200'}`}>{displayCell(ev.event_type)}</span>
                     </td>
                     <td className="relative whitespace-nowrap px-4 py-3">
-                      {isLive && <span data-live-flash aria-hidden="true" className={`pointer-events-none absolute inset-0 opacity-0 ${failed ? 'bg-rose-400/10' : 'bg-emerald-400/[0.08]'}`} />}
-                      <Badge tone="low" className="relative z-[1] px-2 py-1 text-[13px] font-normal">{cat}</Badge>
+                      <Badge tone="low" className="relative z-[1] px-2.5 py-1 text-sm font-normal">{displayCell(cat)}</Badge>
                     </td>
                     <td className="relative whitespace-nowrap px-4 py-3">
-                      {isLive && <span data-live-flash aria-hidden="true" className={`pointer-events-none absolute inset-0 opacity-0 ${failed ? 'bg-rose-400/10' : 'bg-emerald-400/[0.08]'}`} />}
-                      <span className={`relative z-[1] ${isBlank(ev.dataset) ? 'text-slate-500' : 'text-slate-400'}`}>{ev.dataset || '—'}</span>
+                      <span className={`relative z-[1] ${isBlank(ev.dataset) ? 'text-slate-500' : 'text-slate-400'}`}>{displayCell(ev.dataset)}</span>
                     </td>
                     <td className="relative whitespace-nowrap px-4 py-3">
-                      {isLive && <span data-live-flash aria-hidden="true" className={`pointer-events-none absolute inset-0 opacity-0 ${failed ? 'bg-rose-400/10' : 'bg-emerald-400/[0.08]'}`} />}
-                      <Badge tone={statusTone(status)} className="relative z-[1] px-2 py-1 text-[13px] font-normal">{String(status)}</Badge>
+                      <Badge tone={statusTone(status)} className="relative z-[1] px-2.5 py-1 text-sm font-normal">{String(status)}</Badge>
+                    </td>
+                    <td className="whitespace-nowrap px-2 py-2 text-right">
+                      <button type="button" onClick={(event) => { event.stopPropagation(); onInvestigateEvent?.(ev); }} className="rounded-lg border border-purple-400/25 bg-purple-400/[0.08] px-2.5 py-1.5 text-[11px] font-medium text-purple-200 transition hover:bg-purple-400/[0.16] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400" aria-label={`Investigate ${eventLabel} with AI`}>
+                        Investigate with AI
+                      </button>
                     </td>
                   </tr>
                 );
@@ -374,6 +412,11 @@ export default function LiveMonitoring({ liveEvents }) {
                 );
               })}
             </div>
+            <footer className="border-t border-white/[0.08] p-4 sm:px-6">
+              <button type="button" onClick={() => onInvestigateEvent?.(selectedEvent)} className="w-full rounded-xl border border-purple-400/25 bg-purple-500/15 px-4 py-2.5 text-sm font-semibold text-purple-100 transition hover:bg-purple-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400">
+                Investigate with AI
+              </button>
+            </footer>
           </div>
         )}
       </Modal>

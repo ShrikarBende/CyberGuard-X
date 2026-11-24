@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   ShieldAlert, ShieldCheck, Activity, Radar, FileWarning, Sparkles, Bot, Database,
   BarChart3, Menu, X, PanelLeftClose, PanelLeftOpen, LogOut, Clock3,
-} from 'lucide-react';
+} from '../lib/icons';
 import { api } from '../services/api';
 
 let dashboardStatsRequest = null;
@@ -148,7 +148,7 @@ export default function Sidebar({
               aria-label={fullLabel}
               aria-current={isActive ? 'page' : undefined}
               title={iconRail ? fullLabel : undefined}
-              className={`group relative flex min-h-12 w-full items-center gap-3 rounded-full border px-3 py-2.5 text-left text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/80 ${iconRail ? 'justify-center' : ''} ${isActive ? 'border-white/[0.16] bg-gradient-to-r from-white/[0.075] to-white/[0.025] text-slate-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]' : 'border-transparent text-slate-300 hover:bg-white/[0.045] hover:text-slate-100'}`}
+              className={`group relative flex min-h-11 w-full items-center gap-3 rounded-lg border px-3 py-2 text-left text-sm font-medium transition-colors duration-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/80 ${iconRail ? 'justify-center' : ''} ${isActive ? 'border-white/[0.12] bg-white/[0.045] text-slate-100' : 'border-transparent text-slate-300 hover:bg-white/[0.035] hover:text-slate-100'}`}
             >
               <Icon aria-hidden="true" className={`h-4 w-4 shrink-0 ${isActive ? 'text-blue-200' : 'text-slate-400'}`} />
               {!iconRail && <span className="min-w-0 flex-1 truncate">{label}</span>}
@@ -166,9 +166,9 @@ export default function Sidebar({
   return <>
     {mobile && !mobileOpen && <button type="button" onClick={() => setMobileOpen(true)} aria-label="Open navigation" aria-expanded="false" className="fixed left-3 top-3 z-50 flex h-10 w-10 items-center justify-center rounded-xl border border-white/10 bg-slate-900 text-slate-200 shadow-xl md:hidden"><Menu className="h-5 w-5" /></button>}
     {mobileOpen && <button type="button" onClick={() => setMobileOpen(false)} aria-label="Close navigation" className="fixed inset-0 z-40 bg-black/60 md:hidden" />}
-    <aside aria-label="CyberGuard X sidebar" className={`z-50 flex h-full shrink-0 flex-col bg-transparent transition-[width,transform] duration-200 ${mobile ? `fixed inset-y-0 left-0 w-64 bg-[#070611] ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}` : collapsed ? 'w-16' : 'w-[250px]'}`}>
+    <aside aria-label="CyberGuard X sidebar" className={`soc-sidebar z-50 flex h-full shrink-0 flex-col transition-[width,transform] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] ${mobile ? `fixed inset-y-0 left-0 w-64 ${mobileOpen ? 'translate-x-0' : '-translate-x-full'}` : collapsed ? 'w-16' : 'w-[250px]'}`}>
       <div className={`flex h-16 shrink-0 items-center gap-3 px-3 ${collapsed && !mobileOpen ? 'justify-center' : ''}`}>
-        <div className={`flex shrink-0 items-center justify-center border border-blue-300/20 bg-blue-400/10 text-blue-200 ${collapsed && !mobileOpen ? 'h-9 w-9 rounded-xl' : 'h-11 w-11 rounded-2xl'}`}><ShieldCheck aria-hidden="true" className={collapsed && !mobileOpen ? 'h-4 w-4' : 'h-5 w-5'} /></div>
+        <div className={`flex shrink-0 items-center justify-center border border-blue-300/20 bg-blue-400/10 text-blue-200 ${collapsed && !mobileOpen ? 'h-9 w-9 rounded-lg' : 'h-10 w-10 rounded-xl'}`}><ShieldCheck aria-hidden="true" className={collapsed && !mobileOpen ? 'h-4 w-4' : 'h-5 w-5'} /></div>
         {(!collapsed || mobileOpen) && <div className="min-w-0 flex-1"><h1 className="font-display text-base font-semibold text-slate-100">CyberGuard X</h1><p className="text-[13px] leading-4 text-slate-400">Enterprise Security Operations</p></div>}
         {mobile && <button type="button" onClick={() => setMobileOpen(false)} aria-label="Close navigation" className="rounded-lg p-2 text-slate-400 hover:bg-white/5 hover:text-white"><X className="h-4 w-4" /></button>}
       </div>

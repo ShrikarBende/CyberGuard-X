@@ -3,7 +3,7 @@ import {
   Activity,
   Clock3,
   ShieldAlert,
-} from 'lucide-react';
+} from '../lib/icons';
 import {
   Area,
   AreaChart,
@@ -168,24 +168,31 @@ export default function Overview({ onSelectIncident }) {
   const [loadError, setLoadError] = useState(false);
   const [activeSlice, setActiveSlice] = useState(null);
 
-  useGSAP(() => createMotionScope(root.current, (reduced) => {
-    gsap.fromTo('.overview-entrance',
-      { autoAlpha: 0, y: reduced ? 0 : 12 },
-      {
-        autoAlpha: 1,
-        y: 0,
-        duration: reduced ? 0.18 : 0.48,
-        stagger: reduced ? 0 : 0.055,
-        ease: motion.ease,
-        clearProps: 'transform,visibility',
-      },
-    );
-  }), { scope: root, dependencies: [loading], revertOnUpdate: true });
+  useGSAP(() => {
+    const scope = root.current;
+    if (!scope || loading) return undefined;
+    return createMotionScope(scope, (reduced) => {
+      const items = gsap.utils.toArray('.overview-entrance', scope);
+      if (!items.length) return;
+      gsap.fromTo(items,
+        { autoAlpha: 0, y: reduced ? 0 : 12 },
+        {
+          autoAlpha: 1,
+          y: 0,
+          duration: reduced ? 0.18 : 0.48,
+          stagger: reduced ? 0 : 0.055,
+          ease: motion.ease,
+          clearProps: 'opacity,transform,visibility',
+        },
+      );
+    });
+  }, { scope: root, dependencies: [loading], revertOnUpdate: true });
 
   useGSAP(() => {
-    if (!flashAlertIds.size) return undefined;
-    return createMotionScope(root.current, (reduced) => {
-      const overlays = Array.from(root.current.querySelectorAll('[data-row-flash-id]'))
+    const scope = root.current;
+    if (!scope || !flashAlertIds.size) return undefined;
+    return createMotionScope(scope, (reduced) => {
+      const overlays = Array.from(scope.querySelectorAll('[data-row-flash-id]'))
         .filter((node) => flashAlertIds.has(node.dataset.rowFlashId));
       if (overlays.length) {
         gsap.fromTo(overlays, { opacity: 0.85 }, {

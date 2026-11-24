@@ -1,5 +1,5 @@
 import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { Accessibility, Bell, Radio, Search } from 'lucide-react';
+import { Accessibility, Bell, Radio, Search } from '../lib/icons';
 
 const CommandPalette = lazy(() => import('./CommandPalette'));
 
@@ -57,28 +57,28 @@ export default function Header({ pageTitle, wsConnected, analyst, onLogout, live
   };
 
   return (
-    <header className="flex min-h-[92px] shrink-0 items-center justify-between gap-4 border-b border-white/[0.06] bg-transparent px-4 py-3 md:px-7">
-      <div className="min-w-0 pl-12 md:pl-0">
-        <p className="text-[13px] text-slate-400">CyberGuard X <span className="px-1.5 text-slate-600">/</span> Workspace</p>
-        <h1 className="mt-1 font-display text-3xl font-light leading-[1.05] text-slate-100 sm:text-4xl">{pageTitle}</h1>
+    <header className="soc-header flex min-h-[72px] shrink-0 flex-wrap items-center justify-between gap-3 border-b px-4 py-3 md:px-6">
+      <div className="min-w-0 flex-1 basis-full pl-12 sm:basis-auto sm:pl-0">
+        <p className="soc-mono caption-3 uppercase tracking-wide text-slate-500">CyberGuard X <span className="px-1.5 text-slate-600">/</span> Security operations</p>
+        <h1 className="heading-6 mt-1 text-slate-100">{pageTitle}</h1>
       </div>
 
-      <div className="flex items-center gap-2 sm:gap-4">
-        <button type="button" onClick={toggleMotion} aria-pressed={reduceMotion} aria-label={reduceMotion ? 'Enable motion' : 'Reduce motion'} title={reduceMotion ? 'Enable motion' : 'Reduce motion'} className="inline-flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-2 text-[13px] font-normal text-slate-300 hover:bg-white/5">
+      <div className="flex w-full items-center justify-end gap-2 sm:w-auto sm:gap-4">
+        <button type="button" onClick={toggleMotion} aria-pressed={reduceMotion} aria-label={reduceMotion ? 'Enable motion' : 'Reduce motion'} title={reduceMotion ? 'Enable motion' : 'Reduce motion'} className="button-sm inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-slate-300 transition-colors duration-300 hover:bg-white/5">
           <Accessibility className="h-3.5 w-3.5" /><span className="hidden lg:inline">Reduce motion</span>
         </button>
-        <button type="button" onClick={() => setCommandPaletteOpen(true)} aria-label="Search pages and incidents" title="Search pages and incidents (Ctrl/Cmd+K)" className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.025] px-3 py-2 text-[13px] text-slate-300 hover:bg-white/[0.06] sm:px-3">
+        <button type="button" onClick={() => setCommandPaletteOpen(true)} aria-label="Search pages and incidents" title="Search pages and incidents (Ctrl/Cmd+K)" className="button-sm inline-flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.025] px-3 py-2 text-slate-300 transition-colors duration-300 hover:bg-white/[0.06] sm:px-3">
           <Search className="h-3.5 w-3.5" /><span className="hidden sm:inline">Search</span><kbd className="hidden rounded border border-white/10 px-1.5 py-0.5 font-mono text-[9px] text-slate-500 sm:inline">Ctrl/⌘ K</kbd>
         </button>
         <div className="relative">
           <button type="button" onClick={() => { const next = !notificationsOpen; setNotificationsOpen(next); if (next) { setNotificationsUnread(false); notificationSeenId.current = newestHighSeverityId; } }} aria-label="Notifications" aria-expanded={notificationsOpen} aria-controls="soc-notifications" className="relative rounded-lg p-2 text-slate-300 transition-colors hover:bg-white/5 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400">
             <Bell aria-hidden="true" className="h-4 w-4" />
-            {notificationsUnread && highSeverityEvents.length > 0 && <span aria-hidden="true" className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-rose-400 ring-2 ring-[#0D1527]" />}
+            {notificationsUnread && highSeverityEvents.length > 0 && <span aria-hidden="true" className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-rose-400 ring-2 ring-[#181818]" />}
           </button>
           <span className="sr-only" aria-live="polite" aria-atomic="true">{notificationsUnread ? `${highSeverityEvents.length} unread high-severity notifications` : ''}</span>
           {notificationsOpen && <>
             <button type="button" aria-label="Close notifications" onClick={() => setNotificationsOpen(false)} className="fixed inset-0 z-30 cursor-default" />
-            <section id="soc-notifications" aria-label="Recent high-severity notifications" className="absolute right-0 top-full z-40 mt-2 w-[min(22rem,calc(100vw-1.5rem))] overflow-hidden rounded-2xl border border-white/10 bg-[#0D1527] shadow-2xl">
+            <section id="soc-notifications" aria-label="Recent high-severity notifications" className="absolute right-0 top-full z-40 mt-2 w-[min(22rem,calc(100vw-1.5rem))] overflow-hidden rounded-2xl border border-white/10 bg-[#181818] shadow-2xl">
               <div className="flex items-center justify-between border-b border-white/[0.07] px-4 py-3"><h2 className="text-[15px] font-medium text-slate-100">Notifications</h2><span className="text-[13px] text-slate-400">High severity</span></div>
               {highSeverityEvents.length === 0 ? <p className="px-4 py-8 text-center text-[13px] text-slate-400">No recent high-severity events.</p> : <ul className="max-h-80 divide-y divide-white/[0.06] overflow-y-auto">
                 {highSeverityEvents.map((event) => {
@@ -93,16 +93,16 @@ export default function Header({ pageTitle, wsConnected, analyst, onLogout, live
           </>}
         </div>
         {/* WebSocket Live Status */}
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#10182E] border border-[#1E293B] text-[13px]">
+        <div role="status" aria-label={wsConnected ? 'Live event stream connected' : 'Live event stream polling'} className="flex items-center gap-2 rounded-lg border border-white/10 bg-[#1F1F1F] px-3 py-2 text-sm">
           <Radio className={`w-3.5 h-3.5 ${wsConnected ? 'text-emerald-400 animate-pulse' : 'text-amber-400'}`} />
-          <span className="text-[13px] text-slate-300">
+          <span className="hidden text-sm text-slate-300 sm:inline">
             {wsConnected ? 'WS stream: connected' : 'WS stream: polling'}
           </span>
         </div>
 
         {/* Analyst Profile */}
-        <div className="flex items-center gap-2.5 pl-4 border-l border-[#1E293B]">
-          <div className="w-8 h-8 rounded-full bg-blue-500/20 border border-blue-500/40 flex items-center justify-center text-blue-200 font-bold text-xs">
+        <div className="flex items-center gap-2.5 pl-4 border-l border-[#313131]">
+          <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-blue-500/40 bg-blue-500/20 text-xs font-semibold text-blue-200">
             {(analyst?.username || 'A').slice(0, 2).toUpperCase()}
           </div>
           <div className="hidden sm:block text-left">

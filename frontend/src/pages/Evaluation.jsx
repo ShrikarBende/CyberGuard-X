@@ -70,11 +70,11 @@ function MetricMatrix({ profile, metricKey, metricLabel }) {
     <div className="max-h-[70vh] overflow-auto rounded-2xl bg-black/10">
       <table className="w-full min-w-[760px] border-separate border-spacing-y-1.5 text-left text-sm text-slate-200">
         <caption className="sr-only">{metricLabel} by detector and held-out family for {profile.profile} profile</caption>
-        <thead className="sticky top-0 z-[3] bg-[#0b0a18]">
+        <thead className="sticky top-0 z-[3] bg-[#181818]">
           <tr>
-            <th scope="col" className="sticky left-0 z-[4] min-w-48 rounded-l-xl bg-[#0b0a18] px-4 py-3 text-[13px] font-medium text-slate-300">Detector</th>
+            <th scope="col" className="sticky left-0 z-[4] min-w-48 rounded-l-xl bg-[#181818] px-4 py-3 text-[13px] font-medium text-slate-300">Detector</th>
             {families.map((family) => (
-              <th scope="col" key={family.family} className="min-w-40 bg-[#0b0a18] px-3 py-3 align-top text-[13px] font-medium text-slate-200 last:rounded-r-xl">
+              <th scope="col" key={family.family} className="min-w-40 bg-[#181818] px-3 py-3 align-top text-[13px] font-medium text-slate-200 last:rounded-r-xl">
                 <span className="block">{family.family}</span>
                 <span className="mt-1 block text-[13px] font-normal text-slate-300">Held-out family</span>
                 {family.low_support && <div className="mt-2"><GlassTooltip label="Support is below 200 unknown samples; this is how the backend defines low support."><span tabIndex={0} aria-label="Low support: below 200 unknown samples, as defined by the backend." className="inline-flex cursor-help rounded-full border border-amber-300/25 bg-amber-400/[0.08] px-2.5 py-1 text-[13px] font-medium text-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300">LOW SUPPORT</span></GlassTooltip></div>}

@@ -8,7 +8,7 @@ import {
   ShieldAlert,
   Activity,
   Clock3,
-} from 'lucide-react';
+} from '../lib/icons';
 import { api } from '../services/api';
 import RiskFusion from '../components/RiskFusion';
 import { gsap } from 'gsap';
@@ -43,6 +43,13 @@ function statusTone(status) {
 function formatFixed(value, digits) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric.toFixed(digits) : '—';
+}
+
+function formatIncidentDate(value, format) {
+  if (!value) return '—';
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '—';
+  return format === 'datetime' ? date.toLocaleString() : date.toLocaleTimeString();
 }
 
 function IncidentLoading() {
@@ -127,34 +134,44 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
   const [correlationAlerts, setCorrelationAlerts] = useState([]);
   const [actionMessage, setActionMessage] = useState('');
   const pageRef = useRef(null);
-  const reviewContentRef = useRef(null);
   const reviewQueue = incidents.filter((incident) => incident.status === 'NEEDS_REVIEW');
   const reviewFlowCount = reviewQueue.reduce((total, incident) => total + (incident.flow_count || 1), 0);
 
-  useGSAP(() => createMotionScope(pageRef.current, (reduced) => {
-    gsap.fromTo('.incident-entrance', { autoAlpha: 0, y: reduced ? 0 : 12 }, {
-      autoAlpha: 1,
-      y: 0,
-      duration: reduced ? 0.18 : 0.48,
-      stagger: reduced ? 0 : 0.055,
-      ease: motion.ease,
-      clearProps: 'transform,visibility',
-    });
-  }), { scope: pageRef, dependencies: [loading], revertOnUpdate: true });
-
   useGSAP(() => {
-    if (!reviewExpanded || !reviewContentRef.current) return undefined;
-    return createMotionScope(reviewContentRef.current, (reduced) => {
-      gsap.fromTo(reviewContentRef.current, { autoAlpha: 0, scaleY: 0.94 }, {
+    const scope = pageRef.current;
+    if (!scope || loading) return undefined;
+    return createMotionScope(scope, (reduced) => {
+      const items = gsap.utils.toArray('.incident-entrance', scope);
+      if (!items.length) return;
+      gsap.fromTo(items, { autoAlpha: 0, y: reduced ? 0 : 12 }, {
         autoAlpha: 1,
-        scaleY: 1,
-        transformOrigin: 'top center',
-        duration: reduced ? 0.16 : 0.24,
+        y: 0,
+        duration: reduced ? 0.18 : 0.48,
+        stagger: reduced ? 0 : 0.055,
         ease: motion.ease,
-        clearProps: 'transform,visibility',
+        clearProps: 'opacity,transform,visibility',
       });
     });
-  }, { scope: reviewContentRef, dependencies: [reviewExpanded], revertOnUpdate: true });
+  }, { scope: pageRef, dependencies: [loading, incidents.length, correlationAlerts.length, Boolean(loadError), Boolean(actionMessage)], revertOnUpdate: true });
+
+  useGSAP(() => {
+    const scope = pageRef.current;
+    if (!scope || loading) return undefined;
+    return createMotionScope(scope, (reduced) => {
+      if (!pageRef.current) return;
+      const content = gsap.utils.toArray('.review-queue-content', scope);
+      if (!content.length) return;
+      const panel = content[0];
+      const targetHeight = reviewExpanded ? panel.scrollHeight : 0;
+      const startHeight = reviewExpanded ? 0 : panel.scrollHeight;
+      gsap.fromTo(panel, { height: startHeight, overflow: 'hidden' }, {
+        height: targetHeight,
+        duration: reduced ? 0.01 : 0.28,
+        ease: motion.ease,
+        clearProps: reviewExpanded ? 'height,overflow' : 'overflow',
+      });
+    });
+  }, { scope: pageRef, dependencies: [loading, reviewExpanded, incidents.length], revertOnUpdate: true });
 
   const fetchIncidents = async () => {
     try {
@@ -226,13 +243,20 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
     <div ref={pageRef} className="mx-auto w-full max-w-[1600px] space-y-4">
       {loadError && <div role="alert" className="incident-entrance rounded-xl border border-rose-400/25 bg-rose-400/[0.06] px-4 py-3 text-xs text-rose-100">{loadError}</div>}
       {actionMessage && <p role="status" className="incident-entrance rounded-xl border border-blue-400/20 bg-blue-400/[0.06] px-4 py-2.5 text-xs text-blue-100">{actionMessage}</p>}
-      <Card className="incident-entrance flex flex-wrap items-center justify-between gap-4 px-4 py-3 sm:px-5">
-        <div className="min-w-0">
-          <h2 className="text-sm font-semibold text-slate-100">Rule-based cross-layer correlation</h2>
-          <p className="mt-1 text-xs text-slate-400">Signals are rule indicators; they are not ML predictions.</p>
-          {correlationMessage && <p role="status" className="mt-2 text-xs text-blue-200">{correlationMessage}</p>}
+      <header className="incident-entrance flex flex-wrap items-end justify-between gap-3 px-1 pb-1">
+        <div>
+          <h1 className="font-[family-name:var(--soc-font-display)] text-[38px] font-light leading-tight tracking-tight text-slate-50">Incidents</h1>
+          <p className="mt-1 text-sm text-slate-400">Correlated activity and investigation details</p>
         </div>
-        <div className="flex w-full flex-wrap items-center justify-between gap-3 sm:w-auto sm:justify-end">
+      </header>
+
+      <Card className="incident-entrance flex flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-5">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1">
+          <h2 className="text-sm font-medium text-slate-100">Rule-based cross-layer correlation</h2>
+          <p className="text-sm text-slate-400">Signals are rule indicators; they are not ML predictions.</p>
+          {correlationMessage && <p role="status" className="basis-full text-sm text-blue-200">{correlationMessage}</p>}
+        </div>
+        <div className="flex w-full flex-wrap items-center justify-end gap-3 sm:w-auto">
           {isAdmin && <button type="button" onClick={handleRunCorrelation} disabled={correlationRunning}
             className="inline-flex items-center gap-2 rounded-xl border border-blue-300/20 bg-gradient-to-r from-blue-600 to-violet-600 px-4 py-2.5 text-xs font-semibold text-white shadow-[0_8px_24px_rgba(56,110,255,.18)] transition hover:brightness-110 active:scale-[.98] disabled:cursor-wait disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300">
             <Activity aria-hidden="true" className="h-4 w-4" /> {correlationRunning ? 'Correlating…' : 'Run correlation (60 min)'}
@@ -254,25 +278,25 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
             <ChevronDown aria-hidden="true" className={`h-4 w-4 text-slate-400 transition-transform duration-200 ${reviewExpanded ? 'rotate-180' : ''}`} />
           </span>
         </button>
-        {reviewExpanded && reviewQueue.length > 0 && (
-          <div id="model-review-items" ref={reviewContentRef} className="origin-top space-y-2 border-t border-white/[0.06] p-3 sm:p-4">
+        <div id="model-review-items" className="review-queue-content overflow-hidden border-t border-white/[0.06]" aria-hidden={!reviewExpanded} inert={reviewExpanded ? undefined : ''}>
+          {reviewQueue.length > 0 && <div className="space-y-2 p-3 sm:p-4">
             {reviewQueue.map((item) => (
-              <button key={item.incident_id} onClick={() => setSelectedIncident(item)} className="flex w-full items-center justify-between gap-4 rounded-xl border border-amber-400/15 bg-slate-950/35 p-3.5 text-left transition hover:border-amber-300/30 hover:bg-amber-400/[0.045] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300">
-                <span className="min-w-0 text-xs text-slate-200">{item.title}<span className="mt-1 block text-[11px] text-slate-400">{item.description}</span></span>
-                <span className="shrink-0 font-mono text-[11px] text-amber-200">{item.flow_count || 1} flows</span>
+              <button key={item.incident_id} onClick={() => setSelectedIncident(item)} className="flex w-full items-center justify-between gap-4 rounded-2xl border border-white/[0.07] bg-white/[0.025] p-3.5 text-left text-sm transition hover:border-amber-300/30 hover:bg-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-300">
+                <span className="min-w-0 text-slate-200">{item.title}<span className="mt-1 block text-sm text-slate-400">{item.description}</span></span>
+                <span className="shrink-0 font-mono text-sm text-amber-200">{item.flow_count || 1} flows</span>
               </button>
             ))}
-          </div>
-        )}
-        {reviewExpanded && reviewQueue.length === 0 && <div id="model-review-items" ref={reviewContentRef} className="border-t border-white/[0.06] px-4 py-3 text-xs text-slate-400">No unknown candidates need review.</div>}
+          </div>}
+          {reviewQueue.length === 0 && <div className="px-4 py-3 text-sm text-slate-400">No unknown candidates need review.</div>}
+        </div>
       </section>
 
-      <div className="grid grid-cols-1 gap-5 lg:h-[calc(100vh-250px)] lg:min-h-[36rem] lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-5 lg:h-[calc(100vh-290px)] lg:min-h-[36rem] lg:grid-cols-3">
       {/* Incidents List (Left col) */}
       <Card className="incident-entrance min-h-[28rem] overflow-hidden p-4 sm:p-5 lg:col-span-1 lg:flex lg:flex-col">
         <div className="mb-4 flex items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-slate-100">Correlated incidents</h3>
-          <span className="rounded-full border border-white/[0.08] bg-white/[0.035] px-2.5 py-1 text-[14px] text-slate-300">{incidents.length} active</span>
+          <h3 className="text-base font-medium text-slate-100">Correlated incidents</h3>
+          <span className="rounded-full border border-white/[0.08] bg-white/[0.035] px-3 py-1 text-sm text-slate-300">{incidents.length} Active</span>
         </div>
 
         <div className="space-y-2 overflow-y-auto pr-1 lg:min-h-0 lg:flex-1">
@@ -295,20 +319,20 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
                 }`}
               >
                 <span aria-hidden="true" className={`absolute inset-y-0 left-0 w-[3px] ${tone === 'critical' ? 'bg-rose-400' : tone === 'high' ? 'bg-orange-400' : tone === 'medium' ? 'bg-amber-300' : tone === 'low' ? 'bg-blue-300' : tone === 'normal' ? 'bg-emerald-300' : tone === 'novel' ? 'bg-purple-300' : 'bg-slate-500'}`} />
-                <div className="flex items-start justify-between gap-3">
-                  <Badge tone={tone} className="shrink-0 px-2 py-1 text-[13px]">{inc.severity}</Badge>
-                  <span className="flex shrink-0 items-center gap-2"><span className="text-[13px] text-slate-400">Risk</span><RiskTicks value={inc.overall_risk_score} suffix="" /></span>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <Badge tone={tone} className="shrink-0 px-2.5 py-1 text-sm">{inc.severity}</Badge>
+                  <span className="flex min-w-0 shrink-0 items-center gap-2"><span className="text-sm text-slate-400">Risk</span><RiskTicks value={inc.overall_risk_score} suffix="" /></span>
                 </div>
 
-                <p className="mt-3 line-clamp-1 text-xs font-semibold text-slate-100">{inc.title}</p>
+                <p className="mt-3 line-clamp-1 text-sm font-medium text-slate-100">{inc.title}</p>
                 <div className="mt-2 flex flex-wrap items-center gap-2">
-                  <Badge tone={statusTone(inc.status)} className="px-2 py-0.5 text-[13px] font-normal">{inc.status}</Badge>
+                  <Badge tone={statusTone(inc.status)} className="px-2.5 py-1 text-sm font-normal">{inc.status}</Badge>
                 </div>
                 {isRuleCorrelated && <div className="mt-2 flex flex-wrap gap-1.5">
                   {isDemo && <Badge tone="medium" className="px-2 py-0.5 text-[11px]">DEMO</Badge>}
-                  <span className="rounded-full border border-blue-300/20 bg-blue-300/[0.06] px-2 py-0.5 text-[13px] font-medium text-blue-200">Rule correlated</span>
+                  <span className="rounded-full border border-blue-300/20 bg-blue-300/[0.06] px-2.5 py-1 text-sm font-medium text-blue-200">Rule correlated</span>
                 </div>}
-                <p className="mt-2 text-[13px] text-slate-300">{inc.flow_count || 1} flows</p>
+                <p className="mt-2 text-sm text-slate-300">{inc.flow_count || 1} flows</p>
                 <div className="flex items-center justify-between text-[11px] text-slate-400 mt-2">
                   <span className="max-w-[48%] truncate font-mono">{inc.user_id || 'host_sys'}</span>
                   <span className="max-w-[48%] truncate font-mono">{inc.device_id || 'unknown_host'}</span>
@@ -330,11 +354,11 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
                   <span className="font-mono text-[13px] font-medium text-blue-200">
                     INCIDENT #{(selectedIncident.incident_id || '').slice(-8).toUpperCase() || '—'}
                   </span>
-                  <button type="button" aria-label="Copy incident ID" title="Copy incident ID" onClick={() => navigator.clipboard?.writeText(selectedIncident.incident_id).catch((error) => console.warn('Unable to copy incident ID:', error))} className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-white/[0.08] bg-white/[0.025] text-slate-400 transition hover:bg-white/[0.07] hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400">
+                  <button type="button" aria-label="Copy incident ID" title="Copy incident ID" onClick={async () => { try { if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(selectedIncident.incident_id); } catch (error) { console.warn('Unable to copy incident ID:', error); } }} className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-white/[0.1] bg-white/[0.035] text-slate-400 transition hover:bg-white/[0.07] hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400">
                     <Copy aria-hidden="true" className="h-3.5 w-3.5" />
                   </button>
                 </div>
-                <h2 className="mt-1 font-[family-name:var(--soc-font-display)] text-xl font-semibold text-slate-50">
+                <h2 className="mt-1 font-[family-name:var(--soc-font-display)] text-2xl font-medium text-slate-50">
                   {selectedIncident.title}
                 </h2>
                 <p className="mt-1 text-xs leading-relaxed text-slate-400">{selectedIncident.description}</p>
@@ -345,7 +369,7 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
                   value={selectedIncident.status}
                   onChange={(e) => handleStatusChange(selectedIncident.incident_id, e.target.value)}
                   aria-label="Incident status"
-                  className="rounded-xl border border-white/[0.1] bg-slate-950/55 px-3 py-2.5 text-[11px] font-semibold text-slate-100 shadow-inner focus:outline-none focus:ring-2 focus:ring-blue-400/35"
+                  className="rounded-full border border-white/[0.1] bg-white/[0.035] px-4 py-2.5 text-sm font-medium text-slate-100 shadow-inner focus:outline-none focus:ring-2 focus:ring-blue-400/35"
                 >
                   {selectedIncident.status === 'open' && <option value="open">Status: open</option>}
                   <option value="OPEN">Status: OPEN</option>
@@ -359,7 +383,7 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
                 {onSelectIncidentForAssistant && (
                   <button
                     onClick={() => onSelectIncidentForAssistant(selectedIncident.incident_id)}
-                    className="inline-flex items-center gap-2 rounded-xl border border-blue-300/20 bg-gradient-to-r from-blue-600 to-violet-600 px-3.5 py-2.5 text-xs font-semibold text-white shadow-[0_8px_24px_rgba(56,110,255,.22)] transition hover:brightness-110 active:scale-[.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
+                    className="inline-flex items-center gap-2 rounded-full border border-blue-300/20 bg-gradient-to-r from-blue-600 to-violet-600 px-4 py-2.5 text-sm font-medium text-white shadow-[0_8px_24px_rgba(56,110,255,.22)] transition hover:brightness-110 active:scale-[.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300"
                   >
                     <Activity aria-hidden="true" className="h-3.5 w-3.5" />
                     Ask AI Assistant
@@ -389,25 +413,25 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
 
             {/* Target Entities Row */}
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              <div className="rounded-xl border border-white/[0.07] bg-slate-950/30 p-3.5">
+              <div className="rounded-2xl border border-white/[0.08] bg-gradient-to-b from-white/[0.04] to-white/[0.015] p-3.5">
                 <span className="text-[13px] font-normal text-slate-400">Compromised User</span>
                 <p className={`mt-1 font-mono text-xs font-semibold ${selectedIncident.user_id ? 'text-slate-100' : 'text-slate-500'}`}>{selectedIncident.user_id || 'N/A'}</p>
               </div>
-              <div className="rounded-xl border border-white/[0.07] bg-slate-950/30 p-3.5">
+              <div className="rounded-2xl border border-white/[0.08] bg-gradient-to-b from-white/[0.04] to-white/[0.015] p-3.5">
                 <span className="text-[13px] font-normal text-slate-400">Target Device</span>
                 <p className={`mt-1 font-mono text-xs font-semibold ${selectedIncident.device_id ? 'text-slate-100' : 'text-slate-500'}`}>{selectedIncident.device_id || 'N/A'}</p>
               </div>
-              <div className="rounded-xl border border-white/[0.07] bg-slate-950/30 p-3.5">
+              <div className="rounded-2xl border border-white/[0.08] bg-gradient-to-b from-white/[0.04] to-white/[0.015] p-3.5">
                 <span className="text-[13px] font-normal text-slate-400">Classification</span>
                 <p className={`mt-1 break-words font-mono text-xs font-semibold ${severityTone(selectedIncident.threat_classification) === 'novel' ? 'text-purple-200' : severityTone(selectedIncident.threat_classification) === 'normal' ? 'text-emerald-200' : 'text-slate-100'}`}>{selectedIncident.threat_classification}</p>
               </div>
-              <div className="rounded-xl border border-white/[0.07] bg-slate-950/30 p-3.5">
+              <div className="rounded-2xl border border-white/[0.08] bg-gradient-to-b from-white/[0.04] to-white/[0.015] p-3.5">
                 <span className="text-[13px] font-normal text-slate-400">First Detected</span>
-                <p className="mt-1 font-mono text-xs text-slate-200" title={new Date(selectedIncident.first_detected_at).toLocaleString()}>
-                  {new Date(selectedIncident.first_detected_at).toLocaleTimeString()}
+                <p className="mt-1 font-mono text-sm text-slate-200" title={formatIncidentDate(selectedIncident.first_detected_at, 'datetime')}>
+                  {formatIncidentDate(selectedIncident.first_detected_at, 'time')}
                 </p>
               </div>
-              <div className="rounded-xl border border-white/[0.07] bg-slate-950/30 p-3.5">
+              <div className="rounded-2xl border border-white/[0.08] bg-gradient-to-b from-white/[0.04] to-white/[0.015] p-3.5">
                 <span className="text-[13px] font-normal text-slate-400">Flow Count</span>
                 <p className="mt-1 font-mono text-xs font-semibold tabular-nums text-slate-100">{selectedIncident.flow_count || 1}</p>
               </div>
@@ -454,7 +478,7 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
               {(selectedIncident.mitre_mappings || []).length > 0 ? <div className="flex flex-wrap gap-2">
                 {(selectedIncident.mitre_mappings || []).map((m, idx) => (
                   <div
-                    key={idx}
+                    key={m.technique_id || `${m.technique_name || 'technique'}-${m.tactic || idx}`}
                     className="flex items-center gap-2 rounded-xl border border-blue-300/15 bg-blue-300/[0.045] px-3 py-2 text-xs"
                   >
                     <span className="font-mono font-bold text-blue-200">{m.technique_id}</span>
@@ -491,11 +515,11 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
               {/* Notes List */}
               {(selectedIncident.notes || []).length > 0 ? <ol className="space-y-3 border-l border-blue-300/20 pl-4">
                 {(selectedIncident.notes || []).map((note, idx) => (
-                  <li key={idx} className="relative rounded-xl border border-white/[0.07] bg-slate-950/30 p-3.5 text-xs">
+                  <li key={note.created_at || `${note.author || 'note'}-${idx}`} className="relative rounded-2xl border border-white/[0.07] bg-white/[0.025] p-3.5 text-sm">
                     <span aria-hidden="true" className="absolute -left-[21px] top-4 h-2.5 w-2.5 rounded-full border-2 border-[var(--soc-panel)] bg-blue-300 shadow-[0_0_10px_rgba(96,165,250,.25)]" />
                     <div className="mb-1.5 flex flex-wrap items-center justify-between gap-2 text-slate-400">
                       <span className="font-semibold text-slate-200">{note.author}</span>
-                      <time className="font-mono text-[11px] tabular-nums" title={new Date(note.created_at).toLocaleString()}>{new Date(note.created_at).toLocaleTimeString()}</time>
+                      <time className="font-mono text-[13px] tabular-nums" title={formatIncidentDate(note.created_at, 'datetime')}>{formatIncidentDate(note.created_at, 'time')}</time>
                     </div>
                     <p className="leading-relaxed text-slate-200">{note.content}</p>
                   </li>

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, CornerDownLeft, Search } from 'lucide-react';
+import { ArrowDown, ArrowUp, CornerDownLeft, Search } from '../lib/icons';
 import { api } from '../services/api';
 import Modal from './ui/Modal';
 

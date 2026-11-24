@@ -7,6 +7,19 @@ export default {
   theme: {
     extend: {
       colors: {
+        slate: {
+          50: "#f8f8f8",
+          100: "#f4f4f4",
+          200: "#e5e5e5",
+          300: "#d4d4d4",
+          400: "#a3a3a3",
+          500: "#737373",
+          600: "#525252",
+          700: "#404040",
+          800: "#272727",
+          900: "#181818",
+          950: "#131209",
+        },
         soc: {
           bg: "var(--soc-bg)",
           raised: "var(--soc-raised)",
@@ -23,12 +36,31 @@ export default {
           low: "var(--soc-low)",
           normal: "var(--soc-normal)",
           novel: "var(--soc-novel)",
+          accent: "var(--soc-accent)",
         }
       },
       fontFamily: {
-        sans: ["Urbanist Variable", "sans-serif"],
-        display: ["Urbanist Variable", "sans-serif"],
+        sans: ["Manrope Variable", "sans-serif"],
+        display: ["Manrope Variable", "sans-serif"],
         mono: ["JetBrains Mono", "monospace"],
+      },
+      spacing: {
+        "1.5": "0.5rem",
+        "2.5": "0.75rem",
+        "3.5": "1rem",
+        "5": "1rem",
+        "7": "1.5rem",
+        "9": "2rem",
+        "11": "2.5rem",
+        "14": "3rem",
+        "18": "4rem",
+        "22": "5rem",
+        "28": "6rem",
+      },
+      zIndex: {
+        60: "60",
+        80: "80",
+        100: "100",
       },
       borderRadius: {
         soc: "var(--soc-radius-md)",

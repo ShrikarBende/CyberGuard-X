@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import {
   Upload, Database, CheckCircle2, Activity,
   AlertCircle, Loader2, FlaskConical, BarChart2, ChevronDown, ChevronUp, Play
-} from 'lucide-react';
+} from '../lib/icons';
 import { api } from '../services/api';
 import { gsap } from 'gsap';
 import { useGSAP } from '@gsap/react';
@@ -17,7 +17,7 @@ function Collapsible({ title, badge, children, defaultOpen = false }) {
   const [open, setOpen] = useState(defaultOpen);
   const panelId = `panel-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
   return (
-    <div className="overflow-hidden rounded-xl border border-white/[0.08] bg-[#0D1527]/70 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
+    <div className="overflow-hidden rounded-xl border border-white/[0.08] bg-[#181818]/70 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
       <button
         type="button"
         aria-expanded={open}
@@ -80,7 +80,7 @@ function KnownClassifierPanel({ data }) {
       </div>
       <div className="max-h-[28rem] overflow-auto rounded-lg">
         <table className="w-full text-[11px] text-slate-300">
-          <thead className="sticky top-0 z-[1] bg-[#0D1527]">
+          <thead className="sticky top-0 z-[1] bg-[#181818]">
             <tr className="border-b border-white/[0.08] text-slate-400">
               <th className="text-left pb-1 pr-4">Class</th>
               <th className="text-right pb-1 pr-4">Precision</th>
@@ -147,7 +147,7 @@ function OpenSetPanel({ data }) {
         <p className="text-xs font-bold text-slate-300 mb-2">Macro-Average Across All Families</p>
         <div className="max-h-[28rem] overflow-auto rounded-lg">
           <table className="w-full text-[11px] text-slate-300">
-            <thead className="sticky top-0 z-[1] bg-[#0D1527]">
+            <thead className="sticky top-0 z-[1] bg-[#181818]">
               <tr className="border-b border-white/[0.08] text-slate-400">
                 <th className="text-left pb-1 pr-4">Detector</th>
                 <th className="text-right pb-1 pr-4">AUROC ↑</th>
@@ -186,7 +186,7 @@ function OpenSetPanel({ data }) {
           ) : (
             <div className="max-h-[28rem] overflow-auto rounded-lg">
               <table className="w-full text-[11px] text-slate-300">
-                <thead className="sticky top-0 z-[1] bg-[#0D1527]">
+                <thead className="sticky top-0 z-[1] bg-[#181818]">
                   <tr className="border-b border-white/[0.08] text-slate-400">
                     <th className="text-left pb-1 pr-4">Detector</th>
                     <th className="text-right pb-1 pr-4">AUROC ↑</th>
@@ -353,7 +353,7 @@ export default function DataManagement({ role = 'viewer' }) {
   return (
     <div ref={pageRef} className="mx-auto max-w-[1600px] space-y-6">
       {/* Header */}
-      <div data-page-card className="rounded-2xl border border-white/[0.08] bg-gradient-to-br from-[#111b33] via-[#10182E] to-[#0d1527] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] flex flex-wrap items-center justify-between gap-4">
+      <div data-page-card className="rounded-2xl border border-white/[0.08] bg-gradient-to-br from-[#1F1F1F] via-[#1F1F1F] to-[#0d1527] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] flex flex-wrap items-center justify-between gap-4">
         <div>
           <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-blue-200/80">Platform · Data &amp; models</p>
           <h3 className="flex items-center gap-2 font-display text-xl font-semibold tracking-tight text-slate-100">
@@ -370,7 +370,7 @@ export default function DataManagement({ role = 'viewer' }) {
       </div>
 
       {/* CICIDS2017 Evaluation Runner */}
-      <div data-page-card className="rounded-2xl border border-blue-300/15 bg-[#10182E] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
+      <div data-page-card className="rounded-2xl border border-blue-300/15 bg-[#1F1F1F] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
         <div className="flex flex-wrap items-center justify-between gap-4 mb-5">
           <div className="flex items-center gap-3">
             <div className="p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-400">
@@ -422,7 +422,7 @@ export default function DataManagement({ role = 'viewer' }) {
         </div>}
 
         {!evalResults?.available ? (
-          <div className="p-6 rounded-xl bg-[#0D1527] border border-dashed border-[#1E293B] text-center">
+          <div className="p-6 rounded-xl bg-[#181818] border border-dashed border-[#313131] text-center">
             <BarChart2 className="w-8 h-8 text-slate-600 mx-auto mb-2" />
             <p className="text-xs text-slate-400">No evaluation results yet.</p>
               <p className="text-[11px] text-slate-500 mt-1">
@@ -436,7 +436,7 @@ export default function DataManagement({ role = 'viewer' }) {
             {/* Files */}
             <div className="flex flex-wrap gap-2">
               {evalResults.files?.map(f => (
-                <span key={f} className="font-mono text-[10px] px-2 py-1 rounded bg-[#0D1527] border border-[#1E293B] text-slate-400">
+                <span key={f} className="font-mono text-[10px] px-2 py-1 rounded bg-[#181818] border border-[#313131] text-slate-400">
                   {f}
                 </span>
               ))}
@@ -457,7 +457,7 @@ export default function DataManagement({ role = 'viewer' }) {
 
       {/* File Upload */}
       <div className="grid grid-cols-1 gap-6">
-        <div data-page-card className="rounded-2xl border border-white/[0.08] bg-[#10182E] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+        <div data-page-card className="rounded-2xl border border-white/[0.08] bg-[#1F1F1F] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
               <h4 className="text-sm font-bold text-slate-200">Held-out CICIDS replay</h4>
@@ -470,14 +470,14 @@ export default function DataManagement({ role = 'viewer' }) {
               {replayStatus?.error && <p className="text-xs text-rose-300 mt-2">{replayStatus.error}</p>}
             </div>
             {isAdmin && <div className="flex flex-wrap items-end gap-2 rounded-xl border border-white/[0.06] bg-black/15 p-3">
-              <label className="text-[11px] text-slate-300">Rows<input type="number" min="1" value={replayN} onChange={(e) => setReplayN(e.target.value)} className="mt-1 block w-24 rounded-lg border border-white/10 bg-[#0D1527] px-2 py-2 font-mono text-xs tabular-nums text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400" /></label>
-              <label className="text-[11px] text-slate-300">Rows / sec<input type="number" min="0" value={replaySpeed} onChange={(e) => setReplaySpeed(e.target.value)} className="mt-1 block w-24 rounded-lg border border-white/10 bg-[#0D1527] px-2 py-2 font-mono text-xs tabular-nums text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400" /></label>
+              <label className="text-[11px] text-slate-300">Rows<input type="number" min="1" value={replayN} onChange={(e) => setReplayN(e.target.value)} className="mt-1 block w-24 rounded-lg border border-white/10 bg-[#181818] px-2 py-2 font-mono text-xs tabular-nums text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400" /></label>
+              <label className="text-[11px] text-slate-300">Rows / sec<input type="number" min="0" value={replaySpeed} onChange={(e) => setReplaySpeed(e.target.value)} className="mt-1 block w-24 rounded-lg border border-white/10 bg-[#181818] px-2 py-2 font-mono text-xs tabular-nums text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400" /></label>
               <button type="button" onClick={startReplay} disabled={['queued', 'running', 'stopping'].includes(replayStatus?.status)} className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 disabled:opacity-40">Start replay</button>
               <button type="button" onClick={stopReplay} disabled={!['queued', 'running'].includes(replayStatus?.status)} className="rounded-xl border border-rose-300/20 bg-rose-500/10 px-4 py-2 text-xs font-semibold text-rose-200 transition hover:bg-rose-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300 disabled:opacity-40">Stop replay</button>
             </div>}
           </div>
         </div>
-        <div data-page-card className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-amber-300/15 bg-[#10182E] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
+        <div data-page-card className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-amber-300/15 bg-[#1F1F1F] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
           <div>
             <div className="flex items-center gap-2">
               <h4 className="text-sm font-bold text-slate-200">Synthetic correlation scenarios</h4>
@@ -486,7 +486,7 @@ export default function DataManagement({ role = 'viewer' }) {
             <p className="text-xs text-slate-500 mt-1">Loads labelled events only. Run correlation separately from Incident Management.</p>
             <div className="mt-2 flex flex-wrap gap-1.5" aria-label="Four built-in demo scenarios">
               {['multi_stage_takeover', 'brute_force_only', 'benign_admin', 'normal_employee_day'].map((scenario) => (
-                <span key={scenario} className="rounded-full border border-amber-500/20 bg-[#0D1527] px-2 py-1 text-[9px] text-amber-100">{scenario.replaceAll('_', ' ')}</span>
+                <span key={scenario} className="rounded-full border border-amber-500/20 bg-[#181818] px-2 py-1 text-[9px] text-amber-100">{scenario.replaceAll('_', ' ')}</span>
               ))}
             </div>
             {demoMessage && <p className="text-xs text-amber-200 mt-2">{demoMessage}</p>}
@@ -501,7 +501,7 @@ export default function DataManagement({ role = 'viewer' }) {
           </button>}
         </div>
         {/* Upload */}
-        <div data-page-card className="rounded-2xl border border-white/[0.08] bg-[#10182E] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+        <div data-page-card className="rounded-2xl border border-white/[0.08] bg-[#1F1F1F] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
           <div className="flex items-center gap-3 mb-4">
             <div className="p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400">
               <Upload className="w-5 h-5" />
@@ -544,11 +544,11 @@ export default function DataManagement({ role = 'viewer' }) {
       </div>
 
       {/* Model Weights Grid */}
-        <div data-page-card className="rounded-2xl border border-white/[0.08] bg-[#10182E] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+        <div data-page-card className="rounded-2xl border border-white/[0.08] bg-[#1F1F1F] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
         <h4 className="text-sm font-bold text-slate-200 mb-4">ML Model Weights &amp; Governance</h4>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {Object.entries(modelStatus?.models || {}).map(([key, m]) => (
-            <div key={key} className="p-4 rounded-xl bg-[#0D1527] border border-[#1E293B]">
+            <div key={key} className="p-4 rounded-xl bg-[#181818] border border-[#313131]">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-bold text-slate-300">{m.name}</span>
                 <span className={`w-2.5 h-2.5 rounded-full ${m.is_trained ? 'bg-emerald-400' : 'bg-rose-400'}`} />

@@ -26,12 +26,14 @@ export default function RiskFusion({ explanation }) {
   const tier = String(explanation?.severity || 'LOW').toUpperCase();
   const score = Number(explanation?.calibrated_risk_score);
   const hasCalibratedScore = Number.isFinite(score);
+  const rawOverallScore = Number(explanation?.overall_risk_score || 0);
+  const overallScore = Number.isFinite(rawOverallScore) ? rawOverallScore : 0;
   const scoreText = hasCalibratedScore
     ? `${(score * 100).toFixed(1)}%`
-    : `${Number(explanation?.overall_risk_score || 0).toFixed(1)}`;
+    : `${overallScore.toFixed(1)}`;
   const numericScore = hasCalibratedScore
     ? score * 100
-    : Number(explanation?.overall_risk_score || 0);
+    : overallScore;
   const gaugePercent = Math.max(0, Math.min(100, Number.isFinite(numericScore) ? numericScore : 0));
   const tierTone = tier === 'UNKNOWN_NOVEL' || tier.includes('NOVEL')
     ? 'novel'
@@ -47,10 +49,13 @@ export default function RiskFusion({ explanation }) {
   const riskStyle = severityStyle[tier] || severityStyle.LOW;
 
   useGSAP(() => createMotionScope(root.current, (reduced) => {
-    if (!explanation || !root.current) return;
+    const scope = root.current;
+    if (!explanation || !scope) return;
+    const bars = gsap.utils.toArray('.risk-contribution-fill', scope);
+    if (!bars.length) return;
     if (reduced) {
       if (scoreRef.current) scoreRef.current.textContent = scoreText;
-      gsap.set('.risk-contribution-fill', {
+      gsap.set(bars, {
         scaleX: (_index, target) => Number(target.dataset.percent) / 100,
         transformOrigin: 'left center',
       });
@@ -58,7 +63,7 @@ export default function RiskFusion({ explanation }) {
     }
 
     const counter = { value: 0 };
-    gsap.to(counter, {
+    gsap.fromTo(counter, { value: 0 }, {
       value: numericScore,
       duration: motion.duration.entrance,
       ease: motion.easeSoft,
@@ -71,7 +76,7 @@ export default function RiskFusion({ explanation }) {
       },
       onComplete: () => { if (scoreRef.current) scoreRef.current.textContent = scoreText; },
     });
-    gsap.fromTo('.risk-contribution-fill',
+    gsap.fromTo(bars,
       { scaleX: 0 },
       {
         scaleX: (_index, target) => Number(target.dataset.percent) / 100,
@@ -79,6 +84,7 @@ export default function RiskFusion({ explanation }) {
         stagger: 0.08,
         ease: motion.ease,
         transformOrigin: 'left center',
+        clearProps: 'opacity,visibility',
       },
     );
   }), {
@@ -93,14 +99,14 @@ export default function RiskFusion({ explanation }) {
     <section ref={root} className="soc-card rounded-2xl p-5 sm:p-6" aria-label="Unified calibrated risk">
       <div className="flex flex-wrap items-center justify-between gap-5">
         <div>
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Unified calibrated risk</p>
-          <p ref={scoreRef} className="mt-1 font-[family-name:var(--soc-font-display)] text-3xl font-semibold tracking-tight text-slate-50 tabular-nums">{scoreText}</p>
+          <p className="text-[13px] font-normal text-slate-400">Unified calibrated risk</p>
+          <p ref={scoreRef} className="mt-1 font-[family-name:var(--soc-font-display)] text-4xl font-light tracking-tight text-slate-50 tabular-nums">{scoreText}</p>
         </div>
         <div className="flex items-center gap-4">
           <div
             role="img"
             aria-label={`${tier} risk gauge at ${scoreText}`}
-            className="grid h-20 w-20 place-items-center rounded-full p-[5px]"
+            className="grid h-24 w-24 place-items-center rounded-full p-[5px]"
             style={{ background: `conic-gradient(${riskStyle.color} ${gaugePercent}%, rgba(255,255,255,.075) ${gaugePercent}% 100%)`, boxShadow: `0 0 26px ${riskStyle.shadow}` }}
           >
             <div className="grid h-full w-full place-items-center rounded-full border border-white/[0.08] bg-[var(--soc-panel)]">
