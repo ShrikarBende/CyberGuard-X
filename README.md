@@ -30,7 +30,7 @@ Events outside known-class confidence or centroid boundaries, with centroid dist
 
 ![Threat Intelligence page showing the Unknown / Novel Threat view](Screenshots/04-threats-open-set.png)
 
-### Grounded AI assistant
+### RAG AI assistant
 
 Read-only assistant with FAISS retrieval and cited evidence. It recommends steps for human approval and cannot execute actions.
 
