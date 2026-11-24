@@ -17,8 +17,20 @@ import { createMotionScope, motion } from './lib/motion';
 import Modal from './components/ui/Modal';
 import ErrorBoundary from './components/ErrorBoundary';
 
+const VALID_PAGES = ['overview', 'live', 'incidents', 'threats', 'explain', 'assistant', 'data', 'evaluation'];
+
+function getInitialPage() {
+  try {
+    const hash = window.location.hash.replace(/^#\/?/, '').toLowerCase();
+    if (VALID_PAGES.includes(hash)) return hash;
+    const saved = window.sessionStorage.getItem('cyberguardx_active_page');
+    if (VALID_PAGES.includes(saved)) return saved;
+  } catch {}
+  return 'overview';
+}
+
 export default function App() {
-  const [activePage, setActivePage] = useState('overview');
+  const [activePage, setActivePage] = useState(getInitialPage);
   const [selectedIncidentIdForAssistant, setSelectedIncidentIdForAssistant] = useState(null);
   const [assistantInitialPrompt, setAssistantInitialPrompt] = useState("");
   const [liveEvents, setLiveEvents] = useState([]);
@@ -40,9 +52,39 @@ export default function App() {
   const wsRef = useRef(null);
   const shellRef = useRef(null);
   const pageRef = useRef(null);
+  const mainScrollRef = useRef(null);
   const lastSeenLiveEventId = useRef(null);
   const gPrefixActive = useRef(false);
   const gPrefixTimeout = useRef(null);
+
+  // Sync activePage to URL hash & sessionStorage so refresh keeps the user on the same page
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem('cyberguardx_active_page', activePage);
+      if (window.location.hash !== `#${activePage}`) {
+        window.history.replaceState(null, '', `#${activePage}`);
+      }
+    } catch {}
+  }, [activePage]);
+
+  // Support browser back / forward navigation via hash
+  useEffect(() => {
+    const onHashChange = () => {
+      const hash = window.location.hash.replace(/^#\/?/, '').toLowerCase();
+      if (VALID_PAGES.includes(hash)) {
+        setActivePage(hash);
+      }
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+
+  // Reset scroll to top on page navigation
+  useEffect(() => {
+    if (mainScrollRef.current) {
+      mainScrollRef.current.scrollTop = 0;
+    }
+  }, [activePage]);
 
   useEffect(() => {
     if (!authToken) return undefined;
@@ -312,8 +354,8 @@ export default function App() {
           </div>
         )}
 
-        <main id="main-content" className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 lg:p-5">
-          <div className="soc-workspace min-h-full overflow-hidden p-4 sm:p-6 lg:p-8">
+        <main ref={mainScrollRef} id="main-content" className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 lg:p-5">
+          <div className="soc-workspace min-h-full p-4 sm:p-6 lg:p-8">
           <ErrorBoundary resetKey={activePage}>
           <Suspense fallback={<div className="p-8 text-center text-slate-400">Loading page…</div>}>
           <div ref={pageRef} key={activePage}>
@@ -327,7 +369,7 @@ export default function App() {
           )}
           {activePage === 'explain' && <Explainability />}
           {activePage === 'assistant' && (
-            <AIAssistant initialIncidentId={selectedIncidentIdForAssistant} />
+            <AIAssistant initialIncidentId={selectedIncidentIdForAssistant} initialPrompt={assistantInitialPrompt} />
           )}
           {activePage === 'data' && <DataManagement role={analyst?.role} />}
           {activePage === 'evaluation' && <Evaluation />}

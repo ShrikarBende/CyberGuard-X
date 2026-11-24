@@ -274,7 +274,7 @@ export default function LiveMonitoring({ liveEvents, onInvestigateEvent }) {
           </span>
         </div>
 
-        <div className="max-h-[min(70vh,52rem)] overflow-auto">
+        <div className="max-h-[min(70vh,52rem)] overflow-auto overscroll-contain">
           {loadError && allEvents.length > 0 && <p role="status" className="border-b border-amber-400/15 bg-amber-400/[0.045] px-5 py-2.5 text-xs text-amber-100 sm:px-6">Historical events could not be loaded. Live events will continue to appear here.</p>}
           <table className="w-full min-w-[1180px] border-separate border-spacing-y-1.5 text-left text-[14px]">
             <thead className="sticky top-0 z-20 bg-[var(--soc-panel)] text-[13px] font-normal text-slate-300 shadow-[0_1px_0_rgba(255,255,255,.06)]">

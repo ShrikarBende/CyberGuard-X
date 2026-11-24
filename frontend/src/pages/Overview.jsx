@@ -403,7 +403,7 @@ export default function Overview({ onSelectIncident }) {
           </div>
           <span className="flex items-center gap-1.5 text-[11px] text-slate-400"><Clock3 aria-hidden="true" className="h-3.5 w-3.5" /> Latest detection results</span>
         </div>
-        <div className="max-h-[32rem] overflow-auto">
+        <div className="max-h-[32rem] overflow-auto overscroll-contain">
           <table className="w-full min-w-[980px] border-separate border-spacing-y-1.5 text-left text-[14px]">
             <thead className="sticky top-0 z-10 bg-[var(--soc-panel)] text-[13px] font-normal text-slate-300 shadow-[0_1px_0_rgba(255,255,255,.06)]">
               <tr>

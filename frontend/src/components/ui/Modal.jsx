@@ -24,7 +24,7 @@ export default function Modal({ open, onClose, title, children, side = false, cl
 
   if (!open) return null;
   return <div className={`fixed inset-0 z-50 flex ${side ? 'justify-end' : 'items-center justify-center'} bg-black/65 p-3 backdrop-blur-sm`} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose?.(); }}>
-    <section ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={title} className={`glass-panel max-h-full w-full overflow-y-auto rounded-2xl ${side ? 'max-w-2xl rounded-r-none' : 'max-w-2xl'} ${className}`}>
+    <section ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={title} className={`glass-panel max-h-full w-full ${side ? 'overflow-hidden flex flex-col' : 'overflow-y-auto'} overscroll-contain rounded-2xl ${side ? 'max-w-2xl rounded-r-none' : 'max-w-2xl'} ${className}`}>
       {title && <h2 className="sr-only">{title}</h2>}{children}
     </section>
   </div>;

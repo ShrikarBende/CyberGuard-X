@@ -299,7 +299,7 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
           <span className="rounded-full border border-white/[0.08] bg-white/[0.035] px-3 py-1 text-sm text-slate-300">{incidents.length} Active</span>
         </div>
 
-        <div className="space-y-2 overflow-y-auto pr-1 lg:min-h-0 lg:flex-1">
+        <div className="space-y-2 overflow-y-auto overscroll-contain pr-1 lg:min-h-0 lg:flex-1">
           {incidents.length === 0 && <EmptyState icon={ShieldAlert} title={loadError ? 'Incident list unavailable' : 'No correlated incidents yet.'} description={loadError ? 'Incident records could not be loaded.' : 'Matching rule indicators will appear here when incidents are created.'} className="min-h-48 border-0 bg-transparent" />}
           {incidents.map((inc) => {
             const isSelected = selectedIncident?.incident_id === inc.incident_id;
@@ -344,7 +344,7 @@ export default function IncidentManagement({ onSelectIncidentForAssistant, role 
       </Card>
 
       {/* Incident Detail (Right 2 cols) */}
-      <Card className="incident-entrance min-h-[28rem] overflow-y-auto p-5 sm:p-6 lg:col-span-2">
+      <Card className="incident-entrance min-h-[28rem] overflow-y-auto overscroll-contain p-5 sm:p-6 lg:col-span-2">
         {selectedIncident ? (
           <div className="space-y-6">
             {/* Header with Title & Status Dropdown */}

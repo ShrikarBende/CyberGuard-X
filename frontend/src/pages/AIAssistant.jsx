@@ -5,17 +5,26 @@ import { gsap } from 'gsap';
 import { useGSAP } from '@gsap/react';
 import { createMotionScope, motion } from '../lib/motion';
 
-export default function AIAssistant({ initialIncidentId }) {
+export default function AIAssistant({ initialIncidentId, initialPrompt = '' }) {
   const [incidents, setIncidents] = useState([]);
   const [selectedIncidentId, setSelectedIncidentId] = useState(initialIncidentId || '');
   const [messages, setMessages] = useState([]);
-  const [inputQuery, setInputQuery] = useState('');
+  const [inputQuery, setInputQuery] = useState(initialPrompt || '');
   const [loading, setLoading] = useState(false);
   const [retrievalError, setRetrievalError] = useState('');
   const [incidentLoadError, setIncidentLoadError] = useState('');
   const messagesEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
   const chatRef = useRef(null);
   const animatedMessageCount = useRef(0);
+
+  useEffect(() => {
+    if (initialPrompt) setInputQuery(initialPrompt);
+  }, [initialPrompt]);
+
+  useEffect(() => {
+    if (initialIncidentId) setSelectedIncidentId(initialIncidentId);
+  }, [initialIncidentId]);
 
   useGSAP(() => createMotionScope(chatRef.current, (reduced) => {
     if (messages.length <= animatedMessageCount.current) return;
@@ -41,7 +50,12 @@ export default function AIAssistant({ initialIncidentId }) {
   }, []);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTo({
+        top: messagesContainerRef.current.scrollHeight,
+        behavior: 'smooth',
+      });
+    }
   }, [messages]);
 
   const handleSend = async (queryToSend = null) => {
@@ -79,7 +93,7 @@ export default function AIAssistant({ initialIncidentId }) {
   ];
 
   return (
-    <div ref={chatRef} className="flex flex-col h-[calc(100vh-140px)] bg-[#1F1F1F] border border-[#313131] rounded-2xl overflow-hidden">
+    <div ref={chatRef} className="flex flex-col h-[calc(100vh-190px)] min-h-[520px] bg-[#1F1F1F] border border-[#313131] rounded-2xl overflow-hidden">
       {/* Top Incident Context Bar */}
       <div className="p-4 border-b border-[#313131] bg-[#181818] flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -120,7 +134,7 @@ export default function AIAssistant({ initialIncidentId }) {
       ) : !selectedIncidentId ? (
         <div className="flex-1 flex items-center justify-center text-slate-400 text-xs">Select an incident to begin.</div>
       ) : (
-      <div className="flex-1 overflow-y-auto p-6 space-y-4">
+      <div ref={messagesContainerRef} className="flex-1 overflow-y-auto overscroll-contain p-6 space-y-4">
         {retrievalError && (
           <div role="alert" className="p-3 rounded-xl border border-rose-500/30 bg-rose-500/10 text-xs text-rose-200 flex items-center gap-2">
             <AlertCircle className="w-4 h-4" /> Retrieval error: {retrievalError}
