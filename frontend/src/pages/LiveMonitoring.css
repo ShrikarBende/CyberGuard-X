@@ -1,0 +1,29 @@
+@keyframes live-row-arrival {
+  from { background-color: var(--live-row-highlight, rgba(79, 103, 255, .16)); }
+  to { background-color: rgba(255, 255, 255, .025); }
+}
+
+@keyframes live-indicator-pulse {
+  0%, 100% { opacity: .35; transform: scale(.72); }
+  50% { opacity: .9; transform: scale(1.45); }
+}
+
+.live-row-arrival > td {
+  animation: live-row-arrival 600ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.live-pulse {
+  animation: live-indicator-pulse 2.4s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+}
+
+.motion-reduced .live-row-arrival > td,
+.motion-reduced .live-pulse {
+  animation: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not(.motion-full) .live-row-arrival > td,
+  :root:not(.motion-full) .live-pulse {
+    animation: none !important;
+  }
+}

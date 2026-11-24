@@ -162,18 +162,116 @@ def _llm_answer(query: str, evidence_json: str, chunks: list[dict[str, Any]]) ->
     return answer.strip()
 
 
-def _extractive_answer(evidence_values: list[dict], chunks: list[dict[str, Any]], incident: Incident | None) -> str:
-    parts = []
+def _prompt_telemetry(query: str) -> dict[str, Any]:
+    """Read only the JSON payload in our telemetry delimiter, never execute its contents."""
+    match = re.search(r"<untrusted_telemetry>\s*(\{.*?\})\s*</untrusted_telemetry>", query, re.DOTALL)
+    if not match:
+        return {}
+    try:
+        value = json.loads(match.group(1))
+        return value if isinstance(value, dict) else {}
+    except (TypeError, json.JSONDecodeError):
+        return {}
+
+
+def _clean_playbook_text(value: str) -> str:
+    value = re.sub(r"Summarised by the developer;?\s*verify against attack\.mitre\.org before citing\.?", "", value, flags=re.IGNORECASE)
+    value = re.sub(r"\s+", " ", value).strip(" \t\n.;")
+    return value
+
+
+def _extractive_answer(evidence_values: list[dict], chunks: list[dict[str, Any]], incident: Incident | None,
+                       query: str = "") -> str:
+    """Produce a deterministic, evidence-gated Markdown investigation summary."""
+    telemetry = _prompt_telemetry(query)
+    stored = {row["field"]: row["value"] for row in evidence_values}
+    event_type = telemetry.get("event_type") or (stored.get("predicted_class") or [None])[0] or "Not provided"
+    event_category = telemetry.get("event_category") or telemetry.get("category") or "Not provided"
+    status = telemetry.get("status") or "Not provided"
+    user = telemetry.get("user_id") or "Not provided"
+    host = telemetry.get("device_id") or "Not provided"
+    src = telemetry.get("source_ip") or "Not provided"
+    dst = telemetry.get("destination_ip") or "Not provided"
+    dataset = telemetry.get("dataset") or "Not provided"
+    risk = stored.get("risk_score", getattr(incident, "overall_risk_score", None))
+    verdicts = stored.get("verdict", [])
+    indicators = stored.get("indicators", [])
+    event_text = " ".join(str(value) for value in (event_type, event_category, status, dataset, indicators)).lower()
+
+    facts = [
+        f"- **Event Type:** {event_type}", f"- **User:** `{user}`", f"- **Host:** `{host}`",
+        f"- **Source IP:** `{src}`", f"- **Destination IP:** `{dst}`", f"- **Verdict:** {status if status != 'Not provided' else (', '.join(map(str, verdicts)) or 'Not provided')}",
+        f"- **Risk Score:** {risk if risk is not None else 'Not provided'}", f"- **Dataset:** {dataset}",
+    ]
     if incident is not None:
-        parts.append("Stored incident evidence:\n" + "\n".join(
-            f"{row['field']}: {json.dumps(row['value'], ensure_ascii=False, default=str)}"
-            for row in evidence_values
-        ))
-        indicators = next((row["value"] for row in evidence_values if row["field"] == "indicators"), [])
-        if not indicators:
-            parts.append("Evidence is missing: this incident has no stored indicators.")
-    parts.extend(f"[{row['chunk_id']}] {row['text']}" for row in chunks)
-    return "\n\n".join(parts)
+        facts.insert(0, f"- **Incident:** {incident.title} (`{incident.incident_id}`; {incident.severity})")
+    if str(event_category).lower() == "auth":
+        facts.append("- **Layer Coverage:** `auth` is `NOT_COVERED` by the flow classifier; this view relies on rule-based correlation and analyst review.")
+    if indicators:
+        names = [str(item.get("name") or item.get("indicator") or item) if isinstance(item, dict) else str(item) for item in indicators]
+        facts.append(f"- **Stored Indicators:** {', '.join(names)}")
+    elif incident is not None:
+        facts.append("- **Evidence is missing:** this incident has no stored indicators.")
+
+    matching_chunks = []
+    for chunk in chunks:
+        text = _clean_playbook_text(str(chunk.get("text", "")))
+        title = _clean_playbook_text(str(chunk.get("title", "")))
+        supported_indicators = chunk.get("supported_indicators") or []
+        haystack = f"{title} {text} {' '.join(map(str, supported_indicators))}".lower()
+        # A technique is eligible only when the current telemetry or stored incident contains
+        # a concrete indicator shared with the retrieved playbook (or a direct event signature).
+        evidence_terms = ["login_failure", "failed_login", "brute_force", "portscan", "port_scan", "service_discovery"]
+        supported = any(term in event_text and term in haystack for term in evidence_terms)
+        login_failure = ("login_failure" in event_text or "failed_login" in event_text or "brute_force" in event_text)
+        port_scan = "portscan" in event_text or "port_scan" in event_text
+        if login_failure and ("t1110" in haystack or "brute force" in haystack):
+            supported = True
+        if port_scan and ("t1046" in haystack or "service discovery" in haystack or "network service" in haystack):
+            supported = True
+        if supported:
+            matching_chunks.append((chunk, title, text))
+
+    analysis = ["**Confirmed telemetry facts:**"]
+    analysis.extend(facts[:6])
+    analysis.append("\n**Analytical hypotheses:**")
+    if matching_chunks:
+        for chunk, title, text in matching_chunks[:3]:
+            citation = f"[{chunk['chunk_id']}]"
+            analysis.append(f"- Retrieved guidance in **{title or 'Threat playbook'}** {citation}: {text or 'review the cited technique guidance.'}")
+    elif chunks:
+        chunk = chunks[0]
+        guidance = _clean_playbook_text(str(chunk.get("text", "")))
+        analysis.append(f"- Retrieved guidance is available in **{_clean_playbook_text(str(chunk.get('title', 'Threat playbook')))}** [{chunk['chunk_id']}]: {guidance}")
+        analysis.append("- This guidance is contextual only; current telemetry does not establish that the technique occurred.")
+    else:
+        analysis.append("- No retrieved playbook guidance is available to support a specific hypothesis.")
+
+    mappings = []
+    for chunk, title, _text in matching_chunks:
+        match = re.search(r"\b(T\d{4}(?:\.\d{3})?)\b", f"{title} {chunk.get('text', '')}")
+        if match:
+            mappings.append(f"- **{match.group(1)}** — {title} [{chunk['chunk_id']}], supported by matching event indicators.")
+    if not mappings:
+        mapping_text = "- No ATT&CK technique is mapped: evidence is missing a direct event signature or indicator that supports a retrieved technique."
+    else:
+        mapping_text = "\n".join(mappings)
+        if "login" in event_text or "auth" in event_text:
+            mapping_text += "\n- Check for a subsequent successful login and a multi-event failure burst; that supporting evidence is missing from this single event record."
+
+    actions = [
+        "1. Preserve the relevant authentication, endpoint, and network logs with timestamps for review.",
+        "2. Check for follow-on successful logins, MFA challenges, and related events for this user and source IP.",
+        "3. Validate the host, identity, and expected activity with the responsible owner.",
+        "4. Consider rate limiting or blocking only after analyst review and approval; this assistant does not execute actions.",
+    ]
+    return "\n\n".join([
+        "### 1. Telemetry & Incident Facts\n" + "\n".join(facts),
+        "### 2. Threat Analysis (Facts vs. Hypotheses)\n" + "\n".join(analysis),
+        "### 3. Evidence-Gated MITRE ATT&CK Mapping\n" + mapping_text,
+        f"### 4. Risk & Blast Radius\n- **Identity:** `{user}`\n- **Host:** `{host}`\n- **Network scope:** `{src}` -> `{dst}`\n- **Risk score:** {risk if risk is not None else 'Not provided'}",
+        "### 5. Recommended Analyst Actions (Read-Only Advisory)\n" + "\n".join(actions),
+    ])
 
 
 def query_rag_assistant(query: str, incident: Incident | None, db: Session) -> dict:
@@ -213,7 +311,7 @@ def query_rag_assistant(query: str, incident: Incident | None, db: Session) -> d
             answer = f"{answer}\n\nSources: {source_ids}"
         mode = "llm"
     else:
-        answer = _extractive_answer(evidence_values, retrieved, incident)
+        answer = _extractive_answer(evidence_values, retrieved, incident, query)
         mode = "extractive"
     return {
         "answer": answer,
