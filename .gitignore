@@ -12,6 +12,8 @@ venv/
 
 # Local databases and generated datasets
 *.db
+*.db-shm
+*.db-wal
 backend/datasets/
 backend/uploads/
 backend/saved_models/
