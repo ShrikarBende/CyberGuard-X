@@ -2,6 +2,8 @@
 
 Enterprise CyberGuard X is a SOC investigation prototype that combines network-flow classification and open-set recognition with endpoint, user-sequence, and host-graph detectors. Its SOC dashboard shows unified incident risk, branch evidence, unknown/novel triage, multi-modal explainability, and read-only RAG investigations.
 
+> **Evaluation status in one line:** the CICIDS2017 flow classifier and open-set detector are benchmarked against dataset labels; the endpoint, user-sequence, graph, and fusion branches rely on proxy or synthetic labels. Hardening changes (session-invariant features, Bot class weighting, per-family thresholds, host-window features, noise suppression) are implemented but have **not yet been shown to improve** the saved metrics. See [docs/RESULTS.md](docs/RESULTS.md).
+
 ## Screenshots
 
 > Taken from a local development workspace with synthetic demo events and a held-out CICIDS2017 replay loaded. They illustrate the interface and are **not** evidence of detection performance; see [docs/RESULTS.md](docs/RESULTS.md) for evaluated results.
@@ -23,7 +25,6 @@ Event totals per detection layer (user/identity, endpoint, network) alongside in
 Events arrive over a WebSocket. The amber banner appears whenever `synthetic_demo` events are present: those are developer-written demo scenarios, not real attacks.
 
 ![Live Feed showing synthetic demo events streamed over WebSocket](Screenshots/02-live-feeed.png)
-
 
 ### Unknown / novel triage
 
@@ -66,12 +67,23 @@ Model-family presence does not imply independently validated production performa
 - SOC views for `UNKNOWN_NOVEL` triage (including centroid distance), per-incident risk contributions, multi-modal explainability, and OSCR/recall/F1/AUPRC evaluation summaries.
 - Grouped known-threat and unknown-candidate incidents, bounded sample-event evidence, risk component breakdowns, and probability-gated MITRE mappings.
 - Rule-based user and endpoint indicators, cross-layer correlation, and labelled synthetic demo scenarios. These indicators are rules, not ML predictions.
-- Four built-in interactive scenarios are implemented in `backend/app/ingestion/scenarios.py`: `multi_stage_takeover`, `brute_force_only`, `benign_admin`, and `normal_employee_day`. The broader target is 12 enterprise attack scenario classes; this repository does not yet define or implement the remaining taxonomy items.
+- Scenario coverage: four interactive scenarios load by default (`multi_stage_takeover`, `brute_force_only`, `benign_admin`, `normal_employee_day`). `generate_all_taxonomy_scenarios()` additionally supplies the twelve named synthetic threat scenarios of the target taxonomy plus the two benign scenarios. These are developer-authored rule/demo fixtures, **not** captured attack data or benchmark coverage; `unknown_novel_zero_day` is only a synthetic proxy.
 - On-demand signed TreeSHAP explanations for supported CICIDS detections.
 - Read-only five-step RAG investigations (`retrieve → analyze → map → summarize → recommend`) with cited evidence, evidence-gated ATT&CK mapping, and human-approval-only recommendations.
-- Curated ATT&CK technique references are versioned in `backend/app/rag/knowledge_metadata.json` against Enterprise ATT&CK v20.1. They are not a complete synchronized catalog; ingesting MITRE Detection Strategies/Analytics is planned, not implemented.
+- Curated ATT&CK technique references are versioned in `backend/app/rag/knowledge_metadata.json` against Enterprise ATT&CK v20.1 (reference verified 2026-11-19). They are a project-curated subset, not a complete synchronized catalog; ingesting MITRE Detection Strategies/Analytics is planned, not implemented.
 - Live event updates over WebSockets, incident review queue, evaluation summary page, and prepared held-out replay through the live engine.
 - Background model retraining for the `light` and `medium` profiles. A completed artifact replaces its profile bundle atomically; a failed job leaves the prior bundle in place.
+
+### Hardening changes (implemented, pending re-evaluation)
+
+These target the weaknesses listed under [Known limitations](#known-limitations). They are training/evaluation policy changes, not measured improvements; the saved bundles predate them.
+
+- **Session-invariant feature sanitization:** opt-in in `build_full_pipeline()`; removes topology and capture identifiers before scaling. Enabled by the comprehensive runner for session-disjoint runs.
+- **Bot class weighting:** balanced class weights plus a 2.5× multiplier for Bot in LightGBM training.
+- **Per-family open-set calibration:** thresholds from known-only validation quantiles per predicted family; an optional Youden/geometric-mean mode takes a separately labeled calibration set. The held-out family is excluded from threshold selection.
+- **Host-window features:** `HostWindowAggregator` exposes four rolling source-host features for replay/stream callers. Existing saved bundles do not consume them.
+- **Confidence-gated noise suppression:** suppresses only borderline network-only alerts with no rule, endpoint, or user corroboration; raw events remain stored. The 0.5% benign-alert target is a goal, not an achieved result.
+- **Hybrid RAG retrieval path** and an expanded 50-case RAG suite (20 direct ATT&CK, 15 adversarial, 15 multi-hop).
 
 ## Architecture
 
@@ -151,7 +163,7 @@ Compose uses the PostgreSQL service and persistent `pgdata` volume. Set `DATABAS
 
 The generated report is available at [docs/RESULTS.md](docs/RESULTS.md).
 
-The evaluation JSONs contain different split protocols and label sources. Read [docs/RESULTS.md](docs/RESULTS.md) for saved-artifact status, label provenance, and the stratified-versus-session-disjoint comparison. The generated section below remains the older three-seed stratified baseline. Regenerate it after adding evaluation runs with:
+The evaluation JSONs contain different split protocols and label sources. Read [docs/RESULTS.md](docs/RESULTS.md) for saved-artifact status, label provenance, and the stratified-versus-session-disjoint comparison. The generated section below remains the three-seed stratified baseline. Regenerate it after adding evaluation runs with:
 
 ```powershell
 python scripts/make_results_md.py
@@ -172,6 +184,26 @@ The table below uses the saved **medium profile, seed 42, 50% sample** report [`
 
 These results show strong separation for WebAttack and DoS/DDoS, but weak unknown recall for PortScan and Bot. The unweighted macro average keeps every held-out family equally represented.
 
+### Capture-session generalization
+
+Random row splits are optimistic for CICIDS2017 because near-duplicate flows from the same capture session can land in both train and test. The saved comparison uses a medium profile (50% sample, seeds 42 and 43, 60,000-row training caps, confidence detector). The session-disjoint arm had held-out unknown support in only **3 of 10** family/seed folds, so its intervals are wide. See [`medium_stratified_vs_session_disjoint.md`](backend/ml/evaluation/results/medium_stratified_vs_session_disjoint.md).
+
+| Split | OSCR AUC | Unknown recall | Benign FPR | Known macro F1 |
+|---|---:|---:|---:|---:|
+| Stratified random | 0.7992 (0.6555–0.9429) | 0.4743 (0.2369–0.7118) | 0.0298 (0.0288–0.0308) | 0.9467 (0.9363–0.9571) |
+| Session-disjoint (sanitized features) | 0.5996 (0.2208–0.9785) | 0.1716 (0.0000–0.5055) | 0.0027 (0.0018–0.0036) | 0.1897 (0.1711–0.2084) |
+
+The generalization gap remains large after sanitization. Part of the known macro-F1 drop may come from classes absent from the training sessions, so the figure is not a pure measure of feature memorization. Intervals are across available family/seed folds. The bounded light-profile diagnostic in `comprehensive_benchmark_run.json` had several zero-support groups and is not comparable to these numbers; see RESULTS.md.
+
+### RAG retrieval
+
+| Suite | Questions | Hit@1 | Hit@3 | MRR |
+|---|---:|---:|---:|---:|
+| Original developer-written suite | 20 | 0.85 | 0.90 | 0.875 |
+| Expanded suite (direct, adversarial, multi-hop) | 50 | 0.62 | 0.80 | 0.69 |
+
+The two suites differ in difficulty, so the drop is not a regression. The 50-case run also reports an extractive citation/ATT&CK-ID support score of 0.5602 (unsupported-assertion rate 0.4398). That is a narrow deterministic proxy for groundedness, not a human-judged hallucination rate, and says nothing about an external LLM generation path. The hybrid retrieval change did not improve these aggregates but passed a targeted exact-technique rank-1 test.
+
 ### Current branch artifact estimates
 
 These figures are read from the locally saved bundles in `backend/saved_models/`. Metrics are reported only where the artifact contains a validation evaluation; training rows and label notes are included to make the other estimates interpretable.
@@ -180,11 +212,9 @@ These figures are read from the locally saved bundles in `backend/saved_models/`
 |---|---|---|
 | Network flow — LightGBM + open-set fusion | CICIDS2017 medium profile; 50% sample; seed 42; leave-one-family-out evaluation | See the family-level OSCR/recall/F1/AUPRC table above. The bundle includes 78 flow features, compact class centroids, pooled covariance, benign Isolation Forest, energy/margin, and calibrated thresholds. |
 | Endpoint — Denoising Autoencoder + Isolation Forest | Saved bundle trained unsupervised on 293 Sysmon capture windows | No independent validation metrics are stored. The checked-in corpus does not establish a labeled benign baseline; do not interpret this bundle as a validated benign-only detector. |
-| User sequence — Temporal Fusion Transformer | 1,978 training sequences; 495 validation sequences; 24 steps; Sysmon/CERT weak labels; seed 42 | Validation ROC AUC **0.99998**, accuracy **0.9960**, precision **0.9926**, recall **0.9926** on heuristic proxy labels. This saved bundle predates the new user-disjoint split and records `stratified_sequence_level_80_20`; newly trained bundles use user-group-disjoint validation. |
-| Network graph — Graph Attention Network | 12,000 UNSW-NB15 rows; 1,148 rows marked positive; seed 42 | No independent validation metrics are stored. The positive target is “non-benign attack category” as a multi-host anomaly proxy, not ground-truth lateral movement. |
+| User sequence — Temporal Fusion Transformer | 1,978 training sequences; 495 validation sequences; 24 steps; Sysmon/CERT weak labels; seed 42 | Validation ROC AUC **0.99998**, accuracy **0.9960**, precision **0.9926**, recall **0.9926** on heuristic proxy labels. This saved bundle predates the user-disjoint split and records `stratified_sequence_level_80_20`; these values mostly show the model recovers the heuristic and are not ground-truth performance. |
+| Network graph — Graph Attention Network | 12,000 UNSW-NB15 rows; 1,148 rows marked positive; seed 42 | No independent validation metrics are stored. The positive target is "non-benign attack category" as a multi-host anomaly proxy, not ground-truth lateral movement. |
 | Risk fusion — calibrated logistic meta-model | 4,800 weakly labeled training rows; 1,200 validation rows; synthetic weak-label source | Validation ROC AUC **0.8573**, Brier score **0.1507**; validation positive rate 52.4%. This is a calibration/meta-model estimate on weak labels, not an end-to-end incident benchmark. |
-
-The current medium-profile split comparison is available in [Markdown](backend/ml/evaluation/results/medium_stratified_vs_session_disjoint.md) and [JSON](backend/ml/evaluation/results/medium_stratified_vs_session_disjoint.json). It uses CICIDS2017 dataset labels, two seeds, and only three supported session-disjoint family/seed folds; see the report's skipped-fold list and uncertainty intervals.
 
 The UI evaluation page reads saved multi-seed evaluation summaries from `/api/evaluation/summary`; a multi-seed result is preferred for model comparisons. The estimates above are the currently available local artifact reports and are not a substitute for repeated, independently labeled test runs.
 
@@ -229,12 +259,23 @@ Generated from completed JSON files in `backend/ml/evaluation/results/`. Means a
 
 ## Known limitations
 
-- Older saved CICIDS open-set runs use stratified row splits and can leak capture-session near-duplicates. A separate GroupShuffleSplit comparison is now saved; its session-disjoint half had only three supported folds out of ten because some selected test sessions lacked the held-out family.
-- Evaluation profiles use 15% (`light`) and 50% (`medium`) data samples; results do not represent a full-data run.
-- TFT, GAT, and fusion estimates are weakly supervised or synthetic proxies. The current endpoint bundle has no labeled benign-versus-Atomic-Red-Team evaluation; separate capture directories are required to generate those metrics. The checked-in Sysmon collection alone is not a labeled benign baseline.
-- Cross-layer correlation thresholds are demo values and are not calibrated.
-- PortScan detection is weaker than desired and should be reviewed alongside the per-family results below.
-- RAG retrieval has a fixed 20-question check (saved result: hit@1 0.85 and hit@3 0.90); this is limited coverage, not a broad operational validation.
+- **Single dataset.** All dataset-labeled results use CICIDS2017, a 2017 testbed with known labelling problems, evaluated on 15% (`light`) and 50% (`medium`) hash samples and 3 seeds. Results do not represent a full-data run.
+- **Optimistic random splits.** Older saved open-set runs use stratified row splits and can leak capture-session near-duplicates. The session-disjoint comparison exists but only 3 of 10 family/seed folds had unknown support, so its intervals are wide.
+- **Weak unknown detection for PortScan and Bot.** A scan is visible across flows from one host, not within a single flow. Host-window features are implemented but not yet consumed by the saved bundles. Bot (197 rows) and WebAttack (216 rows) also have few unknown test rows.
+- **Bot is the weakest known class** (mean F1 0.8207); the 2.5× class weight has not been re-evaluated.
+- **Replay is illustrative.** Replay profile, split type, and sampling method are not recorded in the saved metadata, and families under 100 flows (Bot, BruteForce, WebAttack) are not interpretable. The 3.1% benign false-alert rate was measured before noise suppression; the post-suppression rate has not been measured.
+- **Proxy labels.** TFT, GAT, and fusion estimates are weakly supervised or synthetic proxies. The endpoint bundle has no labeled benign-versus-Atomic-Red-Team evaluation; separate capture directories are required.
+- **No ablation yet.** The benefit of cross-layer fusion over single branches has not been measured. Correlation thresholds and the twelve-scenario taxonomy are developer-written demo values, not calibrated or captured attack data.
+- **RAG coverage is limited.** Both retrieval suites are developer-authored, and the support score is an extractive proxy, not human-judged factual faithfulness.
+- **Pending metrics.** Per-class AUPRC, Cohen's kappa, balanced accuracy, and the standalone OSCR/FPR95 summary are emitted by new runs but not yet recorded for the saved artifacts.
+
+## Planned next steps
+
+1. Re-train and re-evaluate with the hardening changes, one change at a time, with seeds and confidence intervals.
+2. Re-run PortScan and Bot open-set evaluation with host-window features enabled.
+3. Add a fusion/cross-layer ablation (each branch alone, each removed, full system).
+4. Rebuild the replay from held-out rows with recorded provenance and measure the post-suppression benign alert rate.
+5. Collect labeled benign and Atomic Red Team Sysmon captures for an endpoint evaluation.
 
 ## Tests
 
