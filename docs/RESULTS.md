@@ -16,7 +16,7 @@ Open-set scoring uses centroid distance and confidence/energy/margin signals. In
 
 ## Scenario coverage
 
-The scenario loader implements four interactive synthetic scenarios: `multi_stage_takeover`, `brute_force_only`, `benign_admin`, and `normal_employee_day`. The 12-class enterprise attack scenario taxonomy is a target for future benchmark coverage; the current repository does not define the names or implementations of the remaining eight classes.
+The default scenario loader still returns four interactive demos. `generate_all_taxonomy_scenarios()` now supplies the twelve named synthetic threat scenarios plus `benign_admin` and `normal_employee_day`. These are developer-authored rule/demo fixtures, not benchmark coverage or captured attack data; `unknown_novel_zero_day` is only a synthetic proxy.
 
 ## MITRE ATT&CK knowledge metadata
 
@@ -156,6 +156,12 @@ Replay metadata: model_version=cicids2017-medium-v1; profile=not recorded; rows=
 - Hit@1: 0.8500
 - Hit@3: 0.9000
 
+The new quality runner was executed on 2026-11-24 using the NumPy index backend. It confirms the same Hit@1/Hit@3 and adds MRR. Groundedness and MITRE mapping metrics were unavailable because this run used retrieval questions only, without generated reports or labeled mapping cases.
+
+| Run date | Index backend | Questions | Hit@1 | Hit@3 | MRR | Groundedness | MITRE mapping F1 |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 2026-11-24 | NumPy | 20 | 0.8500 | 0.9000 | 0.8750 | n/a | n/a |
+
 Missed questions and top retrieved source:
 
 - What traffic pattern can indicate network service discovery? — expected `t1046_network_discovery.md`, top source `t1498_network_denial_of_service.md`.
@@ -184,7 +190,6 @@ Lowest-F1 known class from these results: Bot (LightGBM).
 
 Accuracy is shown last in the summary table because benign flows dominate the test set.
 
-
 ## Metric definitions
 
 - AUROC: how well the detector score ranks held-out unknown rows above known rows.
@@ -202,8 +207,79 @@ Accuracy is shown last in the summary table because benign flows dominate the te
 - PortScan is the weakest family for open-set rejection; the maximum observed unknown rejection across its detectors and seeds was 0.1813
 - Bot is the weakest known class (mean F1 0.8207)
 - replay families with under 100 flows are not interpretable
-- the RAG retrieval test is 20 developer-written questions
-- correlation scenarios and thresholds are developer-written demo values; four synthetic scenarios are interactive, while the 12-class taxonomy remains a target
+- the original RAG retrieval benchmark is 20 developer-written questions; the expanded 50-case suite is also developer-authored
+- correlation scenarios and thresholds are developer-written demo values; the full synthetic taxonomy is not captured or benchmark attack data
 - endpoint evaluation against labeled benign and Atomic Red Team Sysmon captures is not available in the saved artifact; separate labeled capture directories are required
 - TFT validation metrics in the saved bundle use weak labels and a sequence-level random split; the current training code now groups validation by user
 - GAT and fusion metrics use non-ground-truth proxy labels
+
+## Additional evaluation metrics (implementation status)
+
+The known-class evaluation now emits per-class AUPRC, macro AUPRC, Cohen's kappa,
+and balanced accuracy in each newly generated result JSON. The currently documented
+seed summaries predate this change and do not contain the class probability arrays
+needed to reconstruct AUPRC, so no historical values are inferred here.
+
+| Evaluation | New result fields | Current reported value |
+|---|---|---|
+| Known-class classification | Per-class AUPRC, macro AUPRC | Pending a fresh classifier run |
+| Known-class classification | Cohen's kappa, balanced accuracy | Emitted by the next run; not present in saved seed summaries |
+
+The open-set run now also writes `oscr_evaluation_summary.json` with macro OSCR AUC,
+FPR95, unknown recall, and sampled curve points for the primary fused detector.
+Existing open-set artifacts already include per-family OSCR curves; the standalone
+summary is written by a subsequent evaluation run.
+
+| Open-set artifact | OSCR AUC | FPR95 | Unknown recall | Curve points |
+|---|---:|---:|---:|---|
+| Standalone fused-detector summary | Pending a fresh open-set run | Pending | Pending | Up to 201 sampled points per family |
+
+The RAG quality runner writes `rag_quality_evaluation.json` with Hit@1, Hit@3, and
+MRR for the 50-case suite. Its extractive groundedness score is based on source
+citations and ATT&CK identifiers; MITRE mapping precision, recall, and F1 still
+require labeled mapping cases.
+
+## Performance hardening and expanded RAG suite
+
+Session-disjoint feature sanitization is opt-in in `build_full_pipeline()` and removes topology/capture identifiers before scaling. The comprehensive runner enables it for session-disjoint runs. `HostWindowAggregator` exposes four rolling source-host features for replay/stream callers; existing saved bundles do not consume them.
+
+LightGBM training applies balanced class weights and a 2.5 multiplier for the Bot class by default. This is a training policy change, not evidence that Bot precision or recall has improved; a fresh benchmark is needed. Open-set calibration can be enabled per predicted family using known-only validation quantiles. The optional Youden/geometric-mean mode accepts a separately labeled calibration set; the held-out family remains excluded from threshold selection. FPR95 continues to be calculated on the test fold as an evaluation metric.
+
+The confidence-gated correlation path suppresses only borderline network-only alerts without rule, endpoint, or user corroboration. Raw events remain stored. The 0.5% target is not asserted as achieved without a replay benchmark.
+
+The expanded RAG run on 2026-11-24 used 50 labeled retrieval cases (20 direct ATT&CK, 15 adversarial, 15 multi-hop) and deterministic extractive reports. These results supersede the earlier pre-hybrid 50-case run recorded in the original baseline section; the original 20-question retrieval baseline remains historical:
+
+| Questions | Hit@1 | Hit@3 | MRR | Context precision | Groundedness | Hallucination rate |
+|---:|---:|---:|---:|---:|---:|---:|
+| 50 | 0.6200 | 0.8000 | 0.6900 | 0.2667 | 0.5602 | 0.4398 |
+
+Groundedness checks citations and ATT&CK identifiers in deterministic extractive answers against retrieved chunks. It is a narrower proxy than human-annotated factual faithfulness. Context precision counts only chunks matching each case's expected source file. Compared with the earlier recorded 50-case run (Hit@1 0.64, Hit@3 0.82, MRR 0.72, groundedness 0.5618, context precision 0.2733), the current retrieval change did not improve these aggregate measures. It did pass the targeted exact MITRE technique rank-1 test. These measurements expose retrieval and support gaps; they do not establish answer quality for an external LLM generation path.
+
+The newly rerun medium session comparison used a 50% sample, seeds 42 and 43, 60,000-row training caps, and the confidence detector. It uses the session-invariant sanitizer on the session-disjoint arm and updated balanced class weights. The artifact is `backend/ml/evaluation/results/medium_stratified_vs_session_disjoint.json`:
+
+| Split | OSCR AUC | Unknown recall | Benign FPR | Known macro-F1 |
+|---|---:|---:|---:|---:|
+| Stratified random | 0.7992 (95% CI 0.6555–0.9429) | 0.4743 (0.2369–0.7118) | 0.0298 (0.0288–0.0308) | 0.9467 (0.9363–0.9571) |
+| Session-disjoint | 0.5996 (0.2208–0.9785) | 0.1716 (0.0000–0.5055) | 0.0027 (0.0018–0.0036) | 0.1897 (0.1711–0.2084) |
+
+Only 3 of 10 session-disjoint family/seed folds had held-out unknown support; the interval is wide and the mean is not directly comparable to historical single-split values. The new comparison still shows a large generalization gap. The comprehensive benchmark runner is a separate light-profile run and records its configuration and metrics in `backend/ml/evaluation/results/comprehensive_benchmark_run.json`.
+
+<!-- COMPREHENSIVE_BENCHMARKS:START -->
+## Comprehensive benchmark comparison (generated)
+
+| Metric | Historical stratified baseline | Historical session-disjoint baseline | Current run |
+|---|---:|---:|---:|
+| Known Macro-F1 | 0.9482 | 0.1898 | 0.1687 |
+| Known Macro-AUPRC | n/a | n/a | 0.9555 |
+| Balanced accuracy | n/a | n/a | 0.3228 |
+| Cohen's kappa | n/a | n/a | 0.0226 |
+| Open-set OSCR AUC | 0.8239 | 0.5410 | 0.2635 |
+| Open-set FPR95 | n/a | n/a | 0.8918 |
+| Open-set unknown recall | 0.3966 | 0.0760 | 0.0007 |
+| RAG Hit@1 / Hit@3 / MRR | 0.8500 / 0.9000 / n/a | n/a | 0.6200 / 0.8000 / 0.6900 |
+| RAG groundedness | n/a | n/a | 0.5602 |
+
+Generated at 2026-11-24T13:25:30.603933+00:00. Historical values are the saved results described above; current values are from artifacts generated by this run. Groundedness covers extractive answer citations and ATT&CK identifiers.
+
+The current run used a 15% session-disjoint sample, a 30,000-row open-set training cap, and the confidence-only detector for bounded execution. Several held-out groups had zero test support (including Bot, BruteForce, and DosDDoS in the known classifier, and three of five open-set families), so these diagnostic aggregates are not directly comparable to the historical baselines. Macro-AUPRC averages only classes with both positive and negative test examples; Bot precision is not measurable in this run.
+<!-- COMPREHENSIVE_BENCHMARKS:END -->
