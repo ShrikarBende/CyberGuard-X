@@ -125,8 +125,9 @@ def validate_report(value, seen_ids: set[str], allowed_techniques: set[str], inj
     )
     if stats["confirmation_language_flags"]:
         report["limitations"] = report["limitations"][:29] + [CONFIRMATION_LANGUAGE_LIMITATION]
-    stats["injection_flags"] = sum(1 for term in ("ignore previous", "system prompt", "false positive", "reveal this prompt")
-                                   if term in report["summary"].lower() or any(term in str(x).lower() for x in report["limitations"]))
+    report_text_flags = sum(1 for term in ("ignore previous", "system prompt", "false positive", "reveal this prompt")
+                            if term in report["summary"].lower() or any(term in str(x).lower() for x in report["limitations"]))
+    stats["injection_flags"] += report_text_flags
     findings = []
     stats["claims_total"] += len(report["key_findings"])
     for finding in report["key_findings"]:
