@@ -107,6 +107,25 @@ def test_untrusted_or_incomplete_run_never_materializes_staged_actions(db_pair, 
         assert db.query(AnalystActivity).filter_by(action_type="agent_proposals_discarded").count() == 1
 
 
+def test_worker_records_limit_reached_with_deterministic_baseline(db_pair, monkeypatch):
+    db, factory = db_pair
+    incident = _incident(db, "limit-reached")
+    run = AgentRun(run_id="limit-reached-run", incident_id=incident.incident_id, requested_by="analyst",
+        status="queued", agent_id="investigator", mode="agent", model_name="fake", limits={}, usage={}, validation={})
+    db.add(run); db.commit()
+    monkeypatch.setattr(service, "SessionLocal", factory)
+    monkeypatch.setattr(service.settings, "AGENT_LLM_API_URL", "configured")
+    monkeypatch.setattr(service.settings, "AGENT_LLM_API_KEY", "configured")
+    monkeypatch.setattr(service, "investigate_incident", lambda *args, **kwargs: {"incident_id": incident.incident_id})
+    monkeypatch.setattr(service, "run_agent", lambda *args, **kwargs: (_ for _ in ()).throw(RunLimitReached("step limit reached")))
+    service._worker(run.run_id, incident.incident_id, "analyst", threading.Event())
+    db.expire_all()
+    saved = db.get(AgentRun, run.run_id)
+    assert saved.status == "limit_reached"
+    assert saved.validation["fallback_reason"] == "limit_reached: step limit reached"
+    assert db.query(ActionProposal).filter_by(run_id=run.run_id).count() == 0
+
+
 @pytest.mark.parametrize("llm_factory", [None, "exception", "bad_json"])
 def test_worker_returns_deterministic_fallback_on_unavailable_or_bad_llm(db_pair, monkeypatch, llm_factory):
     db, factory = db_pair

@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import threading
 import uuid
 from app.agent.config import CEILINGS
+from app.agent.limits import RunLimitReached
 from app.agent.limits import clamp_to_ceilings, RunLimits
 from app.agent.llm import AgentLLM
 from app.agent.loop import run_agent
@@ -97,6 +98,13 @@ def _fallback(db, run, incident, reason=None):
             {"llm_calls": 0, "tool_calls": 0}, None)
 
 
+def _limit_reached(db, run, incident, reason):
+    baseline = investigate_incident(incident, db, top_k=6)
+    _finish(db, run, "limit_reached", baseline,
+        {"fallback_reason": f"limit_reached: {str(reason)[:250]}"},
+        run.usage or {"llm_calls": 0, "tool_calls": 0}, None)
+
+
 def _worker(run_id, incident_id, requested_by, cancel_event):
     with SessionLocal() as db:
         run = db.query(AgentRun).filter(AgentRun.run_id == run_id).first()
@@ -125,6 +133,12 @@ def _worker(run_id, incident_id, requested_by, cancel_event):
             _finish(db, run, "completed", result["report"], result["validation"], result["usage"])
         except InterruptedError as exc:
             _finish(db, run, "cancelled", error=exc)
+        except RunLimitReached as exc:
+            db.rollback()
+            try:
+                _limit_reached(db, run, incident, exc)
+            except Exception as fallback_exc:
+                _finish(db, run, "failed", error=f"{type(fallback_exc).__name__}: limit fallback failed")
         except Exception as exc:
             # Deterministic fallback protects the analyst from an empty result.
             db.rollback()

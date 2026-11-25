@@ -87,7 +87,7 @@ def test_cancel_and_step_limits_are_checked_between_steps(db_pair):
             db, cancelled=lambda: True)
     assert not llm.calls
     looping = FakeLLM([AssistantTurn(tool_calls=[ToolCall("run_baseline_investigation", {"incident_id": incident.incident_id})])])
-    with pytest.raises(RunLimitReached, match="maximum step"):
+    with pytest.raises(RunLimitReached, match="step limit reached; finalization failed"):
         run_agent("limit", incident.incident_id, "analyst", manifest, looping, BaselineTool(),
             RunLimits(max_steps=1, max_tool_calls=2, wall_seconds=10, result_chars=1000, max_concurrent_runs=1), db)
 

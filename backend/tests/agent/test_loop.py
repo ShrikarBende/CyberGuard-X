@@ -57,6 +57,34 @@ def test_loop_refuses_duplicate_calls_and_wraps_tool_output(db_pair):
     assert "&lt;/untrusted_tool_result&gt;" in tool_messages[0]
 
 
+def test_loop_finalizes_with_evidence_only_call_when_step_limit_is_reached(db_pair):
+    db, _ = db_pair
+    _incident(db)
+    baseline = ToolCall("run_baseline_investigation", {"incident_id": "i1"})
+    llm = FakeLLM([AssistantTurn(tool_calls=[baseline]), AssistantTurn(content=_report())])
+    manifest = AgentManifest(id="test_agent", description="test", needs=["run_baseline_investigation"],
+        limits={}, system="safe", conclusion="json")
+    limits = clamp_to_ceilings({"max_steps": 1})
+    result = run_agent("limit-finalize", "i1", "analyst", manifest, llm, ScriptTools(), limits, db)
+    assert result["usage"]["finalized_by_limit"] is True
+    assert llm.calls[-1]["tools"] == []
+    assert "using only evidence already retrieved" in llm.calls[-1]["messages"][-1]["content"]
+
+
+def test_loop_refuses_over_budget_tool_and_finalizes(db_pair):
+    db, _ = db_pair
+    _incident(db)
+    baseline = ToolCall("run_baseline_investigation", {"incident_id": "i1"})
+    llm = FakeLLM([AssistantTurn(tool_calls=[baseline, baseline]), AssistantTurn(content=_report())])
+    manifest = AgentManifest(id="test_agent", description="test", needs=["run_baseline_investigation"],
+        limits={}, system="safe", conclusion="json")
+    result = run_agent("tool-limit-finalize", "i1", "analyst", manifest, llm, ScriptTools(),
+        clamp_to_ceilings({"max_tool_calls": 1}), db)
+    assert result["usage"]["finalized_by_limit"] is True
+    assert "tool budget exhausted" in llm.calls[-1]["messages"][-2]["content"]
+    assert llm.calls[-1]["tools"] == []
+
+
 def test_loop_preserves_provider_assistant_message_between_tool_rounds(db_pair):
     db, _ = db_pair
     _incident(db)

@@ -62,6 +62,7 @@ def run_agent(run_id, incident_id, requested_by, manifest, llm, tools, limits, d
     final, step_no, repair_attempted, baseline_called = None, 0, False, False
     trace_no = 0
     injection_flags = 0
+    budget_exhausted = False
     schemas = tools.schemas_for(manifest.needs)
 
     def check_limits():
@@ -93,7 +94,14 @@ def run_agent(run_id, incident_id, requested_by, manifest, llm, tools, limits, d
             check_limits()
             usage["tool_calls"] += 1
             if usage["tool_calls"] > limits.max_tool_calls:
-                raise RunLimitReached("tool call limit reached")
+                budget_exhausted = True
+                call_id = call.call_id or f"call_{uuid.uuid4().hex}"
+                assistant_calls.append({"id": call_id, "type": "function", "function": {
+                    "name": call.name, "arguments": "{}"}})
+                tool_messages.append({"role": "tool", "tool_call_id": call_id, "name": call.name,
+                    "content": _untrusted("untrusted_tool_result", json.dumps({"ok": False,
+                        "error": "tool budget exhausted; no further tools will run"}))})
+                break
             try:
                 canonical = json.dumps(call.arguments, sort_keys=True, separators=(",", ":"))
             except TypeError:
@@ -143,9 +151,32 @@ def run_agent(run_id, incident_id, requested_by, manifest, llm, tools, limits, d
             assistant_message = {"role": "assistant", "tool_calls": assistant_calls}
         messages.append(assistant_message)
         messages.extend(tool_messages)
+        if budget_exhausted:
+            break
 
     if final is None:
-        raise RunLimitReached("maximum step limit reached")
+        if time.monotonic() - started_monotonic >= limits.wall_seconds:
+            raise RunLimitReached("wall clock limit reached")
+        try:
+            reason = "tool budget exhausted" if budget_exhausted else "step limit reached"
+            messages.append({"role": "user", "content":
+                f"{reason.capitalize()}. Return the final JSON report now using only evidence already retrieved."})
+            turn = llm.chat(messages, [])
+            check_limits()
+            usage["llm_calls"] += 1
+            usage["finalized_by_limit"] = True
+            for key in ("prompt_tokens", "completion_tokens"):
+                usage[key] += int((turn.usage or {}).get(key, 0) or 0)
+            final = turn.content if not turn.tool_calls else None
+            if final is None:
+                raise ValueError("finalization requested additional tools")
+            trace_no += 1
+            _persist_step(db, run_id, trace_no, "llm", summary="Assistant returned a limit finalization report.",
+                          duration_ms=0)
+        except InterruptedError:
+            raise
+        except Exception as exc:
+            raise RunLimitReached(f"{reason}; finalization failed ({type(exc).__name__})") from exc
     while True:
         try:
             raw_report = _parse_report(final)
@@ -166,6 +197,8 @@ def run_agent(run_id, incident_id, requested_by, manifest, llm, tools, limits, d
             report, validation = validate_report(raw_report, seen_ids, allowed_techniques, validation_injections)
             break
         except Exception as exc:
+            if usage.get("finalized_by_limit"):
+                raise RunLimitReached(f"step/tool limit reached; finalization report invalid ({type(exc).__name__})") from exc
             if repair_attempted or step_no >= limits.max_steps:
                 raise ValueError(f"report validation failed: {type(exc).__name__}") from exc
             repair_attempted = True
