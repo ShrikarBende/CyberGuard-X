@@ -18,6 +18,9 @@ class AssistantTurn:
     content: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
     usage: dict = field(default_factory=dict)
+    # Preserve provider-specific fields (for example GPT-OSS reasoning metadata)
+    # so the next tool round can send back the assistant message unchanged.
+    provider_message: dict = field(default_factory=dict)
 
 
 class AgentLLM:
@@ -76,7 +79,7 @@ class AgentLLM:
                         except (json.JSONDecodeError, TypeError, ValueError):
                             args = {"__malformed_json": str(function.get("arguments", ""))[:2000]}
                         calls.append(ToolCall(str(function.get("name", "")), args, str(raw.get("id", ""))))
-                    return AssistantTurn(message.get("content"), calls, usage)
+                    return AssistantTurn(message.get("content"), calls, usage, dict(message))
                 content = message.get("content") or ""
                 try:
                     command = json.loads(content)

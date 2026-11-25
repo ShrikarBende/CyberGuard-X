@@ -134,8 +134,14 @@ def run_agent(run_id, incident_id, requested_by, manifest, llm, tools, limits, d
             response = {"ok": result.ok, "evidence_ids": result.evidence_ids,
                         "data": result.data if result.ok else {"error": result.error}}
             wrapped = _untrusted("untrusted_tool_result", json.dumps(response, ensure_ascii=False, default=str))
-            tool_messages.append({"role": "tool", "tool_call_id": assistant_calls[-1]["id"], "content": wrapped})
-        messages.append({"role": "assistant", "tool_calls": assistant_calls})
+            tool_messages.append({"role": "tool", "tool_call_id": assistant_calls[-1]["id"],
+                                  "name": call.name, "content": wrapped})
+        if isinstance(turn.provider_message, dict) and turn.provider_message:
+            assistant_message = dict(turn.provider_message)
+            assistant_message.setdefault("role", "assistant")
+        else:
+            assistant_message = {"role": "assistant", "tool_calls": assistant_calls}
+        messages.append(assistant_message)
         messages.extend(tool_messages)
 
     if final is None:

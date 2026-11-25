@@ -56,6 +56,25 @@ def test_loop_refuses_duplicate_calls_and_wraps_tool_output(db_pair):
     assert "&lt;/untrusted_tool_result&gt;" in tool_messages[0]
 
 
+def test_loop_preserves_provider_assistant_message_between_tool_rounds(db_pair):
+    db, _ = db_pair
+    _incident(db)
+    baseline = ToolCall("run_baseline_investigation", {"incident_id": "i1"}, "call-1")
+    provider_message = {"role": "assistant", "reasoning": "provider metadata",
+        "tool_calls": [{"id": "call-1", "type": "function", "function": {
+            "name": baseline.name, "arguments": '{"incident_id":"i1"}'}}]}
+    llm = FakeLLM([AssistantTurn(tool_calls=[baseline], provider_message=provider_message),
+                   AssistantTurn(content=_report())])
+    manifest = AgentManifest(id="test_agent", description="test", needs=["run_baseline_investigation"],
+        limits={}, system="safe", conclusion="json")
+    run_agent("provider-message", "i1", "analyst", manifest, llm, ScriptTools(), clamp_to_ceilings(), db)
+    messages = llm.calls[1]["messages"]
+    assistant = next(message for message in messages if message.get("role") == "assistant")
+    tool = next(message for message in messages if message.get("role") == "tool")
+    assert assistant["reasoning"] == "provider metadata"
+    assert tool["name"] == "run_baseline_investigation"
+
+
 def test_loop_rejects_out_of_manifest_tool_and_requires_baseline_first(db_pair):
     db, _ = db_pair
     incident = _incident(db)

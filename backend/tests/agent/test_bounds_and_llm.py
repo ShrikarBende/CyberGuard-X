@@ -44,6 +44,15 @@ def test_native_tool_call_malformed_json_becomes_error_args():
     assert turn.tool_calls[0].arguments["__malformed_json"] == "{"
 
 
+def test_native_turn_preserves_provider_message_fields_for_next_tool_round():
+    provider_message = {"role": "assistant", "content": None, "reasoning": "metadata",
+        "tool_calls": [{"id": "c1", "type": "function", "function": {
+            "name": "run_baseline_investigation", "arguments": "{\"incident_id\":\"i1\"}"}}]}
+    client_factory = lambda **kwargs: FakeClient(FakeResponse({"choices": [{"message": provider_message}]}))
+    turn = AgentLLM("https://offline.invalid", "secret", "fake", client_factory=client_factory).chat([], [])
+    assert turn.provider_message == provider_message
+
+
 def test_json_action_mode_parses_single_tool_call_without_network():
     client_factory = lambda **kwargs: FakeClient(FakeResponse({"choices": [{"message": {
         "content": '{"tool":"search_knowledge","args":{"query":"MITRE"}}'}}]}))
