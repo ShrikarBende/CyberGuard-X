@@ -76,6 +76,8 @@ class Settings(BaseSettings):
     AGENT_MAX_CONCURRENT_RUNS: int = Field(default=2, ge=1, le=4)
     AGENT_MAX_OUTPUT_TOKENS: int = Field(default=1500, ge=1, le=20000)
     AGENT_EXECUTION_MODE: Literal["dry_run"] = "dry_run"
+    AGENT_ALLOW_SELF_APPROVAL: bool = False
+    AGENT_PROPOSAL_TTL_HOURS: int = Field(default=24, ge=1, le=8760)
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
     RAG_TOP_K: int = 4
     RAG_BACKEND: Literal["auto", "numpy", "faiss"] = "auto"

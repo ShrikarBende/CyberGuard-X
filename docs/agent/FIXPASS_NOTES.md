@@ -75,3 +75,10 @@
 - Added three-attempt retries for 429/5xx/transient transport failures, capped exponential jitter and `Retry-After` handling bounded by the caller timeout, remaining-run timeout propagation, remembered native 400 fallback, JSON-mode schema/history conversion, optional auth, and `AGENT_MAX_OUTPUT_TOKENS=1500`.
 - Added the output-token setting to `.env.example`, public config, and architecture notes. Service configuration now treats a URL alone as configured.
 - Verification: `python -m pytest backend/tests/agent/test_bounds_and_llm.py backend/tests/agent/test_loop.py backend/tests/agent/test_service.py backend/tests/test_artifact_and_evaluation_metadata.py::test_env_example_documents_every_application_setting -q` — 29 passed.
+
+## F12 — close self-approval and decision race
+
+- Reproduced that an admin could approve their own proposal and that a stale ORM object could overwrite a decision made by another session.
+- Added `AGENT_ALLOW_SELF_APPROVAL=false` by default; the self-approval rule now applies to every role. Proposal status transitions use a conditional SQL update from `pending` and only rowcount 1 proceeds to audit/simulation.
+- Updated the existing admin self-approval test to cover default denial and explicit opt-in; added a two-session stale decision test and exactly-one simulation assertion.
+- Verification: `python -m pytest backend/tests/agent/test_proposals.py backend/tests/test_artifact_and_evaluation_metadata.py::test_env_example_documents_every_application_setting -q` — 7 passed.

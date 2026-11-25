@@ -36,6 +36,8 @@ Tool results are serialized and wrapped with `_untrusted("untrusted_tool_result"
 
 Tool output truncation drops whole list entries and returns only evidence IDs that remain visible in the returned data. A valid citation proves that the evidence ID exists in this run's scope; it does not by itself prove that a report claim is supported by that evidence.
 
+By default, every analyst, including an admin, must have a different username from the proposal requester to decide it. `AGENT_ALLOW_SELF_APPROVAL=true` opts into self-approval for single-admin demos.
+
 ## Limits
 
 Defaults are `AGENT_MAX_STEPS=6`, `AGENT_MAX_TOOL_CALLS=12`, `AGENT_WALL_SECONDS=90`, `AGENT_RESULT_CHARS=6000`, `AGENT_MAX_CONCURRENT_RUNS=2`, and `AGENT_MAX_OUTPUT_TOKENS=1500`. Hard ceilings are 12 steps, 30 tool calls, 300 seconds, 20,000 result characters, and 4 concurrent runs. A single incident may have only one active run. Per-call LLM timeout is capped at 45 seconds and the remaining run budget; transient HTTP failures retry up to three attempts with backoff and `Retry-After` support.

@@ -2,10 +2,11 @@
 from datetime import datetime, timezone
 import ipaddress
 import uuid
-from sqlalchemy import func
+from sqlalchemy import func, update
 from app.audit import record_analyst_activity
 from app.agent.models import ActionProposal
 from app.models.entities import IncidentEvent, SecurityEvent, User, Device
+from app.core.config import settings
 
 ACTION_TYPES = {"preserve_logs", "monitor", "escalate", "block_ip", "reset_credentials",
                 "disable_account", "isolate_host"}
@@ -129,12 +130,20 @@ def decide_proposal(db, proposal, analyst, decision, note=""):
         raise ValueError("Only pending proposals can be decided")
     if analyst.role == "viewer":
         raise PermissionError("Viewers cannot decide proposals")
-    if analyst.role != "admin" and analyst.username == proposal.requested_by:
+    if analyst.username == proposal.requested_by and not settings.AGENT_ALLOW_SELF_APPROVAL:
         raise PermissionError("Four-eyes approval requires a different analyst")
+    decided_at = datetime.now(timezone.utc)
+    decision_note = (note or "")[:1000]
+    result = db.execute(update(ActionProposal).where(
+        ActionProposal.proposal_id == proposal.proposal_id, ActionProposal.status == "pending"
+    ).values(status=decision, decided_by=analyst.username, decided_at=decided_at,
+             decision_note=decision_note), execution_options={"synchronize_session": False})
+    if result.rowcount != 1:
+        raise ValueError("Proposal is no longer pending")
     proposal.status = decision
     proposal.decided_by = analyst.username
-    proposal.decided_at = datetime.now(timezone.utc)
-    proposal.decision_note = (note or "")[:1000]
+    proposal.decided_at = decided_at
+    proposal.decision_note = decision_note
     record_analyst_activity(db, analyst.username, f"agent_proposal_{decision}", "incident",
         proposal.incident_id, {"proposal_id": proposal.proposal_id, "requested_by": proposal.requested_by,
                                "note": proposal.decision_note})
