@@ -40,6 +40,23 @@ def test_concurrency_one_run_per_incident_and_cancel_flag(db_pair, monkeypatch):
     service._RUNS.clear()
 
 
+def test_start_run_persists_manifest_clamped_limits(db_pair, monkeypatch):
+    db, _ = db_pair
+    incident = _incident(db, "manifest-limit")
+    manifest = service.load_manifest("investigator")
+    manifest.limits["max_steps"] = 2
+    monkeypatch.setattr(service, "load_manifest", lambda _name: manifest)
+    class HeldThread:
+        def __init__(self, **kwargs): self.started = False
+        def start(self): self.started = True
+        def is_alive(self): return self.started
+    monkeypatch.setattr(service.threading, "Thread", HeldThread)
+    service._RUNS.clear()
+    run = service.start_run(db, incident.incident_id, "analyst")
+    assert run.limits["max_steps"] == 2
+    service._RUNS.clear()
+
+
 def test_stale_running_rows_are_reaped(db_pair, monkeypatch):
     db, factory = db_pair
     incident = _incident(db, "stale")
@@ -52,6 +69,23 @@ def test_stale_running_rows_are_reaped(db_pair, monkeypatch):
     db.expire_all()
     assert db.get(AgentRun, "stale-run").status == "failed"
     assert db.query(AnalystActivity).filter_by(action_type="agent_run_finished").count() == 1
+
+
+def test_stale_reaper_runs_at_most_once_per_ten_seconds(monkeypatch):
+    calls = []
+    class Query:
+        def filter(self, *_): return self
+        def all(self): return []
+    class FakeSession:
+        def __enter__(self): return self
+        def __exit__(self, *_): pass
+        def query(self, *_): calls.append("query"); return Query()
+    times = iter([20.0, 25.0, 31.0])
+    monkeypatch.setattr(service, "SessionLocal", FakeSession)
+    monkeypatch.setattr(service.time, "monotonic", lambda: next(times))
+    monkeypatch.setattr(service, "_LAST_REAP_AT", 0.0)
+    service._reap_stale_runs(); service._reap_stale_runs(); service._reap_stale_runs()
+    assert len(calls) == 2
 
 
 def test_worker_materializes_staged_and_report_actions_once_after_success(db_pair, monkeypatch):

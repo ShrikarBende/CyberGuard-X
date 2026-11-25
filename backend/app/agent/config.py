@@ -24,4 +24,5 @@ def public_config() -> dict:
         },
         "execution_mode": settings.AGENT_EXECUTION_MODE,
         "max_output_tokens": settings.AGENT_MAX_OUTPUT_TOKENS,
+        "allow_self_approval": bool(settings.AGENT_ALLOW_SELF_APPROVAL),
     }

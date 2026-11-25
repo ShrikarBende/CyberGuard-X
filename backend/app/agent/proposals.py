@@ -1,11 +1,11 @@
 """Create pending-only proposals; human decision handling is added in P2."""
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import ipaddress
 import uuid
 from sqlalchemy import func, update
 from app.audit import record_analyst_activity
 from app.agent.models import ActionProposal
-from app.models.entities import IncidentEvent, SecurityEvent, User, Device
+from app.models.entities import IncidentEvent, SecurityEvent, User, Device, Incident
 from app.core.config import settings
 
 ACTION_TYPES = {"preserve_logs", "monitor", "escalate", "block_ip", "reset_credentials",
@@ -114,6 +114,17 @@ def create_pending_proposal(db, run_id, incident, requested_by, action, seen_ids
     return proposal
 
 
+def expire_stale_proposals(db, proposal_id=None):
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=settings.AGENT_PROPOSAL_TTL_HOURS)
+    query = db.query(ActionProposal).filter(ActionProposal.status == "pending", ActionProposal.created_at < cutoff)
+    if proposal_id is not None:
+        query = query.filter(ActionProposal.proposal_id == proposal_id)
+    expired = query.update({ActionProposal.status: "expired"}, synchronize_session=False)
+    if expired:
+        db.commit()
+    return expired
+
+
 def simulate_execute(db, proposal, decided_by):
     """Record dry-run approval only; this function never invokes a response system."""
     proposal.execution_state = "simulated"
@@ -126,8 +137,16 @@ def simulate_execute(db, proposal, decided_by):
 def decide_proposal(db, proposal, analyst, decision, note=""):
     if decision not in {"approved", "rejected"}:
         raise ValueError("Unsupported proposal decision")
+    expire_stale_proposals(db, proposal.proposal_id)
+    db.refresh(proposal)
+    if proposal.status == "expired":
+        raise ValueError("Proposal has expired")
     if proposal.status != "pending":
         raise ValueError("Only pending proposals can be decided")
+    if decision == "approved":
+        incident = db.query(Incident).filter(Incident.incident_id == proposal.incident_id).first()
+        if incident and str(incident.status).upper() in {"FALSE_POSITIVE", "RESOLVED"}:
+            raise ValueError("Cannot approve a proposal for a closed incident")
     if analyst.role == "viewer":
         raise PermissionError("Viewers cannot decide proposals")
     if analyst.username == proposal.requested_by and not settings.AGENT_ALLOW_SELF_APPROVAL:

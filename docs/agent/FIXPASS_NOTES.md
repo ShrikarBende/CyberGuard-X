@@ -88,3 +88,12 @@
 - Reproduced that unexpected tool exceptions were returned verbatim to the model and worker failures left no useful run error for review.
 - Added shared redaction for Bearer tokens, `sk-`/`sk_`/`gsk_` keys, and URL credentials. Worker failures are logged with sanitized exception text and store a bounded `Type: message`; tools return safe messages for validation/expected `ValueError` cases and `tool failed` for unexpected exceptions, which are logged server-side.
 - Verification: `python -m pytest backend/tests/agent/test_tool_quality.py::test_unexpected_tool_exception_is_logged_but_not_returned_to_model backend/tests/agent/test_service.py::test_worker_failure_stores_only_sanitized_exception_text -q` — 2 passed.
+
+## F14 — service, trace, proposal, and UI hardening
+
+- Added manifest-clamped limits at run creation; run-list summaries omit steps, while run detail retains them. Stale-run repair is throttled to one check per ten seconds and called only by run start/detail routes.
+- Repair prompts now include the invalid assistant candidate and validation error type. Successful and fallback `InvestigationNote` records are readable Markdown while `AgentRun.report` remains structured.
+- Pending proposals expire lazily after `AGENT_PROPOSAL_TTL_HOURS` (default 24); expired decisions return 409, and approvals for `RESOLVED`/`FALSE_POSITIVE` incidents return 409. Documented process-local run registry and single-worker requirement.
+- Frontend displays a limit-reached explanation, uses neutral styles for unknown run statuses, and disables self-review unless the public config opts in. The run detail view continues loading steps from the detail endpoint.
+- Existing test `test_concurrent_proposal_decision_is_atomic_and_does_not_simulate_twice` now accepts either stale-status wording after the newly added expiry refresh; the behavior remains a 409 and no second simulation.
+- Verification: focused backend checks — 40 passed; `npm run build` — passed. Full Phase D suite follows this commit.

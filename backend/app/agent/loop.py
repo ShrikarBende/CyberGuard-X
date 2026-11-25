@@ -5,7 +5,7 @@ import time
 import uuid
 from app.agent.limits import RunLimitReached
 from app.agent.models import AgentStep
-from app.agent.report import validate_report, detect_injection, redact_prompt_echo
+from app.agent.report import validate_report, detect_injection, redact_prompt_echo, render_report_markdown
 from app.agent.tools import ToolRegistry
 from app.models.entities import Incident, InvestigationNote
 from app.rag.assistant import _untrusted
@@ -220,8 +220,9 @@ def run_agent(run_id, incident_id, requested_by, manifest, llm, tools, limits, d
                 raise ValueError(f"report validation failed: {type(exc).__name__}") from exc
             repair_attempted = True
             step_no += 1
-            messages.append({"role": "user", "content": "Repair the report JSON to match the schema. "
-                "Use only evidence IDs already returned by tools. Return JSON only."})
+            messages.append({"role": "assistant", "content": str(final)[:6000]})
+            messages.append({"role": "user", "content": f"The previous report failed validation ({type(exc).__name__}). "
+                "Repair the report JSON to match the schema. Use only evidence IDs already returned by tools. Return JSON only."})
             turn = chat_with_remaining(messages, [])
             check_limits()
             usage["llm_calls"] += 1
@@ -234,7 +235,7 @@ def run_agent(run_id, incident_id, requested_by, manifest, llm, tools, limits, d
     _persist_step(db, run_id, trace_no, "validator", summary=json.dumps(validation),
                   evidence=seen_ids, ok=True)
     note = InvestigationNote(note_id=f"agent_note_{uuid.uuid4().hex}", incident_id=incident_id,
-        author="cyberguard-agent", content=json.dumps(report, ensure_ascii=False, indent=2),
+        author="cyberguard-agent", content=render_report_markdown(report),
         is_ai_generated=True, citations=sorted(seen_ids))
     db.add(note)
     db.commit()

@@ -38,6 +38,8 @@ Tool output truncation drops whole list entries and returns only evidence IDs th
 
 By default, every analyst, including an admin, must have a different username from the proposal requester to decide it. `AGENT_ALLOW_SELF_APPROVAL=true` opts into self-approval for single-admin demos.
 
+Pending proposals expire after `AGENT_PROPOSAL_TTL_HOURS` (default 24) and are marked lazily when the queue is read or a decision is attempted. Approval is refused for `RESOLVED` and `FALSE_POSITIVE` incidents. Run summaries omit step rows; steps are returned by the run-detail endpoint. Stale-run repair is throttled to at most once per ten seconds and runs only on start/detail requests. The run registry is process-local, so this feature requires a single backend worker.
+
 ## Limits
 
 Defaults are `AGENT_MAX_STEPS=6`, `AGENT_MAX_TOOL_CALLS=12`, `AGENT_WALL_SECONDS=90`, `AGENT_RESULT_CHARS=6000`, `AGENT_MAX_CONCURRENT_RUNS=2`, and `AGENT_MAX_OUTPUT_TOKENS=1500`. Hard ceilings are 12 steps, 30 tool calls, 300 seconds, 20,000 result characters, and 4 concurrent runs. A single incident may have only one active run. Per-call LLM timeout is capped at 45 seconds and the remaining run budget; transient HTTP failures retry up to three attempts with backoff and `Retry-After` support.

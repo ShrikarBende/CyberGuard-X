@@ -6,7 +6,7 @@ from app.agent.loop import run_agent
 from app.agent.manifest import AgentManifest
 from app.agent.tools import ToolRegistry, ToolResult, attacker_text
 from app.agent.models import AgentStep
-from app.models.entities import Incident
+from app.models.entities import Incident, InvestigationNote
 
 
 def _report():
@@ -122,6 +122,22 @@ def test_trace_persists_validated_tool_argument_values(db_pair):
     assert rows["run_baseline_investigation"]["incident_id"] == "i1"
     assert rows["search_knowledge"]["query"] == long_query[:200]
     assert "values_redacted" not in rows["search_knowledge"]
+
+
+def test_report_repair_context_includes_invalid_assistant_candidate(db_pair):
+    db, _ = db_pair
+    incident = _incident(db)
+    valid = json.loads(_report())
+    llm = FakeLLM([AssistantTurn(content="not-json"), AssistantTurn(content=json.dumps(valid))])
+    manifest = AgentManifest(id="test_agent", description="test", needs=["run_baseline_investigation"],
+        limits={}, system="safe", conclusion="json")
+    run_agent("repair-context", incident.incident_id, "analyst", manifest, llm, ScriptTools(), clamp_to_ceilings(), db)
+    repair_messages = llm.calls[1]["messages"]
+    assert {"role": "assistant", "content": "not-json"} in repair_messages
+    assert any(message.get("role") == "user" and "JSONDecodeError" in message.get("content", "")
+               for message in repair_messages)
+    note = db.query(InvestigationNote).filter_by(incident_id=incident.incident_id).one()
+    assert note.content.startswith("# Agent Investigation") and not note.content.startswith("{")
 
 
 def test_loop_rejects_out_of_manifest_tool_and_requires_baseline_first(db_pair):

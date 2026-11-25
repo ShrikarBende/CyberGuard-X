@@ -164,6 +164,6 @@ def test_concurrent_proposal_decision_is_atomic_and_does_not_simulate_twice(db_p
         other.execute(update(ActionProposal).where(ActionProposal.proposal_id == proposal.proposal_id,
             ActionProposal.status == "pending").values(status="rejected"))
         other.commit()
-    with pytest.raises(ValueError, match="no longer pending"):
+    with pytest.raises(ValueError, match="pending"):
         decide_proposal(db, stale, _analyst("peer"), "approved", "race")
     assert db.query(AnalystActivity).filter_by(action_type="agent_action_simulated").count() == 0

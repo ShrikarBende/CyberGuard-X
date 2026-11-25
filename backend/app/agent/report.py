@@ -61,6 +61,38 @@ def _safe_ids(values, allowed):
     return [item for item in values if isinstance(item, str) and item in allowed]
 
 
+def render_report_markdown(report: dict) -> str:
+    """Render either a validated agent report or deterministic baseline as readable Markdown."""
+    if "assessment" not in report and "trace" in report:
+        lines = ["# Deterministic Investigation", "", f"Incident: `{report.get('incident_id', 'unknown')}`", ""]
+        for step in report.get("trace", []):
+            label = str(step.get("step", "Investigation step")).replace("_", " ").title()
+            lines.extend([f"## {label}", "", f"```json\n{__import__('json').dumps(step, ensure_ascii=False, indent=2, default=str)}\n```", ""])
+        return "\n".join(lines).strip()
+    lines = ["# Agent Investigation", "", f"**Assessment:** {report.get('assessment', 'not recorded')}", "",
+             "## Summary", "", str(report.get("summary", "No summary recorded.")), ""]
+    for key, title, field, label in (
+        ("key_findings", "Key findings", "claim", "Evidence"),
+        ("attack_mapping", "ATT&CK mapping", "technique_id", "Rationale"),
+        ("hypotheses", "Hypotheses", "statement", "Supports"),
+        ("recommended_actions", "Recommended actions", "action_type", "Target"),
+    ):
+        values = report.get(key) or []
+        if values:
+            lines.extend([f"## {title}", ""])
+            for item in values:
+                lines.append(f"- **{item.get(field, 'Item')}:** {item.get('claim') or item.get('statement') or item.get('rationale') or ''}")
+                ids = item.get("evidence_ids") or item.get("supports") or []
+                if ids:
+                    lines.append(f"  - {label}: {', '.join(f'`{value}`' for value in ids)}")
+            lines.append("")
+    for key, title in (("missing_evidence", "Missing evidence"), ("limitations", "Limitations")):
+        values = report.get(key) or []
+        if values:
+            lines.extend([f"## {title}", "", *[f"- {value}" for value in values], ""])
+    return "\n".join(lines).strip()
+
+
 _INJECTION_PATTERNS = (
     r"ignore\s+(?:all\s+)?(?:previous|prior|earlier)\s+instructions",
     r"(?:mark|set|classify|label|treat|close|resolve)\b.{0,40}\bfalse\s+positive",
