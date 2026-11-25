@@ -98,7 +98,7 @@ _INJECTION_PATTERNS = (
     r"(?:mark|set|classify|label|treat|close|resolve)\b.{0,40}\bfalse\s+positive",
     r"propose.{0,80}(?:isolate\s+host|block\s+ip)",
     r"(?:reveal|print|repeat|show).{0,50}(?:system\s+)?prompt",
-    r"</\s*untrusted_tool_result\s*>",
+    r"</\s*untrusted\s+tool\s+result\s*>",
     r"(?:call|invoke|run)\s+(?:the\s+)?tool",
     r"tool\s*name\s*[:=]",
     r'"tool"\s*:\s*"',

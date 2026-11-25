@@ -97,3 +97,9 @@
 - Frontend displays a limit-reached explanation, uses neutral styles for unknown run statuses, and disables self-review unless the public config opts in. The run detail view continues loading steps from the detail endpoint.
 - Existing test `test_concurrent_proposal_decision_is_atomic_and_does_not_simulate_twice` now accepts either stale-status wording after the newly added expiry refresh; the behavior remains a 409 and no second simulation.
 - Verification: focused backend checks — 40 passed; `npm run build` — passed. Full Phase D suite follows this commit.
+
+## F3 follow-up — detect escaped tool-result delimiters after normalization
+
+- The first generated F16 injection run exposed that underscores were normalized to spaces before matching the closing `<untrusted_tool_result>` delimiter, so that payload was not counted as an injection.
+- Updated the delimiter pattern to match the normalized words and added a direct regression test. The generated evaluation also now flushes pending discard-audit rows before checking them.
+- Verification: `python -m pytest backend/tests/agent/test_report_hardening.py::test_closing_untrusted_result_marker_is_detected_after_normalization backend/tests/agent/test_eval_agent.py -q` — 3 passed.
