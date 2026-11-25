@@ -162,6 +162,14 @@ def attacker_text(event):
     return "\n".join(values)
 
 
+def _as_utc(value):
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 class ToolRegistry:
     def __init__(self):
         self.handlers = {name: getattr(self, f"_{name}") for name in KNOWN_TOOLS}
@@ -329,8 +337,14 @@ class ToolRegistry:
             allowed_values.update((event.user_id, event.device_id, event.source_ip, event.destination_ip))
         if args.value not in allowed_values:
             raise ValueError("filter value is outside this incident scope")
-        after = datetime.now(timezone.utc) - timedelta(minutes=args.window_minutes)
-        rows = (db.query(SecurityEvent).filter(column == args.value, SecurityEvent.timestamp >= after)
+        incident_start = _as_utc(incident.first_detected_at)
+        incident_end = _as_utc(incident.last_updated_at)
+        if incident_start is None or incident_end is None:
+            raise ValueError("incident time window is unavailable")
+        after = incident_start - timedelta(minutes=args.window_minutes)
+        before = incident_end + timedelta(minutes=args.window_minutes)
+        rows = (db.query(SecurityEvent).filter(column == args.value, SecurityEvent.timestamp >= after,
+                    SecurityEvent.timestamp <= before)
                 .order_by(SecurityEvent.timestamp.desc()).limit(args.limit).all())
         ids = [f"evt:{event.event_id}" for event in rows]
         scan_text = "\n".join(text for event in rows if (text := attacker_text(event)))

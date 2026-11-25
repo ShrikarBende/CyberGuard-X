@@ -49,3 +49,9 @@
 - Reproduced duplicate behavior: before the change, `get_explanation` returned the same incident evidence assembler payload as `get_incident_evidence`.
 - Implemented direct read-only extraction with whitelisted detection fields and at most ten entries for list fields. Missing explanations return `available: false` with the incident evidence ID. Detection detail uses the same whitelist and does not expose raw feature vectors.
 - Verification: `python -m pytest backend/tests/agent/test_tool_quality.py -q` — 3 passed; test confirms output differs, remains read-only, and omits feature vectors.
+
+## F8 — anchor related-event searches to incident time
+
+- Reproduced that a replayed incident from 2024 returned no matching rows because the query window was based on the current time.
+- Related-event queries now span `first_detected_at - window` through `last_updated_at + window`. Naive SQLite datetimes are treated as UTC; aware datetimes are converted to UTC before comparison.
+- Verification: `python -m pytest backend/tests/agent/test_tool_quality.py -q` — 4 passed. The same normalization path is used for SQLite and PostgreSQL; no PostgreSQL service is configured here for a live integration run.

@@ -56,3 +56,22 @@ def test_explanation_is_read_only_distinct_and_filters_raw_detector_features(db_
     assert "cicids_features" not in str(explanation.data)
     assert not db.new and not db.dirty and not db.deleted
     assert db.query(RiskScore).one().top_contributing_features == before
+
+
+def test_related_events_window_is_anchored_to_replayed_incident_time(db_pair):
+    from datetime import timedelta
+    from app.models.entities import IncidentEvent, SecurityEvent
+    from app.agent.tools import RelatedArgs
+    db, _ = db_pair
+    first = datetime(2024, 5, 1, tzinfo=timezone.utc)
+    incident = Incident(incident_id="old-i", title="replay", status="OPEN", severity="LOW",
+        threat_classification="UNKNOWN", overall_risk_score=1, flow_count=1,
+        first_detected_at=first, last_updated_at=first + timedelta(minutes=30))
+    own = SecurityEvent(event_id="old-own", timestamp=first, source_ip="192.0.2.77", event_category="network", event_type="flow")
+    related = SecurityEvent(event_id="old-related", timestamp=first + timedelta(minutes=10), source_ip="192.0.2.77",
+        event_category="network", event_type="flow")
+    db.add_all([incident, own, related]); db.flush()
+    db.add(IncidentEvent(incident_id=incident.incident_id, event_id=own.event_id)); db.commit()
+    result = ToolRegistry()._find_related_events(RelatedArgs(field="source_ip", value="192.0.2.77", window_minutes=60),
+        db, incident)
+    assert {item["event_id"] for item in result.data} == {"old-own", "old-related"}
