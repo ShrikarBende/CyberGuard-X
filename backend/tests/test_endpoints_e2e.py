@@ -97,8 +97,10 @@ async def test_health_is_public_and_every_other_http_route_requires_a_token(api_
 
 
 @pytest.mark.asyncio
-async def test_viewer_gets_forbidden_for_every_write_route(api_clients):
+async def test_viewer_gets_forbidden_for_every_write_route(api_clients, monkeypatch):
     _, anonymous, tokens = api_clients
+    # Exercise role authorization even when CI has the opt-in agent setting disabled.
+    monkeypatch.setattr(settings, "AGENT_ENABLED", True)
     cases = {
         ("POST", "/api/auth/users"): {"json": {"username": "other", "password": "new-password-123", "role": "viewer"}},
         ("POST", "/api/demo/load"): {},
@@ -109,6 +111,10 @@ async def test_viewer_gets_forbidden_for_every_write_route(api_clients):
         ("PATCH", "/api/incidents/{incident_id}/status"): {"params": {"status": "INVESTIGATING"}},
         ("POST", "/api/incidents/{incident_id}/notes"): {"json": {"content": "test note"}},
         ("POST", "/api/incidents/{incident_id}/investigate"): {},
+        ("POST", "/api/incidents/{incident_id}/agent-investigate"): {},
+        ("POST", "/api/agent/runs/{run_id}/cancel"): {},
+        ("POST", "/api/agent/proposals/{proposal_id}/approve"): {"json": {"note": "test"}},
+        ("POST", "/api/agent/proposals/{proposal_id}/reject"): {"json": {"note": "test"}},
         ("POST", "/api/rag/chat"): {"json": {"query": "test"}},
         ("POST", "/api/models/retrain"): {"json": {"profile": "light"}},
         ("POST", "/api/upload"): {"files": {"file": ("empty.json", "[]", "application/json")}},

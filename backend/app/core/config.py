@@ -64,6 +64,17 @@ class Settings(BaseSettings):
     LLM_API_KEY: str = ""
     LLM_API_URL: str = ""
     LLM_MODEL: str = "template"
+    AGENT_ENABLED: bool = False
+    AGENT_TOOL_MODE: Literal["native", "json"] = "native"
+    AGENT_LLM_API_URL: str = ""
+    AGENT_LLM_API_KEY: str = ""
+    AGENT_LLM_MODEL: str = ""
+    AGENT_MAX_STEPS: int = Field(default=6, ge=1, le=12)
+    AGENT_MAX_TOOL_CALLS: int = Field(default=12, ge=1, le=30)
+    AGENT_WALL_SECONDS: int = Field(default=90, ge=1, le=300)
+    AGENT_RESULT_CHARS: int = Field(default=6000, ge=256, le=20000)
+    AGENT_MAX_CONCURRENT_RUNS: int = Field(default=2, ge=1, le=4)
+    AGENT_EXECUTION_MODE: Literal["dry_run"] = "dry_run"
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
     RAG_TOP_K: int = 4
     RAG_BACKEND: Literal["auto", "numpy", "faiss"] = "auto"
@@ -101,6 +112,13 @@ class Settings(BaseSettings):
                     "development, or set a strong SECRET_KEY in the project-root .env or environment "
                     "(generate one with: python -c \"import secrets; print(secrets.token_hex(32))\")."
                 )
+        return self
+
+    @model_validator(mode="after")
+    def agent_llm_defaults(self):
+        self.AGENT_LLM_API_URL = self.AGENT_LLM_API_URL or self.LLM_API_URL
+        self.AGENT_LLM_API_KEY = self.AGENT_LLM_API_KEY or self.LLM_API_KEY
+        self.AGENT_LLM_MODEL = self.AGENT_LLM_MODEL or self.LLM_MODEL
         return self
 
 

@@ -47,3 +47,6 @@ Thumbs.db
 .vscode/
 *.db-wal
 *.db-shm
+
+# Backend-local secrets (root .env is loaded by absolute path)
+backend/.env

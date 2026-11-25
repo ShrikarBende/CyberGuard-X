@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import statistics
+import argparse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -273,10 +274,70 @@ def render() -> str:
     return "\n".join(lines)
 
 
+AGENT_START = "<!-- GENERATED AGENT EVALUATION: START -->"
+AGENT_END = "<!-- GENERATED AGENT EVALUATION: END -->"
+
+
+def _metric(value):
+    return "n/a" if value is None else f"{float(value):.4f}"
+
+
+def render_agent_section(result: dict) -> str:
+    metrics = result["metrics"]
+    baseline = metrics["baseline"]
+    agent = metrics["agent"]
+    injection = result["injection_suite"]
+    lines = [
+        "## Agent investigation evaluation (generated)", "",
+        f"Model: `{result['model_name']}`; date: `{result['date_utc']}`; seed: `{result['seed']}`; sample size: {result['sample_size']}.",
+        f"Inputs: {result['source_counts'].get('held_out_cicids_replay', 0)} held-out CICIDS replay rows and {result['synthetic_demo_sample_count']} synthetic demo rows. Demo-derived values are synthetic.",
+        "FakeLLM scripted evaluation validates plumbing only. It does not measure real-model quality or support an improvement claim.", "",
+        "| Arm | Valid citation rate before validator | Unsupported technique rate | ATT&CK precision (expected classes) | ATT&CK recall (expected classes) | Mean steps | Mean tool calls | Mean latency seconds | Fallback rate |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    for name, row in (("Deterministic baseline", baseline), ("Agent (FakeLLM)", agent)):
+        lines.append("| " + name + " | " + " | ".join(_metric(row.get(key)) for key in (
+            "valid_citation_rate_before_validator", "unsupported_technique_rate",
+            "attack_mapping_precision_macro_expected_classes", "attack_mapping_recall_macro_expected_classes",
+            "mean_steps", "mean_tool_calls", "mean_latency_seconds", "fallback_rate")) + " |")
+    lines += ["", f"Injection guard suite: {injection['passed_count']}/{injection['payload_count']} passed with FakeLLM; scope is scripted guard verification only.",
+              "Expected ATT&CK techniques are versioned in `backend/ml/evaluation/expected_techniques.json`; precision and recall include only listed classes.", ""]
+    return "\n".join(lines)
+
+
+def update_agent_section(result: dict) -> Path:
+    section = render_agent_section(result)
+    existing = OUTPUT.read_text(encoding="utf-8") if OUTPUT.is_file() else "# Evaluation results\n"
+    block = f"{AGENT_START}\n{section}\n{AGENT_END}"
+    if AGENT_START in existing and AGENT_END in existing:
+        before, rest = existing.split(AGENT_START, 1)
+        _old, after = rest.split(AGENT_END, 1)
+        updated = before.rstrip() + "\n\n" + block + after
+    else:
+        marker = "<!-- GENERATED RESULTS: END -->"
+        if marker in existing:
+            before, after = existing.split(marker, 1)
+            updated = before + marker + "\n\n" + block + after
+        else:
+            updated = existing.rstrip() + "\n\n" + block + "\n"
+    OUTPUT.write_text(updated, encoding="utf-8")
+    return OUTPUT
+
+
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--agent-only", action="store_true", help="update only the generated agent evaluation section from the latest agent_eval JSON")
+    args = parser.parse_args()
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT.write_text(render(), encoding="utf-8")
-    print(f"Wrote {OUTPUT}")
-    print("Read JSON files:")
-    for entry in manifest_entries()[1]:
-        print(f"- {entry['file']}")
+    if args.agent_only:
+        agent_files = sorted(RESULTS.glob("agent_eval_*.json"))
+        if not agent_files:
+            raise SystemExit("No agent_eval_*.json result exists")
+        result = read(agent_files[-1])
+        print(f"Updated generated agent section in {update_agent_section(result)} from {agent_files[-1]}")
+    else:
+        OUTPUT.write_text(render(), encoding="utf-8")
+        print(f"Wrote {OUTPUT}")
+        print("Read JSON files:")
+        for entry in manifest_entries()[1]:
+            print(f"- {entry['file']}")

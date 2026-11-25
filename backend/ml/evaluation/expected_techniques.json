@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "source": "repository ATT&CK knowledge files; class expectations are evaluation-only",
+  "expected_techniques": {
+    "PortScan": {
+      "techniques": ["T1046"],
+      "rationale": "The repository includes t1046_network_discovery.md describing probes of hosts and ports."
+    },
+    "BruteForce": {
+      "techniques": ["T1110"],
+      "rationale": "The repository includes t1110_brute_force.md and correlation rules mapping failed-login bursts to T1110."
+    }
+  }
+}
