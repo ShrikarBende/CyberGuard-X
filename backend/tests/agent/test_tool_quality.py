@@ -79,6 +79,7 @@ def test_related_events_window_is_anchored_to_replayed_incident_time(db_pair):
 
 def test_result_truncation_keeps_json_and_only_cites_visible_event_items(db_pair, monkeypatch):
     import json
+    from app.agent.tools import ToolResult
     db, _ = db_pair
     incident = Incident(incident_id="truncate-i", title="test", status="OPEN", severity="LOW",
         threat_classification="UNKNOWN", overall_risk_score=1, flow_count=0,
