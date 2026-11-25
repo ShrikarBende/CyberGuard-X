@@ -1,5 +1,6 @@
 """Threaded run lifecycle with global and per-incident concurrency guards."""
 from datetime import datetime, timezone
+import logging
 import threading
 import uuid
 from app.agent.config import CEILINGS
@@ -12,12 +13,14 @@ from app.agent.models import AgentRun, AgentStep
 from app.agent.tools import ToolRegistry
 from app.audit import record_analyst_activity
 from app.agent.proposals import ProposalRejected, persist_proposal, validate_proposal
+from app.agent.sanitize import sanitize_error, redact_exception_for_logging
 from app.core.config import settings
 from app.database.session import SessionLocal
 from app.models.entities import Incident
 from app.rag.assistant import investigate_incident
 
 _RUNS: dict[str, dict] = {}
+logger = logging.getLogger("app.agent")
 _RUNS_LOCK = threading.Lock()
 _llm_factory = AgentLLM
 
@@ -83,7 +86,7 @@ def _finish(db, run, status, report=None, validation=None, usage=None, error=Non
     db.commit()
 
 
-def _fallback(db, run, incident, reason=None):
+def _fallback(db, run, incident, reason=None, error=None):
     baseline = investigate_incident(incident, db, top_k=6)
     run.mode = "fallback"
     from app.models.entities import InvestigationNote
@@ -95,7 +98,7 @@ def _fallback(db, run, incident, reason=None):
     db.add(note)
     _finish(db, run, "completed_fallback", baseline,
             {"fallback_reason": str(reason)[:300] if reason else "LLM is not configured"},
-            {"llm_calls": 0, "tool_calls": 0}, None)
+            {"llm_calls": 0, "tool_calls": 0}, error)
 
 
 def _limit_reached(db, run, incident, reason):
@@ -140,12 +143,18 @@ def _worker(run_id, incident_id, requested_by, cancel_event):
             except Exception as fallback_exc:
                 _finish(db, run, "failed", error=f"{type(fallback_exc).__name__}: limit fallback failed")
         except Exception as exc:
+            safe = redact_exception_for_logging(exc)
+            logger.exception("Agent worker failed for run %s: %s", run_id, safe)
+            saved_error = f"{type(exc).__name__}: {sanitize_error(safe)[:200]}"
             # Deterministic fallback protects the analyst from an empty result.
             db.rollback()
             try:
-                _fallback(db, run, incident, type(exc).__name__)
+                _fallback(db, run, incident, type(exc).__name__, error=saved_error)
             except Exception as fallback_exc:
-                _finish(db, run, "failed", error=f"{type(fallback_exc).__name__}: deterministic fallback failed")
+                safe_fallback = sanitize_error(fallback_exc)[:200]
+                redact_exception_for_logging(fallback_exc)
+                logger.exception("Agent fallback failed for run %s: %s", run_id, safe_fallback)
+                _finish(db, run, "failed", error=f"{type(fallback_exc).__name__}: {safe_fallback}")
 
 
 def start_run(db, incident_id, requested_by):

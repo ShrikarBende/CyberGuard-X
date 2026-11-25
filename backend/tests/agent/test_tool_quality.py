@@ -79,7 +79,6 @@ def test_related_events_window_is_anchored_to_replayed_incident_time(db_pair):
 
 def test_result_truncation_keeps_json_and_only_cites_visible_event_items(db_pair, monkeypatch):
     import json
-    from app.agent.tools import ToolResult
     db, _ = db_pair
     incident = Incident(incident_id="truncate-i", title="test", status="OPEN", severity="LOW",
         threat_classification="UNKNOWN", overall_risk_score=1, flow_count=0,
@@ -99,3 +98,20 @@ def test_result_truncation_keeps_json_and_only_cites_visible_event_items(db_pair
     assert result.data["truncated"] is True and result.data["omitted_count"] > 0
     visible = {f"evt:{item['event_id']}" for item in result.data["items"]}
     assert set(result.evidence_ids) == visible
+
+
+def test_unexpected_tool_exception_is_logged_but_not_returned_to_model(db_pair, caplog):
+    from app.agent.tools import ToolResult
+    db, _ = db_pair
+    incident = Incident(incident_id="err-i", title="test", status="OPEN", severity="LOW",
+        threat_classification="UNKNOWN", overall_risk_score=1, flow_count=0,
+        first_detected_at=datetime.now(timezone.utc), last_updated_at=datetime.now(timezone.utc))
+    db.add(incident); db.commit()
+    registry = ToolRegistry()
+    registry.handlers["run_baseline_investigation"] = lambda *args: (_ for _ in ()).throw(
+        RuntimeError("provider failed Bearer token123 gsk_secret https://user:pass@host/path"))
+    result = registry.run("run_baseline_investigation", {"incident_id": incident.incident_id},
+        db, incident, "r", "analyst", set())
+    assert result.ok is False and result.error == "tool failed"
+    assert "token123" not in result.error and "gsk_secret" not in result.error
+    assert "RuntimeError: provider failed Bearer [redacted] [redacted-key] https://[redacted]@host/path" in caplog.text

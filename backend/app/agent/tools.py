@@ -3,17 +3,21 @@ from dataclasses import dataclass
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import json
+import logging
 import uuid
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import or_
 from app.agent.manifest import KNOWN_TOOLS
 from app.agent.proposals import ACTION_TYPES
+from app.agent.sanitize import sanitize_error, redact_exception_for_logging
 from app.core.config import settings
 from app.models.entities import Incident, IncidentEvent, SecurityEvent, DetectionResult, Device, User
 from app.rag.assistant import (_incident_investigation_evidence, _resolved_incident_documents,
     investigate_incident)
 from app.rag.indexer import get_retriever
+
+logger = logging.getLogger("app.agent")
 
 
 class Args(BaseModel):
@@ -270,11 +274,15 @@ class ToolRegistry:
             _fit_tool_result(result, cap)
             return result
         except ValidationError as exc:
-            return ToolResult({}, [], False, f"invalid tool arguments: {exc.errors(include_url=False)[:3]}")
+            errors = [{"loc": row.get("loc"), "type": row.get("type"), "msg": row.get("msg")}
+                      for row in exc.errors(include_url=False)[:3]]
+            return ToolResult({}, [], False, sanitize_error(f"invalid tool arguments: {errors}")[:300])
         except ValueError as exc:
-            return ToolResult({}, [], False, str(exc)[:300])
+            return ToolResult({}, [], False, sanitize_error(exc)[:300])
         except Exception as exc:
-            return ToolResult({}, [], False, str(exc)[:300])
+            safe = redact_exception_for_logging(exc)
+            logger.exception("Agent tool %s failed: %s", name, safe)
+            return ToolResult({}, [], False, "tool failed")
 
     def _run_baseline_investigation(self, args, db, incident, *_):
         raw = investigate_incident(incident, db, top_k=6)

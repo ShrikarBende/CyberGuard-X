@@ -82,3 +82,9 @@
 - Added `AGENT_ALLOW_SELF_APPROVAL=false` by default; the self-approval rule now applies to every role. Proposal status transitions use a conditional SQL update from `pending` and only rowcount 1 proceeds to audit/simulation.
 - Updated the existing admin self-approval test to cover default denial and explicit opt-in; added a two-session stale decision test and exactly-one simulation assertion.
 - Verification: `python -m pytest backend/tests/agent/test_proposals.py backend/tests/test_artifact_and_evaluation_metadata.py::test_env_example_documents_every_application_setting -q` — 7 passed.
+
+## F13 — sanitize worker and tool errors
+
+- Reproduced that unexpected tool exceptions were returned verbatim to the model and worker failures left no useful run error for review.
+- Added shared redaction for Bearer tokens, `sk-`/`sk_`/`gsk_` keys, and URL credentials. Worker failures are logged with sanitized exception text and store a bounded `Type: message`; tools return safe messages for validation/expected `ValueError` cases and `tool failed` for unexpected exceptions, which are logged server-side.
+- Verification: `python -m pytest backend/tests/agent/test_tool_quality.py::test_unexpected_tool_exception_is_logged_but_not_returned_to_model backend/tests/agent/test_service.py::test_worker_failure_stores_only_sanitized_exception_text -q` — 2 passed.
