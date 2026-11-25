@@ -79,11 +79,20 @@ def run_agent(run_id, incident_id, requested_by, manifest, llm, tools, limits, d
         if time.monotonic() - started_monotonic >= limits.wall_seconds:
             raise RunLimitReached("wall clock limit reached")
 
+    def chat_with_remaining(request_messages, request_tools):
+        check_limits()
+        remaining = max(0.001, limits.wall_seconds - (time.monotonic() - started_monotonic))
+        try:
+            return llm.chat(request_messages, request_tools, timeout=min(45.0, remaining))
+        except Exception:
+            check_limits()
+            raise
+
     while step_no < limits.max_steps:
         check_limits()
         step_no += 1
         llm_started = time.monotonic()
-        turn = llm.chat(messages, schemas)
+        turn = chat_with_remaining(messages, schemas)
         check_limits()
         usage["llm_calls"] += 1
         for key in ("prompt_tokens", "completion_tokens"):
@@ -169,7 +178,7 @@ def run_agent(run_id, incident_id, requested_by, manifest, llm, tools, limits, d
             reason = "tool budget exhausted" if budget_exhausted else "step limit reached"
             messages.append({"role": "user", "content":
                 f"{reason.capitalize()}. Return the final JSON report now using only evidence already retrieved."})
-            turn = llm.chat(messages, [])
+            turn = chat_with_remaining(messages, [])
             check_limits()
             usage["llm_calls"] += 1
             usage["finalized_by_limit"] = True
@@ -213,7 +222,7 @@ def run_agent(run_id, incident_id, requested_by, manifest, llm, tools, limits, d
             step_no += 1
             messages.append({"role": "user", "content": "Repair the report JSON to match the schema. "
                 "Use only evidence IDs already returned by tools. Return JSON only."})
-            turn = llm.chat(messages, [])
+            turn = chat_with_remaining(messages, [])
             check_limits()
             usage["llm_calls"] += 1
             final = turn.content

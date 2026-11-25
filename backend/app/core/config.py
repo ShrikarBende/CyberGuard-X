@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     AGENT_WALL_SECONDS: int = Field(default=90, ge=1, le=300)
     AGENT_RESULT_CHARS: int = Field(default=6000, ge=256, le=20000)
     AGENT_MAX_CONCURRENT_RUNS: int = Field(default=2, ge=1, le=4)
+    AGENT_MAX_OUTPUT_TOKENS: int = Field(default=1500, ge=1, le=20000)
     AGENT_EXECUTION_MODE: Literal["dry_run"] = "dry_run"
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
     RAG_TOP_K: int = 4

@@ -23,4 +23,5 @@ def public_config() -> dict:
             "max_concurrent_runs": settings.AGENT_MAX_CONCURRENT_RUNS,
         },
         "execution_mode": settings.AGENT_EXECUTION_MODE,
+        "max_output_tokens": settings.AGENT_MAX_OUTPUT_TOKENS,
     }

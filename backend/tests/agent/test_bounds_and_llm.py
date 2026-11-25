@@ -10,9 +10,14 @@ from app.models.entities import Incident
 
 
 class FakeResponse:
-    status_code = 200
-    def __init__(self, payload): self.payload = payload
-    def raise_for_status(self): pass
+    def __init__(self, payload, status_code=200, headers=None):
+        self.payload, self.status_code, self.headers = payload, status_code, headers or {}
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            import httpx
+            request = httpx.Request("POST", "https://offline.invalid")
+            response = httpx.Response(self.status_code, request=request, headers=self.headers)
+            raise httpx.HTTPStatusError("status", request=request, response=response)
     def json(self): return self.payload
 
 
@@ -60,6 +65,92 @@ def test_json_action_mode_parses_single_tool_call_without_network():
     turn = llm.chat([], [{"function": {"name": "search_knowledge"}}])
     assert turn.tool_calls[0].name == "search_knowledge"
     assert turn.tool_calls[0].arguments == {"query": "MITRE"}
+
+
+def test_llm_omits_empty_tools_sets_max_tokens_and_omits_empty_key_auth(monkeypatch):
+    seen = {}
+    class CaptureClient:
+        def __enter__(self): return self
+        def __exit__(self, *_): pass
+        def post(self, url, **kwargs):
+            seen.update(kwargs)
+            return FakeResponse({"choices": [{"message": {"content": "{}"}}]})
+    monkeypatch.setattr("app.agent.llm.settings.AGENT_MAX_OUTPUT_TOKENS", 777, raising=False)
+    AgentLLM("https://offline.invalid", "", "fake", client_factory=lambda **kwargs: CaptureClient()).chat([], [])
+    assert "tools" not in seen["json"] and "tool_choice" not in seen["json"]
+    assert seen["json"]["max_tokens"] == 777
+    assert "Authorization" not in seen["headers"]
+
+
+def test_json_mode_sends_schemas_and_converts_tool_history_to_plain_messages():
+    seen = {}
+    schema = {"type": "function", "function": {"name": "search_knowledge", "parameters": {
+        "type": "object", "properties": {"query": {"type": "string"}}}}}
+    history = [{"role": "user", "content": "start"},
+        {"role": "assistant", "tool_calls": [{"id": "c1", "function": {"name": "search_knowledge",
+             "arguments": '{"query":"MITRE"}'}}]},
+        {"role": "tool", "tool_call_id": "c1", "name": "search_knowledge", "content": "evidence"}]
+    class CaptureClient:
+        def __enter__(self): return self
+        def __exit__(self, *_): pass
+        def post(self, url, **kwargs):
+            seen.update(kwargs)
+            return FakeResponse({"choices": [{"message": {"content": '{"final":{}}'}}]})
+    AgentLLM("https://offline.invalid", "secret", "fake", mode="json",
+        client_factory=lambda **kwargs: CaptureClient()).chat(history, [schema])
+    body = seen["json"]
+    assert "tools" not in body and "tool_choice" not in body
+    assert all(message["role"] != "tool" and "tool_calls" not in message for message in body["messages"])
+    assert '{"tool": "search_knowledge", "args": {"query": "MITRE"}}' in body["messages"][1]["content"]
+    assert "untrusted_tool_result" in body["messages"][2]["content"]
+    assert "query" in body["messages"][-1]["content"]
+
+
+def test_native_400_is_remembered_and_retries_json_directly(monkeypatch):
+    requests = []
+    responses = [FakeResponse({}, 400), FakeResponse({"choices": [{"message": {"content": '{"final":{}}'}}]}),
+                 FakeResponse({"choices": [{"message": {"content": '{"final":{}}'}}]})]
+    class CaptureClient:
+        def __enter__(self): return self
+        def __exit__(self, *_): pass
+        def post(self, url, **kwargs):
+            requests.append(kwargs["json"])
+            return responses.pop(0)
+    llm = AgentLLM("https://offline.invalid", "secret", "fake", client_factory=lambda **kwargs: CaptureClient())
+    llm.chat([], [{"type": "function", "function": {"name": "x", "parameters": {}}}])
+    assert llm._native_unsupported is True
+    llm.chat([], [{"type": "function", "function": {"name": "x", "parameters": {}}}])
+    assert len(requests) == 3
+    assert "tools" in requests[0] and "tools" not in requests[1] and "tools" not in requests[2]
+
+
+def test_retry_after_is_honored_for_rate_limit(monkeypatch):
+    waits, calls = [], []
+    responses = [FakeResponse({}, 429, {"Retry-After": "2"}),
+                 FakeResponse({"choices": [{"message": {"content": "{}"}}]})]
+    class CaptureClient:
+        def __enter__(self): return self
+        def __exit__(self, *_): pass
+        def post(self, url, **kwargs):
+            calls.append(kwargs)
+            return responses.pop(0)
+    monkeypatch.setattr("app.agent.llm.time.sleep", waits.append)
+    AgentLLM("https://offline.invalid", "secret", "fake", client_factory=lambda **kwargs: CaptureClient()).chat([], [])
+    assert waits == [2]
+    assert len(calls) == 2
+
+
+def test_loop_passes_remaining_wall_budget_as_llm_timeout(db_pair):
+    db, _ = db_pair
+    incident = _incident(db)
+    manifest = AgentManifest(id="test_agent", description="test", needs=["run_baseline_investigation"],
+        limits={}, system="safe", conclusion="json")
+    llm = FakeLLM([AssistantTurn(content=json.dumps({"summary": "Review needed.",
+        "assessment": "unknown_needs_review", "key_findings": [], "attack_mapping": [], "hypotheses": [],
+        "missing_evidence": [], "recommended_actions": [], "limitations": []}))])
+    run_agent("remaining-timeout", incident.incident_id, "analyst", manifest, llm, ToolRegistry(),
+        RunLimits(max_steps=2, max_tool_calls=2, wall_seconds=7, result_chars=1000, max_concurrent_runs=1), db)
+    assert llm.calls[0]["timeout"] <= 7
 
 
 def test_tool_result_cap_includes_evidence_ids(db_pair, monkeypatch):

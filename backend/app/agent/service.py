@@ -117,7 +117,7 @@ def _worker(run_id, incident_id, requested_by, cancel_event):
         if incident is None:
             _finish(db, run, "failed", error="Incident not found")
             return
-        configured = bool(settings.AGENT_LLM_API_URL and settings.AGENT_LLM_API_KEY)
+        configured = bool(settings.AGENT_LLM_API_URL)
         try:
             if not configured and _llm_factory is AgentLLM:
                 _fallback(db, run, incident)

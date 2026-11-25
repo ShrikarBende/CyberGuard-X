@@ -68,3 +68,10 @@
 - Reproduced that trace rows retained only argument field names and `values_redacted`, hiding the actual `incident_id` and search query needed to audit a run.
 - Frontend search found no use of `values_redacted` or assumptions about argument shape. Tool execution now attaches Pydantic-validated arguments to its result, and trace persistence stores those values with each string capped at 200 characters.
 - Verification: `python -m pytest backend/tests/agent/test_loop.py backend/tests/agent/test_tool_quality.py backend/tests/agent/test_bounds_and_llm.py -q` — 18 passed.
+
+## F11 — harden the OpenAI-compatible LLM client
+
+- Reproduced that the client retried once with a fixed 150 ms delay, sent empty native tool arrays, required a key even for a local URL, discarded JSON-mode schemas/history, and retried native 400s on every call.
+- Added three-attempt retries for 429/5xx/transient transport failures, capped exponential jitter and `Retry-After` handling bounded by the caller timeout, remaining-run timeout propagation, remembered native 400 fallback, JSON-mode schema/history conversion, optional auth, and `AGENT_MAX_OUTPUT_TOKENS=1500`.
+- Added the output-token setting to `.env.example`, public config, and architecture notes. Service configuration now treats a URL alone as configured.
+- Verification: `python -m pytest backend/tests/agent/test_bounds_and_llm.py backend/tests/agent/test_loop.py backend/tests/agent/test_service.py backend/tests/test_artifact_and_evaluation_metadata.py::test_env_example_documents_every_application_setting -q` — 29 passed.

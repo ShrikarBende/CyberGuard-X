@@ -38,7 +38,7 @@ Tool output truncation drops whole list entries and returns only evidence IDs th
 
 ## Limits
 
-Defaults are `AGENT_MAX_STEPS=6`, `AGENT_MAX_TOOL_CALLS=12`, `AGENT_WALL_SECONDS=90`, `AGENT_RESULT_CHARS=6000`, and `AGENT_MAX_CONCURRENT_RUNS=2`. Hard ceilings are 12 steps, 30 tool calls, 300 seconds, 20,000 result characters, and 4 concurrent runs. A single incident may have only one active run. Per-call LLM timeout is 45 seconds with one retry for transient failures.
+Defaults are `AGENT_MAX_STEPS=6`, `AGENT_MAX_TOOL_CALLS=12`, `AGENT_WALL_SECONDS=90`, `AGENT_RESULT_CHARS=6000`, `AGENT_MAX_CONCURRENT_RUNS=2`, and `AGENT_MAX_OUTPUT_TOKENS=1500`. Hard ceilings are 12 steps, 30 tool calls, 300 seconds, 20,000 result characters, and 4 concurrent runs. A single incident may have only one active run. Per-call LLM timeout is capped at 45 seconds and the remaining run budget; transient HTTP failures retry up to three attempts with backoff and `Retry-After` support.
 
 ## Invariants
 
