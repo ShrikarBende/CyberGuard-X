@@ -42,3 +42,10 @@
 - Reproduced missing enums for related-event fields, knowledge source types, proposal action/target types, and an unbounded proposal confidence. Invalid related-event fields passed validation and failed later in the handler.
 - Added enum-constrained schemas, bounded confidence, distinct tool-specific descriptions, and safe validation-error responses.
 - Verification: `python -m pytest backend/tests/agent/test_tool_quality.py -q` — 2 passed.
+
+## F7 — return read-only explainability summaries
+
+- Code inspection: `get_explainability` reads `RiskScore.top_contributing_features`, `RiskScore.risk_breakdown`, and `RiskScore.explanation_summary`. Detector producers store endpoint `top_contributing_features`, `feature_residuals`, and `reconstruction_error`; user `temporal_attention` and `variable_selection_weights`; graph `top_suspicious_edges` and graph score; network `risk_breakdown`, `risk_fusion`, `s_network_flow`, `open_set_score`, `centroid_distance`, and `open_set_label`. Network detection rows also contain `cicids_features` and `class_probabilities`; those raw vectors are excluded from agent output.
+- Reproduced duplicate behavior: before the change, `get_explanation` returned the same incident evidence assembler payload as `get_incident_evidence`.
+- Implemented direct read-only extraction with whitelisted detection fields and at most ten entries for list fields. Missing explanations return `available: false` with the incident evidence ID. Detection detail uses the same whitelist and does not expose raw feature vectors.
+- Verification: `python -m pytest backend/tests/agent/test_tool_quality.py -q` — 3 passed; test confirms output differs, remains read-only, and omits feature vectors.

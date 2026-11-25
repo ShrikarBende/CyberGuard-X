@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from app.agent.tools import ARG_MODELS, ToolRegistry
-from app.models.entities import Incident
+from app.models.entities import Incident, IncidentEvent, SecurityEvent, DetectionResult, RiskScore
 
 
 def test_tool_schemas_constrain_high_risk_arguments_and_describe_each_tool(db_pair):
@@ -28,3 +28,31 @@ def test_invalid_tool_enum_returns_clean_error(db_pair):
         db, incident, "r", "analyst", set())
     assert result.ok is False
     assert result.error.startswith("invalid tool arguments:")
+
+
+def test_explanation_is_read_only_distinct_and_filters_raw_detector_features(db_pair):
+    db, _ = db_pair
+    incident = Incident(incident_id="explain-i", title="test", status="OPEN", severity="HIGH",
+        threat_classification="UNKNOWN", overall_risk_score=80, flow_count=1,
+        first_detected_at=datetime.now(timezone.utc), last_updated_at=datetime.now(timezone.utc))
+    event = SecurityEvent(event_id="explain-e", timestamp=datetime.now(timezone.utc), event_category="network",
+        event_type="flow", raw_payload={"safe": "telemetry"})
+    db.add_all([incident, event]); db.flush()
+    db.add(IncidentEvent(incident_id=incident.incident_id, event_id=event.event_id))
+    db.add(DetectionResult(detection_id="explain-d", event_id=event.event_id, verdict="UNKNOWN_CANDIDATE",
+        predicted_class="unknown", layer="network", details={"top_contributing_features": [{"feature": str(i)} for i in range(12)],
+        "cicids_features": {"secret_feature": 999}, "risk_breakdown": {"network": 80}}))
+    db.add(RiskScore(incident_id=incident.incident_id, score=80, category="HIGH",
+        top_contributing_features=[{"feature": "x", "value": .8}], explanation_summary="Network evidence dominates.",
+        risk_breakdown={"fusion": {"probability": .8}}))
+    db.commit()
+    registry = ToolRegistry()
+    before = db.query(RiskScore).one().top_contributing_features
+    evidence = registry.run("get_incident_evidence", {"incident_id": incident.incident_id}, db, incident, "r", "analyst", set())
+    explanation = registry.run("get_explanation", {"incident_id": incident.incident_id}, db, incident, "r", "analyst", set())
+    assert explanation.data != evidence.data
+    assert explanation.data["explanation_summary"] == "Network evidence dominates."
+    assert len(explanation.data["detections"][0]["details"]["top_contributing_features"]) == 10
+    assert "cicids_features" not in str(explanation.data)
+    assert not db.new and not db.dirty and not db.deleted
+    assert db.query(RiskScore).one().top_contributing_features == before

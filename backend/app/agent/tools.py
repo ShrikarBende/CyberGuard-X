@@ -119,6 +119,24 @@ def _serialize_event(event, detection=None):
     return payload
 
 
+_EXPLANATION_DETAIL_KEYS = {
+    "score_name", "risk_breakdown", "risk_fusion", "top_contributing_features", "feature_residuals",
+    "reconstruction_error", "temporal_attention", "variable_selection_weights", "s_network_flow",
+    "s_endpoint", "s_user", "s_network_graph", "top_suspicious_edges", "edge_attention",
+    "open_set_score", "centroid_distance", "open_set_label", "open_set_rationale",
+}
+
+
+def _bounded_explanation_value(value):
+    if isinstance(value, list):
+        return [_bounded_explanation_value(item) for item in value[:10]]
+    if isinstance(value, dict):
+        return {str(key)[:100]: _bounded_explanation_value(item) for key, item in list(value.items())[:30]}
+    if isinstance(value, str):
+        return value[:500]
+    return value
+
+
 def _collect_text(value):
     if isinstance(value, str):
         return [value]
@@ -237,12 +255,35 @@ class ToolRegistry:
         return ToolResult(data, _evidence_values(db, incident), scan_text=scan_text)
 
     def _get_explanation(self, args, db, incident, *_):
-        # Use the read-only evidence assembler. The existing endpoint helper can cache SHAP and
-        # commit risk-detail fields, which would violate this layer's read-only tool invariant.
-        value = _incident_investigation_evidence(incident, db)
-        events = db.query(SecurityEvent).filter(SecurityEvent.event_id.in_(_all_event_ids(db, incident.incident_id))).all()
-        scan_text = "\n".join(text for event in events if (text := attacker_text(event)))
-        return ToolResult(value, _evidence_values(db, incident), scan_text=scan_text)
+        # Query the mapped class without invoking the endpoint helper, which can run SHAP and commit a cache.
+        from app.models.entities import RiskScore
+        risk = db.query(RiskScore).filter(RiskScore.incident_id == incident.incident_id).first()
+        event_ids = _all_event_ids(db, incident.incident_id)
+        detections = (db.query(DetectionResult).filter(DetectionResult.event_id.in_(event_ids)).all()
+                      if event_ids else [])
+        detection_summaries = []
+        for row in detections:
+            details = row.details if isinstance(row.details, dict) else {}
+            safe_details = {key: _bounded_explanation_value(details[key]) for key in _EXPLANATION_DETAIL_KEYS
+                            if key in details}
+            if row.layer == "endpoint":
+                safe_details.setdefault("top_contributing_features",
+                    _bounded_explanation_value(details.get("top_contributing_features", [])))
+                safe_details.setdefault("feature_residuals", _bounded_explanation_value(details.get("feature_residuals", [])))
+            detection_summaries.append({"detection_id": row.detection_id, "event_id": row.event_id,
+                "layer": row.layer, "verdict": row.verdict, "predicted_class": row.predicted_class,
+                "score": row.score, "details": safe_details})
+        available = bool(risk and (risk.top_contributing_features or risk.risk_breakdown or risk.explanation_summary)
+                         or detection_summaries)
+        if not available:
+            return ToolResult({"available": False, "incident_id": incident.incident_id},
+                              [f"inc:{incident.incident_id}"])
+        data = {"available": True, "incident_id": incident.incident_id,
+            "top_contributing_features": _bounded_explanation_value(risk.top_contributing_features) if risk else None,
+            "risk_breakdown": _bounded_explanation_value(risk.risk_breakdown) if risk else None,
+            "explanation_summary": (risk.explanation_summary or "")[:1200] if risk else None,
+            "detections": detection_summaries}
+        return ToolResult(data, [f"inc:{incident.incident_id}"] + [f"det:{row.detection_id}" for row in detections])
 
     def _get_detection_detail(self, args, db, incident, *_):
         if args.event_id not in _all_event_ids(db, incident.incident_id):
@@ -251,7 +292,16 @@ class ToolRegistry:
         detection = db.query(DetectionResult).filter(DetectionResult.event_id == args.event_id).first()
         if event is None:
             raise ValueError("event not found")
-        return ToolResult(_serialize_event(event, detection),
+        serialized = _serialize_event(event)
+        if detection:
+            details = detection.details if isinstance(detection.details, dict) else {}
+            safe_details = {key: _bounded_explanation_value(details[key]) for key in _EXPLANATION_DETAIL_KEYS
+                            if key in details}
+            serialized["detection"] = {"detection_id": detection.detection_id, "verdict": detection.verdict,
+                "predicted_class": detection.predicted_class, "score": detection.score,
+                "attack_probability": detection.attack_probability, "open_set_distance": detection.open_set_distance,
+                "tau": detection.tau, "details": safe_details}
+        return ToolResult(serialized,
             [f"evt:{event.event_id}"] + ([f"det:{detection.detection_id}"] if detection else []),
             scan_text=attacker_text(event))
 
