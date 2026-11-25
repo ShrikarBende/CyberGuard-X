@@ -34,6 +34,8 @@ flowchart TD
 
 Tool results are serialized and wrapped with `_untrusted("untrusted_tool_result", ...)` before they return to the model. The loop enforces the manifest allowlist, duplicate-call checks, incident scope, output truncation, and run limits. Worker updates are read by frontend polling.
 
+Tool output truncation drops whole list entries and returns only evidence IDs that remain visible in the returned data. A valid citation proves that the evidence ID exists in this run's scope; it does not by itself prove that a report claim is supported by that evidence.
+
 ## Limits
 
 Defaults are `AGENT_MAX_STEPS=6`, `AGENT_MAX_TOOL_CALLS=12`, `AGENT_WALL_SECONDS=90`, `AGENT_RESULT_CHARS=6000`, and `AGENT_MAX_CONCURRENT_RUNS=2`. Hard ceilings are 12 steps, 30 tool calls, 300 seconds, 20,000 result characters, and 4 concurrent runs. A single incident may have only one active run. Per-call LLM timeout is 45 seconds with one retry for transient failures.

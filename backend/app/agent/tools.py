@@ -1,5 +1,6 @@
 """Allowlisted, read-only investigation tools (plus pending-only proposals)."""
 from dataclasses import dataclass
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import json
 import uuid
@@ -137,6 +138,72 @@ def _bounded_explanation_value(value):
     return value
 
 
+def _drop_largest_list_item(value):
+    candidates = []
+    def visit(node):
+        if isinstance(node, dict):
+            for child in node.values():
+                visit(child)
+        elif isinstance(node, list):
+            if node:
+                candidates.append((len(json.dumps(node[-1], ensure_ascii=False, default=str)), node))
+            for child in node:
+                visit(child)
+    visit(value)
+    if not candidates:
+        return False
+    _, target = max(candidates, key=lambda item: item[0])
+    target.pop()
+    return True
+
+
+def _visible_evidence_ids(data, evidence_ids):
+    values = set()
+    def visit(value):
+        if isinstance(value, dict):
+            for child in value.values(): visit(child)
+        elif isinstance(value, list):
+            for child in value: visit(child)
+        elif isinstance(value, str):
+            values.add(value)
+    visit(data)
+    output = []
+    for evidence_id in evidence_ids:
+        _, separator, value = evidence_id.partition(":")
+        if separator and value in values:
+            output.append(evidence_id)
+    return output
+
+
+def _fit_tool_result(result, cap):
+    data = deepcopy(result.data)
+    if isinstance(data, list):
+        data = {"items": data}
+    if not isinstance(data, dict):
+        data = {"value": data}
+    original_count = sum(len(value) for value in data.values() if isinstance(value, list))
+    omitted = 0
+    while True:
+        evidence_ids = _visible_evidence_ids(data, list(dict.fromkeys(result.evidence_ids)))
+        wrapper = {"ok": bool(result.ok), "evidence_ids": evidence_ids, "data": data}
+        if len(json.dumps(wrapper, ensure_ascii=False, default=str)) <= cap:
+            result.data, result.evidence_ids = data, evidence_ids
+            return
+        if _drop_largest_list_item(data):
+            omitted += 1
+            data["truncated"] = True
+            data["omitted_count"] = omitted
+            continue
+        data = {"truncated": True, "omitted_count": max(omitted, original_count, 1),
+                "content": "Result omitted to fit configured limit"}
+        result.evidence_ids = []
+        wrapper = {"ok": bool(result.ok), "evidence_ids": [], "data": data}
+        result.data = data
+        if len(json.dumps(wrapper, ensure_ascii=False)) <= cap:
+            return
+        cap = max(64, cap // 2)
+
+
 def _collect_text(value):
     if isinstance(value, str):
         return [value]
@@ -198,12 +265,7 @@ class ToolRegistry:
             if result.scan_text:
                 result.scan_text = result.scan_text[:cap]
             result.evidence_ids = list(dict.fromkeys(result.evidence_ids))
-            while result.evidence_ids and len(json.dumps(result.evidence_ids)) > max(32, cap // 2):
-                result.evidence_ids.pop()
-            encoded = json.dumps(result.data, ensure_ascii=False, default=str)
-            allowance = max(0, cap - len(json.dumps(result.evidence_ids)) - 110)
-            if len(encoded) > allowance:
-                result.data = {"truncated": True, "content": encoded[:allowance]}
+            _fit_tool_result(result, cap)
             return result
         except ValidationError as exc:
             return ToolResult({}, [], False, f"invalid tool arguments: {exc.errors(include_url=False)[:3]}")

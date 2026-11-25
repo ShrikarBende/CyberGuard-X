@@ -55,3 +55,10 @@
 - Reproduced that a replayed incident from 2024 returned no matching rows because the query window was based on the current time.
 - Related-event queries now span `first_detected_at - window` through `last_updated_at + window`. Naive SQLite datetimes are treated as UTC; aware datetimes are converted to UTC before comparison.
 - Verification: `python -m pytest backend/tests/agent/test_tool_quality.py -q` — 4 passed. The same normalization path is used for SQLite and PostgreSQL; no PostgreSQL service is configured here for a live integration run.
+
+## F9 — preserve visible evidence during truncation
+
+- Reproduced with 200 large event rows: the old truncation serialized the entire object then sliced a JSON string, retained every evidence ID, and did not provide an item-level omission count.
+- Tool output now drops complete list entries to fit the configured serialized wrapper size, returns `truncated` and `omitted_count`, and filters evidence IDs against the values still present in the output. If a non-list scalar payload cannot fit, the tool returns a small valid JSON omission object.
+- Added the citation-scope limitation to `docs/agent/ARCHITECTURE.md`.
+- Verification: `python -m pytest backend/tests/agent/test_tool_quality.py backend/tests/agent/test_bounds_and_llm.py -q` — 11 passed.

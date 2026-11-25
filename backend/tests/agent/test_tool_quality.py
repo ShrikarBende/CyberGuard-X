@@ -75,3 +75,27 @@ def test_related_events_window_is_anchored_to_replayed_incident_time(db_pair):
     result = ToolRegistry()._find_related_events(RelatedArgs(field="source_ip", value="192.0.2.77", window_minutes=60),
         db, incident)
     assert {item["event_id"] for item in result.data} == {"old-own", "old-related"}
+
+
+def test_result_truncation_keeps_json_and_only_cites_visible_event_items(db_pair, monkeypatch):
+    import json
+    from app.agent.tools import ToolResult
+    db, _ = db_pair
+    incident = Incident(incident_id="truncate-i", title="test", status="OPEN", severity="LOW",
+        threat_classification="UNKNOWN", overall_risk_score=1, flow_count=0,
+        first_detected_at=datetime.now(timezone.utc), last_updated_at=datetime.now(timezone.utc))
+    db.add(incident); db.commit()
+    registry = ToolRegistry()
+    registry.handlers["get_incident_evidence"] = lambda *args: ToolResult(
+        [{"event_id": f"e{index}", "payload": "x" * 300} for index in range(200)],
+        [f"evt:e{index}" for index in range(200)])
+    monkeypatch.setattr("app.agent.tools.settings.AGENT_RESULT_CHARS", 1200)
+    result = registry.run("get_incident_evidence", {"incident_id": incident.incident_id}, db,
+        incident, "r", "analyst", set())
+    wrapper = {"ok": result.ok, "evidence_ids": result.evidence_ids, "data": result.data}
+    encoded = json.dumps(wrapper, ensure_ascii=False)
+    assert len(encoded) <= 1200
+    assert json.loads(encoded)["data"]["truncated"] is True
+    assert result.data["truncated"] is True and result.data["omitted_count"] > 0
+    visible = {f"evt:{item['event_id']}" for item in result.data["items"]}
+    assert set(result.evidence_ids) == visible
