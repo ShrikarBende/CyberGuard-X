@@ -1,6 +1,7 @@
 """Bounded tool-calling loop with persisted, citation-checked trace."""
 from datetime import datetime, timezone
 import json
+import copy
 import time
 import uuid
 from app.agent.limits import RunLimitReached
@@ -211,6 +212,7 @@ def run_agent(run_id, incident_id, requested_by, manifest, llm, tools, limits, d
                     limitations = []
                 limitations.append("Tool data contained instruction-like text and was treated as untrusted.")
                 raw_report["limitations"] = limitations[:30]
+            pre_validation_report = copy.deepcopy(raw_report)
             report, validation = validate_report(raw_report, seen_ids, allowed_techniques, validation_injections)
             break
         except Exception as exc:
@@ -241,4 +243,4 @@ def run_agent(run_id, incident_id, requested_by, manifest, llm, tools, limits, d
     db.commit()
     return {"report": report, "validation": validation, "usage": usage,
             "staged_actions": list(getattr(tools, "staged_actions", [])),
-            "evidence_ids": sorted(seen_ids)}
+            "evidence_ids": sorted(seen_ids), "pre_validation_report": pre_validation_report}

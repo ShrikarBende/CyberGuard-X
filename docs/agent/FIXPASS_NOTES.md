@@ -109,3 +109,10 @@
 - Added the opt-in agent configuration reference, defaults and ceilings, routes and roles, four-eyes review behavior, simulated-only approvals, statuses, provider data sent, local URL-only option, and single-worker limitation to the README.
 - Clarified that the existing deterministic RAG workflow remains separate and that FakeLLM results only measure plumbing.
 - Verification: documentation cross-checked against current settings, public config, routes, and agent evaluation report.
+
+## F16 — evaluate the agent with guarded offline and optional live modes
+
+- The evaluation runner defaults to FakeLLM and labels that result as plumbing-only. `--llm real` uses configured `AGENT_LLM_*` settings, reports the model, and rejects a missing URL before network access; it never prints credentials.
+- Added pre-validation citation measurement, limit-reached rate, injection proposal-discard audit checks, and an F1–F5 regression suite. The generator now produces both the summary section and standalone `docs/agent/RESULTS.md`.
+- A default-size offline run (`python scripts/eval_agent.py --n 30 --seed 42 --llm fake`) completed with 30 cases, 12/12 injection cases passed, and F1–F5 passed. Metrics remain explicitly FakeLLM plumbing-only; they do not claim real-model quality.
+- Verification: `python -m pytest backend/tests/agent/test_eval_agent.py backend/tests/agent/test_report_hardening.py -q` — 13 passed; `python -m py_compile scripts/eval_agent.py scripts/make_results_md.py backend/app/agent/loop.py` — passed; full backend suite — 195 passed, 7 skipped.

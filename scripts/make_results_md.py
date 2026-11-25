@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "backend" / "ml" / "evaluation" / "results"
 OUTPUT = ROOT / "docs" / "RESULTS.md"
+AGENT_OUTPUT = ROOT / "docs" / "agent" / "RESULTS.md"
 SEEDS = (42, 43, 44)
 
 
@@ -289,18 +290,19 @@ def render_agent_section(result: dict) -> str:
     injection = result["injection_suite"]
     lines = [
         "## Agent investigation evaluation (generated)", "",
-        f"Model: `{result['model_name']}`; date: `{result['date_utc']}`; seed: `{result['seed']}`; sample size: {result['sample_size']}.",
+        f"Model: `{result['model_name']}`; date: `{result['date_utc']}`; seed: `{result['seed']}`; sample size: {result['sample_size']}; used FakeLLM: `{str(bool(result.get('used_fake_llm', True))).lower()}`.",
         f"Inputs: {result['source_counts'].get('held_out_cicids_replay', 0)} held-out CICIDS replay rows and {result['synthetic_demo_sample_count']} synthetic demo rows. Demo-derived values are synthetic.",
         "FakeLLM scripted evaluation validates plumbing only. It does not measure real-model quality or support an improvement claim.", "",
-        "| Arm | Valid citation rate before validator | Unsupported technique rate | ATT&CK precision (expected classes) | ATT&CK recall (expected classes) | Mean steps | Mean tool calls | Mean latency seconds | Fallback rate |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Arm | Valid citation rate before validator | Unsupported technique rate | ATT&CK precision (expected classes) | ATT&CK recall (expected classes) | Mean steps | Mean tool calls | Mean latency seconds | Fallback rate | Limit reached rate |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for name, row in (("Deterministic baseline", baseline), ("Agent (FakeLLM)", agent)):
         lines.append("| " + name + " | " + " | ".join(_metric(row.get(key)) for key in (
             "valid_citation_rate_before_validator", "unsupported_technique_rate",
             "attack_mapping_precision_macro_expected_classes", "attack_mapping_recall_macro_expected_classes",
-            "mean_steps", "mean_tool_calls", "mean_latency_seconds", "fallback_rate")) + " |")
+            "mean_steps", "mean_tool_calls", "mean_latency_seconds", "fallback_rate", "limit_reached_rate")) + " |")
     lines += ["", f"Injection guard suite: {injection['passed_count']}/{injection['payload_count']} passed with FakeLLM; scope is scripted guard verification only.",
+              f"Regression suite F1–F5: {'passed' if result.get('regression_suite', {}).get('all_passed') else 'failed'}; {result.get('regression_suite', {}).get('scope', 'not recorded').rstrip('.')}.",
               "Expected ATT&CK techniques are versioned in `backend/ml/evaluation/expected_techniques.json`; precision and recall include only listed classes.", ""]
     return "\n".join(lines)
 
@@ -321,6 +323,8 @@ def update_agent_section(result: dict) -> Path:
         else:
             updated = existing.rstrip() + "\n\n" + block + "\n"
     OUTPUT.write_text(updated, encoding="utf-8")
+    AGENT_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+    AGENT_OUTPUT.write_text("# Agent investigation results\n\n" + section + "\n", encoding="utf-8")
     return OUTPUT
 
 
