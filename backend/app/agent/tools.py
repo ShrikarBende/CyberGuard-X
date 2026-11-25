@@ -62,6 +62,7 @@ class ToolResult:
     ok: bool = True
     error: str | None = None
     scan_text: str | None = None
+    validated_args: dict | None = None
 
 
 ARG_MODELS = {
@@ -261,6 +262,7 @@ class ToolRegistry:
             if "incident_id" in args.model_fields_set and args.incident_id != incident.incident_id:
                 raise ValueError("incident is outside this run scope")
             result = self.handlers[name](args, db, incident, run_id, requested_by, seen_ids)
+            result.validated_args = args.model_dump(mode="json")
             cap = int(settings.AGENT_RESULT_CHARS)
             if result.scan_text:
                 result.scan_text = result.scan_text[:cap]

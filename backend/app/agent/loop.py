@@ -25,7 +25,15 @@ REPORT_SCHEMA_REMINDER = {
 
 def _persist_step(db, run_id, number, kind, tool=None, args=None, summary="", evidence=None,
                   ok=True, duration_ms=0):
-    safe_args = {"fields": sorted(args) if isinstance(args, dict) else [], "values_redacted": True}
+    def bounded(value):
+        if isinstance(value, str):
+            return value[:200]
+        if isinstance(value, dict):
+            return {str(key)[:200]: bounded(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [bounded(item) for item in value[:50]]
+        return value
+    safe_args = bounded(args) if isinstance(args, dict) else {}
     db.add(AgentStep(id=f"step_{uuid.uuid4().hex}", run_id=run_id, step_no=number, kind=kind,
         tool_name=tool, args=safe_args, result_summary=str(summary)[:2000], evidence_ids=list(evidence or []),
         ok=bool(ok), duration_ms=max(0, int(duration_ms))))
@@ -135,7 +143,7 @@ def run_agent(run_id, incident_id, requested_by, manifest, llm, tools, limits, d
             injection_flags += detect_injection(getattr(result, "scan_text", None) or "")
             trace_no += 1
             _persist_step(db, run_id, trace_no, "tool", call.name,
-                          call.arguments if isinstance(call.arguments, dict) else {},
+                          getattr(result, "validated_args", None),
                           serialized_data, result.evidence_ids, result.ok, duration_ms)
             assistant_calls.append({"id": call.call_id or f"call_{uuid.uuid4().hex}", "type": "function",
                 "function": {"name": call.name, "arguments": canonical}})

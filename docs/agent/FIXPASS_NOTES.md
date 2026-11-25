@@ -62,3 +62,9 @@
 - Tool output now drops complete list entries to fit the configured serialized wrapper size, returns `truncated` and `omitted_count`, and filters evidence IDs against the values still present in the output. If a non-list scalar payload cannot fit, the tool returns a small valid JSON omission object.
 - Added the citation-scope limitation to `docs/agent/ARCHITECTURE.md`.
 - Verification: `python -m pytest backend/tests/agent/test_tool_quality.py backend/tests/agent/test_bounds_and_llm.py -q` — 11 passed.
+
+## F10 — persist bounded validated arguments in the trace
+
+- Reproduced that trace rows retained only argument field names and `values_redacted`, hiding the actual `incident_id` and search query needed to audit a run.
+- Frontend search found no use of `values_redacted` or assumptions about argument shape. Tool execution now attaches Pydantic-validated arguments to its result, and trace persistence stores those values with each string capped at 200 characters.
+- Verification: `python -m pytest backend/tests/agent/test_loop.py backend/tests/agent/test_tool_quality.py backend/tests/agent/test_bounds_and_llm.py -q` — 18 passed.
