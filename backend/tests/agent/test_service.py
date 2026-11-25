@@ -3,7 +3,7 @@ import threading
 import pytest
 from app.agent import service
 from app.agent.llm import AssistantTurn, FakeLLM
-from app.agent.models import AgentRun
+from app.agent.models import AgentRun, ActionProposal
 from app.agent.limits import RunLimits, RunLimitReached
 from app.models.entities import Incident, AnalystActivity, InvestigationNote
 
@@ -52,6 +52,59 @@ def test_stale_running_rows_are_reaped(db_pair, monkeypatch):
     db.expire_all()
     assert db.get(AgentRun, "stale-run").status == "failed"
     assert db.query(AnalystActivity).filter_by(action_type="agent_run_finished").count() == 1
+
+
+def test_worker_materializes_staged_and_report_actions_once_after_success(db_pair, monkeypatch):
+    db, factory = db_pair
+    incident = _incident(db, "proposal-success")
+    run = AgentRun(run_id="proposal-success-run", incident_id=incident.incident_id,
+        requested_by="analyst", status="queued", agent_id="investigator", mode="agent",
+        model_name="fake", limits={}, usage={}, validation={})
+    db.add(run); db.commit()
+    action = {"action_type": "preserve_logs", "target_type": "incident", "target": incident.incident_id,
+        "rationale": "Preserve evidence for review.", "confidence": 0.8,
+        "evidence_ids": [f"inc:{incident.incident_id}"]}
+    monkeypatch.setattr(service, "SessionLocal", factory)
+    monkeypatch.setattr(service.settings, "AGENT_LLM_API_URL", "configured")
+    monkeypatch.setattr(service.settings, "AGENT_LLM_API_KEY", "configured")
+    monkeypatch.setattr(service, "run_agent", lambda *args, **kwargs: {
+        "report": {"recommended_actions": [action]}, "validation": {"injection_flags": 0},
+        "usage": {}, "staged_actions": [{"action": action}],
+        "evidence_ids": [f"inc:{incident.incident_id}"]})
+    service._worker(run.run_id, incident.incident_id, "analyst", threading.Event())
+    assert db.query(ActionProposal).filter_by(run_id=run.run_id).count() == 1
+
+
+@pytest.mark.parametrize("outcome", ["injected", "cancelled", "fallback"])
+def test_untrusted_or_incomplete_run_never_materializes_staged_actions(db_pair, monkeypatch, outcome):
+    db, factory = db_pair
+    incident = _incident(db, f"proposal-{outcome}")
+    run = AgentRun(run_id=f"proposal-{outcome}-run", incident_id=incident.incident_id,
+        requested_by="analyst", status="queued", agent_id="investigator", mode="agent",
+        model_name="fake", limits={}, usage={}, validation={})
+    db.add(run); db.commit()
+    action = {"action_type": "preserve_logs", "target_type": "incident", "target": incident.incident_id,
+        "rationale": "Preserve evidence for review.", "confidence": 0.8,
+        "evidence_ids": [f"inc:{incident.incident_id}"]}
+    monkeypatch.setattr(service, "SessionLocal", factory)
+    monkeypatch.setattr(service.settings, "AGENT_LLM_API_URL", "configured")
+    monkeypatch.setattr(service.settings, "AGENT_LLM_API_KEY", "configured")
+    monkeypatch.setattr(service, "investigate_incident", lambda *args, **kwargs: {"incident_id": incident.incident_id})
+    if outcome == "fallback":
+        monkeypatch.setattr(service, "_llm_factory", service.AgentLLM)
+        monkeypatch.setattr(service.settings, "AGENT_LLM_API_URL", "")
+        monkeypatch.setattr(service.settings, "AGENT_LLM_API_KEY", "")
+    elif outcome == "cancelled":
+        monkeypatch.setattr(service, "run_agent", lambda *args, **kwargs: (_ for _ in ()).throw(InterruptedError("cancelled")))
+    else:
+        monkeypatch.setattr(service, "run_agent", lambda *args, **kwargs: {
+            "report": {"recommended_actions": [action]}, "validation": {"injection_flags": 1},
+            "usage": {}, "staged_actions": [{"action": action}],
+            "evidence_ids": [f"inc:{incident.incident_id}"]})
+    service._worker(run.run_id, incident.incident_id, "analyst", threading.Event())
+    assert db.query(ActionProposal).filter_by(run_id=run.run_id).count() == 0
+    if outcome == "injected":
+        assert db.query(AnalystActivity).filter_by(action_type="agent_proposals_discarded").count() == 1
 
 
 @pytest.mark.parametrize("llm_factory", [None, "exception", "bad_json"])

@@ -132,6 +132,7 @@ def attacker_text(event):
 class ToolRegistry:
     def __init__(self):
         self.handlers = {name: getattr(self, f"_{name}") for name in KNOWN_TOOLS}
+        self.staged_actions = []
 
     def schemas_for(self, needs):
         output = []
@@ -290,9 +291,7 @@ class ToolRegistry:
             [f"det:{row.detection_id}" for row in rows] + [f"evt:{row.event_id}" for row in rows])
 
     def _propose_action(self, args, db, incident, run_id, requested_by, seen_ids):
-        from app.agent.proposals import create_pending_proposal
         action = args.model_dump()
-        proposal = create_pending_proposal(db, run_id, incident, requested_by, action, seen_ids)
-        return ToolResult({"proposal_id": proposal.proposal_id, "status": proposal.status,
-                           "action_type": proposal.action_type, "target": proposal.target},
-                          proposal.evidence_ids)
+        self.staged_actions.append({"action": action, "evidence_ids": sorted(seen_ids)})
+        return ToolResult({"staged": True, "action_type": action["action_type"], "target": action["target"]},
+                          action["evidence_ids"])

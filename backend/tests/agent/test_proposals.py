@@ -62,6 +62,19 @@ def test_proposal_validates_action_targets_confidence_and_run_evidence(db_pair):
             _action(evidence=["evt:fake"]), {f"evt:{events[1]}"})
 
 
+def test_propose_action_stages_without_persisting_until_run_finishes(db_pair):
+    from app.agent.tools import ToolRegistry
+    db, _ = db_pair
+    incident, events = _scope(db)
+    tools = ToolRegistry()
+    result = tools.run("propose_action", _action(evidence=[f"evt:{events[0]}"], target="192.0.2.1"),
+        db, incident, "run-proposals", "requester", {f"evt:{events[0]}"})
+    assert result.ok
+    assert result.data["staged"] is True
+    assert len(tools.staged_actions) == 1
+    assert db.query(ActionProposal).filter_by(run_id="run-proposals").count() == 0
+
+
 def test_proposal_scope_types_four_eyes_and_maximum(db_pair):
     db, _ = db_pair
     incident, event_ids = _scope(db, n=6)

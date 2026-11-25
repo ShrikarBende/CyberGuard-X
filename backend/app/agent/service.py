@@ -10,6 +10,7 @@ from app.agent.manifest import load_manifest
 from app.agent.models import AgentRun, AgentStep
 from app.agent.tools import ToolRegistry
 from app.audit import record_analyst_activity
+from app.agent.proposals import ProposalRejected, persist_proposal, validate_proposal
 from app.core.config import settings
 from app.database.session import SessionLocal
 from app.models.entities import Incident
@@ -18,6 +19,30 @@ from app.rag.assistant import investigate_incident
 _RUNS: dict[str, dict] = {}
 _RUNS_LOCK = threading.Lock()
 _llm_factory = AgentLLM
+
+
+def _materialize_proposals(db, run, incident, staged, report, evidence_ids, validation):
+    if int(validation.get("injection_flags", 0) or 0) > 0:
+        if staged or report.get("recommended_actions"):
+            record_analyst_activity(db, run.requested_by, "agent_proposals_discarded", "incident",
+                incident.incident_id, {"run_id": run.run_id, "reason": "untrusted instruction-like evidence"})
+        return
+    candidates = [item.get("action", {}) for item in staged]
+    candidates.extend(report.get("recommended_actions", []))
+    signatures, created = set(), 0
+    for action in candidates:
+        if created >= 5:
+            break
+        try:
+            normalized = validate_proposal(db, incident, action, set(evidence_ids), signatures, created)
+        except ProposalRejected:
+            continue
+        signature = (normalized["action_type"], normalized["target_type"], normalized["target"].casefold())
+        if signature in signatures:
+            continue
+        persist_proposal(db, run.run_id, incident, run.requested_by, normalized)
+        signatures.add(signature)
+        created += 1
 
 
 class RunConflict(RuntimeError):
@@ -95,6 +120,8 @@ def _worker(run_id, incident_id, requested_by, cancel_event):
             llm = _llm_factory()
             result = run_agent(run_id, incident_id, requested_by, manifest, llm, ToolRegistry(), limits, db,
                                cancelled=cancel_event.is_set)
+            _materialize_proposals(db, run, incident, result.get("staged_actions", []),
+                result["report"], result.get("evidence_ids", []), result["validation"])
             _finish(db, run, "completed", result["report"], result["validation"], result["usage"])
         except InterruptedError as exc:
             _finish(db, run, "cancelled", error=exc)

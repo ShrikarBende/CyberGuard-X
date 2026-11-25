@@ -20,3 +20,10 @@
 - Replaced the bare false-positive phrase matcher with an imperative instruction matcher; retained Unicode normalization, homoglyph folding, and zero-width stripping.
 - Updated existing `test_injection_text_cannot_change_assessment_or_echo_system_prompt` fake tools to populate `scan_text`, because injection detection now follows the explicit scan-text contract. Its security expectation is unchanged.
 - Verification: `python -m pytest tests/agent/test_report_hardening.py tests/agent/test_loop.py -q` — 13 passed.
+
+## F4 — stage proposals until a successful run
+
+- Reproduced that a proposal tool call persisted a pending row before the investigation completed.
+- Proposal validation is now pure and persistence is separate. Tool calls stage their requested actions in the per-run registry; the service materializes a deduplicated set of at most five staged and report recommendations only after report validation succeeds.
+- Injected runs discard staged/report actions and record `agent_proposals_discarded`; fallback and cancellation paths do not materialize any proposals.
+- Verification: `python -m pytest backend/tests/agent/test_proposals.py backend/tests/agent/test_service.py -q` — 14 passed.

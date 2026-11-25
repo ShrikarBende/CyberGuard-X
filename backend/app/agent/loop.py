@@ -188,4 +188,6 @@ def run_agent(run_id, incident_id, requested_by, manifest, llm, tools, limits, d
         is_ai_generated=True, citations=sorted(seen_ids))
     db.add(note)
     db.commit()
-    return {"report": report, "validation": validation, "usage": usage}
+    return {"report": report, "validation": validation, "usage": usage,
+            "staged_actions": list(getattr(tools, "staged_actions", [])),
+            "evidence_ids": sorted(seen_ids)}
