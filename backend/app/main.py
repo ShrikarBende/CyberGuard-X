@@ -20,6 +20,7 @@ from app.core.config import settings
 from app.api.endpoints import router as api_router
 from app.api.auth import router as auth_router
 from app.api.ws import router as ws_router
+from app.agent.api import router as agent_router
 from app.database.session import engine, SessionLocal, get_db
 from app.auth import account_for_token, get_current_analyst
 import joblib
@@ -39,7 +40,7 @@ def _baseline_schema_matches(connection) -> bool:
     baseline_tables = {
         name: {column.name for column in table.columns}
         for name, table in Base.metadata.tables.items()
-        if name != "analyst_accounts"
+        if name != "analyst_accounts" and name != "action_proposals" and not name.startswith("agent_")
     }
     inspector = inspect(connection)
     existing_tables = set(inspector.get_table_names()) - {"alembic_version"}
@@ -226,6 +227,7 @@ app.add_middleware(
 app.include_router(api_router)
 app.include_router(auth_router)
 app.include_router(ws_router)
+app.include_router(agent_router)
 
 
 @app.get("/", dependencies=[Depends(get_current_analyst)])

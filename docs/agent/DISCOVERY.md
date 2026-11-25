@@ -132,6 +132,13 @@ should follow this state-based navigation and API pattern.
   changes. This phase did not modify or discard any of them. Later commits must stage only files
   introduced for this task.
 - The prompt's Phase 0 baseline gate passes for the current workspace: 128 passed and 6 skipped.
+- H9 names only the `agent_` prefix for new metadata exclusions, but its required table list also
+  includes `action_proposals`, which does not have that prefix. The baseline match therefore also
+  excludes this one table explicitly; without it, a valid legacy schema would fail to upgrade.
+- The prompt's proposed `get_explanation` tool calls the existing explainability endpoint directly,
+  while discovery confirms that endpoint can mutate `risk_detail.top_contributing_features` and
+  commit. To honor H3 (only `propose_action` may write), the implemented tool uses the existing
+  read-only `_incident_investigation_evidence` assembler and omits cached/computed SHAP output.
 - PyYAML would need to be added only if YAML manifests are implemented as specified.
 - The workspace contains related pre-existing RAG agent code; it is distinct from the requested
   opt-in investigation service and is not evidence that the requested API, persistence, or
