@@ -103,3 +103,9 @@
 - The first generated F16 injection run exposed that underscores were normalized to spaces before matching the closing `<untrusted_tool_result>` delimiter, so that payload was not counted as an injection.
 - Updated the delimiter pattern to match the normalized words and added a direct regression test. The generated evaluation also now flushes pending discard-audit rows before checking them.
 - Verification: `python -m pytest backend/tests/agent/test_report_hardening.py::test_closing_untrusted_result_marker_is_detected_after_normalization backend/tests/agent/test_eval_agent.py -q` — 3 passed.
+
+## F15 — document opt-in agent setup and operational boundaries
+
+- Added the opt-in agent configuration reference, defaults and ceilings, routes and roles, four-eyes review behavior, simulated-only approvals, statuses, provider data sent, local URL-only option, and single-worker limitation to the README.
+- Clarified that the existing deterministic RAG workflow remains separate and that FakeLLM results only measure plumbing.
+- Verification: documentation cross-checked against current settings, public config, routes, and agent evaluation report.
