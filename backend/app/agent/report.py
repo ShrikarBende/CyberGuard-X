@@ -6,6 +6,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 ASSESSMENTS = {"unconfirmed_suspicious", "likely_benign", "insufficient_evidence", "unknown_needs_review"}
 TECHNIQUE_RE = re.compile(r"^T\d{4}(?:\.\d{3})?$")
+CONFIRMATION_LANGUAGE_RE = re.compile(
+    r"\b(?:is|was|were|are|been|has\s+been|have\s+been)\s+(?:a\s+)?confirmed\b",
+    re.IGNORECASE,
+)
+CONFIRMATION_LANGUAGE_LIMITATION = (
+    "Report text used confirmation language; the assessment field is authoritative and no incident status was changed."
+)
 
 
 class Finding(BaseModel):
@@ -110,7 +117,14 @@ def validate_report(value, seen_ids: set[str], allowed_techniques: set[str], inj
         value = re.sub(r"^```(?:json)?\s*|\s*```$", "", value.strip(), flags=re.I)
         value = __import__("json").loads(value)
     report = AgentReport.model_validate(value).model_dump()
-    report["summary"] = report["summary"].replace("confirmed", "unconfirmed")
+    report_texts = [report["summary"]]
+    report_texts.extend(finding["claim"] for finding in report["key_findings"])
+    report_texts.extend(hypothesis["statement"] for hypothesis in report["hypotheses"])
+    stats["confirmation_language_flags"] = sum(
+        len(CONFIRMATION_LANGUAGE_RE.findall(text)) for text in report_texts
+    )
+    if stats["confirmation_language_flags"]:
+        report["limitations"] = report["limitations"][:29] + [CONFIRMATION_LANGUAGE_LIMITATION]
     stats["injection_flags"] = sum(1 for term in ("ignore previous", "system prompt", "false positive", "reveal this prompt")
                                    if term in report["summary"].lower() or any(term in str(x).lower() for x in report["limitations"]))
     findings = []
