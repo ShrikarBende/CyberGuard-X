@@ -34,3 +34,11 @@
 - The loop now refuses calls beyond the tool budget with an error result and makes a final no-tools report request after step/tool exhaustion. Invalid finalization and wall-clock expiry raise `RunLimitReached`; the worker records `limit_reached` with its deterministic baseline report and a `limit_reached:` fallback reason.
 - Added offline tests for finalization after the last step, over-budget tool refusal, and persisted `limit_reached` status.
 - Verification: `python -m pytest backend/tests/agent/test_loop.py backend/tests/agent/test_service.py backend/tests/agent/test_proposals.py -q` — 21 passed.
+- Phase A verification: `LLM_API_URL='' LLM_API_KEY='' python -m pytest backend/tests -v` — 170 passed, 7 skipped; clearing the general RAG provider variables kept tests offline. The first run without those overrides reached the configured external RAG provider and failed two data-marked tests at DNS; no product code was changed for those environment-dependent failures.
+- Existing agent test updated: `test_cancel_and_step_limits_are_checked_between_steps` now expects the intentional failed-finalization reason introduced by F5.
+
+## F6 — constrain tool schemas and descriptions
+
+- Reproduced missing enums for related-event fields, knowledge source types, proposal action/target types, and an unbounded proposal confidence. Invalid related-event fields passed validation and failed later in the handler.
+- Added enum-constrained schemas, bounded confidence, distinct tool-specific descriptions, and safe validation-error responses.
+- Verification: `python -m pytest backend/tests/agent/test_tool_quality.py -q` — 2 passed.
