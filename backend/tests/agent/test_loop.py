@@ -4,7 +4,7 @@ from app.agent.limits import clamp_to_ceilings, RunLimitReached
 from app.agent.llm import AssistantTurn, FakeLLM, ToolCall
 from app.agent.loop import run_agent
 from app.agent.manifest import AgentManifest
-from app.agent.tools import ToolResult
+from app.agent.tools import ToolResult, attacker_text
 from app.agent.models import AgentStep
 from app.models.entities import Incident
 
@@ -29,7 +29,8 @@ class PayloadTools(ScriptTools):
     def __init__(self, payload): self.payload = payload
     def run(self, name, arguments, db, incident, run_id, requested_by, seen_ids):
         if name == "run_baseline_investigation":
-            return ToolResult({"allowed_chunks": [], "allowed_techniques": [], "event": self.payload}, ["inc:i1", "evt:e1"])
+            return ToolResult({"allowed_chunks": [], "allowed_techniques": [], "event": self.payload},
+                ["inc:i1", "evt:e1"], scan_text=attacker_text(self.payload))
         return ToolResult({}, [], False, "host target must be incident device or host in run evidence")
 
 

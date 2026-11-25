@@ -57,6 +57,7 @@ class ToolResult:
     evidence_ids: list[str]
     ok: bool = True
     error: str | None = None
+    scan_text: str | None = None
 
 
 ARG_MODELS = {
@@ -103,6 +104,31 @@ def _serialize_event(event, detection=None):
     return payload
 
 
+def _collect_text(value):
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [text for child in value.values() for text in _collect_text(child)]
+    if isinstance(value, (list, tuple)):
+        return [text for child in value for text in _collect_text(child)]
+    return []
+
+
+def attacker_text(event):
+    """Extract only telemetry strings that an event source or attacker can control."""
+    fields = ("user_id", "username", "device_id", "hostname", "host", "process_name", "scenario",
+              "source_ip", "destination_ip", "event_type", "event_category", "user_agent", "uri", "url",
+              "command_line", "file_path")
+    values = []
+    for field in fields:
+        value = event.get(field) if isinstance(event, dict) else getattr(event, field, None)
+        if isinstance(value, str):
+            values.append(value)
+    payload = event.get("raw_payload") if isinstance(event, dict) else getattr(event, "raw_payload", None)
+    values.extend(_collect_text(payload))
+    return "\n".join(values)
+
+
 class ToolRegistry:
     def __init__(self):
         self.handlers = {name: getattr(self, f"_{name}") for name in KNOWN_TOOLS}
@@ -127,6 +153,8 @@ class ToolRegistry:
                 raise ValueError("incident is outside this run scope")
             result = self.handlers[name](args, db, incident, run_id, requested_by, seen_ids)
             cap = int(settings.AGENT_RESULT_CHARS)
+            if result.scan_text:
+                result.scan_text = result.scan_text[:cap]
             result.evidence_ids = list(dict.fromkeys(result.evidence_ids))
             while result.evidence_ids and len(json.dumps(result.evidence_ids)) > max(32, cap // 2):
                 result.evidence_ids.pop()
@@ -173,8 +201,11 @@ class ToolRegistry:
                     "requires_human_approval": step.get("requires_human_approval", True),
                     "statement": step.get("statement", "")})
         data = {"incident_id": raw.get("incident_id"), "read_only": True, "trace": compact_trace}
+        events = db.query(SecurityEvent).filter(SecurityEvent.event_id.in_(_all_event_ids(db, incident.incident_id))).all()
+        scan_text = "\n".join(text for event in events if (text := attacker_text(event)))
         return ToolResult({"baseline": data, "allowed_chunks": sorted(allowed_chunks),
-                           "allowed_techniques": sorted(allowed_techniques)}, sorted(set(evidence_ids)))
+                           "allowed_techniques": sorted(allowed_techniques)}, sorted(set(evidence_ids)),
+                          scan_text=scan_text)
 
     def _get_incident_evidence(self, args, db, incident, *_):
         data = _incident_investigation_evidence(incident, db)
@@ -182,13 +213,16 @@ class ToolRegistry:
         detections = db.query(DetectionResult).filter(DetectionResult.event_id.in_([e.event_id for e in events])).all() if events else []
         by_event = {d.event_id: d for d in detections}
         data["events"] = [_serialize_event(event, by_event.get(event.event_id)) for event in events]
-        return ToolResult(data, _evidence_values(db, incident))
+        scan_text = "\n".join(text for event in events if (text := attacker_text(event)))
+        return ToolResult(data, _evidence_values(db, incident), scan_text=scan_text)
 
     def _get_explanation(self, args, db, incident, *_):
         # Use the read-only evidence assembler. The existing endpoint helper can cache SHAP and
         # commit risk-detail fields, which would violate this layer's read-only tool invariant.
         value = _incident_investigation_evidence(incident, db)
-        return ToolResult(value, _evidence_values(db, incident))
+        events = db.query(SecurityEvent).filter(SecurityEvent.event_id.in_(_all_event_ids(db, incident.incident_id))).all()
+        scan_text = "\n".join(text for event in events if (text := attacker_text(event)))
+        return ToolResult(value, _evidence_values(db, incident), scan_text=scan_text)
 
     def _get_detection_detail(self, args, db, incident, *_):
         if args.event_id not in _all_event_ids(db, incident.incident_id):
@@ -197,7 +231,9 @@ class ToolRegistry:
         detection = db.query(DetectionResult).filter(DetectionResult.event_id == args.event_id).first()
         if event is None:
             raise ValueError("event not found")
-        return ToolResult(_serialize_event(event, detection), [f"evt:{event.event_id}"] + ([f"det:{detection.detection_id}"] if detection else []))
+        return ToolResult(_serialize_event(event, detection),
+            [f"evt:{event.event_id}"] + ([f"det:{detection.detection_id}"] if detection else []),
+            scan_text=attacker_text(event))
 
     def _search_knowledge(self, args, db, incident, *_):
         allowed = {"mitre", "playbook", "past_incident"}
@@ -227,7 +263,8 @@ class ToolRegistry:
         rows = (db.query(SecurityEvent).filter(column == args.value, SecurityEvent.timestamp >= after)
                 .order_by(SecurityEvent.timestamp.desc()).limit(args.limit).all())
         ids = [f"evt:{event.event_id}" for event in rows]
-        return ToolResult([_serialize_event(row) for row in rows], ids)
+        scan_text = "\n".join(text for event in rows if (text := attacker_text(event)))
+        return ToolResult([_serialize_event(row) for row in rows], ids, scan_text=scan_text)
 
     def _get_correlated_incidents(self, args, db, incident, *_):
         filters = []

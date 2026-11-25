@@ -124,7 +124,7 @@ def run_agent(run_id, incident_id, requested_by, manifest, llm, tools, limits, d
                     allowed_techniques.update(data.get("allowed_techniques", []))
             serialized_data = json.dumps(result.data if result.ok else {"error": result.error},
                                          ensure_ascii=False, default=str)
-            injection_flags += detect_injection(serialized_data)
+            injection_flags += detect_injection(getattr(result, "scan_text", None) or "")
             trace_no += 1
             _persist_step(db, run_id, trace_no, "tool", call.name,
                           call.arguments if isinstance(call.arguments, dict) else {},
