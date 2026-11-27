@@ -268,3 +268,64 @@ Bootstrap: paired over 4 held-out capture-day units, 10,000 resamples. Mean and 
 | DosDDoS | Friday | 19,177 | 0.9986 | 0.0447 | 0.8844 | 59,423 | descriptive, n=1 capture day unit |
 | PortScan | Friday | 13,661 | 0.0863 | 0.0447 | 0.8844 | 59,423 | descriptive, n=1 capture day unit |
 | WebAttack | Thursday | 326 | 0.9939 | 0.1498 | 0.0338 | 61,758 | descriptive, n=1 capture day unit |
+
+## CSE-CIC-IDS2018 ingestion and transfer evaluation
+
+Generated local artifacts: `backend/ml/evaluation/results/cse_capture_day.json` and `backend/ml/evaluation/results/cross_dataset.json`. Reproduce from `backend/` with:
+
+```powershell
+python -m ml.evaluation.cross_dataset --mode cse-capture-day --output ml/evaluation/results/cse_capture_day.json
+python -m ml.evaluation.cross_dataset --mode cross-dataset --output ml/evaluation/results/cross_dataset.json
+```
+
+Both runs used seed 42. CSE-CIC-IDS2018 CSV ingestion parses feature strings strictly, replaces infinities with NaN, and drops rows with missing/non-finite required numeric values before validation. It dropped **13,484** rows total (4,050 on 2018-03-02; 5,610 on 2018-02-22; 3,824 on 2018-02-14). The adapter retains every non-BENIGN row and deterministic-reservoir-samples up to **50,000 BENIGN rows per capture**, using a fixed seed derived from seed 42 and the capture filename. Feature matrices use float32. Since some attack classes alone exceed 50,000, the cap applies to BENIGN rows and total rows can exceed 50,000.
+
+The cross-dataset run reads the existing deduplicated CICIDS2017 Parquet cache in batches and uses a deterministic feature-hash priority sample stratified by label, capped at 50,000 rows per label (seed 42). It retained 163,241 of 2,496,702 CICIDS2017 rows. This bounded sample is part of the reported protocol. It is not the full CICIDS2017 population.
+
+### CSE-CIC-IDS2018 binary capture-day evaluation
+
+Protocol: binary attack-vs-benign leave-one-capture-day-out, **n=3 capture days**. The aggregate is the unweighted mean of held-out-day macro-F1; family recalls are descriptive and have only one supporting capture day where present.
+
+| Metric | Value |
+|---|---:|
+| Mean capture-day macro-F1 | 0.36788369959339545 |
+| Capture-day macro-F1 standard deviation | 0.18663244080542973 |
+| Source rows | 3,145,725 |
+| Rows dropped for non-finite/missing numeric features | 13,484 |
+| Cleaned rows | 3,132,241 |
+| Attack rows retained | 667,496 |
+| BENIGN rows retained | 150,000 |
+| Total rows retained after sampling | 817,496 |
+
+| Family | Capture days | Files | Cleaned attack flows | Recall | Held-out capture-day units (n) | Support |
+|---|---|---:|---:|---:|---:|---:|
+| Bot | 2018-03-02 | 1 | 286,191 | 0.44703013022771504 | 1 | 286,191 |
+| WebAttack | 2018-02-22 | 1 | 362 | 0.0 | 1 | 362 |
+| BruteForce | 2018-02-14 | 1 | 380,943 | 0.0 | 1 | 380,943 |
+| DoS/DDoS | none | 0 | 0 | n/a | 0 | 0 |
+| Infiltration | none | 0 | 0 | n/a | 0 | 0 |
+| PortScan | none | 0 | 0 | n/a | 0 | 0 |
+
+| Held-out capture day | Macro-F1 | Accuracy | Train rows | Test rows |
+|---|---:|---:|---:|---:|
+| 2018-02-14 | 0.10395310830086206 | 0.11601302260391745 | 386,553 | 430,943 |
+| 2018-02-22 | 0.49812151833139007 | 0.9925141972121838 | 767,134 | 50,362 |
+| 2018-03-02 | 0.5015764721479343 | 0.5285328875549911 | 481,305 | 336,191 |
+
+### CICIDS2017 ↔ CSE-CIC-IDS2018 transfer
+
+Protocol: train on one dataset, test on the other, seed 42. CICIDS2017 is label-stratified and capped at 50,000 rows per label; CSE uses all attack rows plus up to 50,000 BENIGN rows per capture. The model uses the 80 common canonical numeric flow features listed in the JSON. CICIDS2017 `DosDDoS` and `PortScan` are excluded because those labels are absent from the three supplied CSE captures. These results therefore cover the four shared labels only and do not estimate transfer for the excluded families.
+
+| Direction | Macro-F1 | Accuracy | Train rows | Test rows | Excluded train rows | Excluded test rows |
+|---|---:|---:|---:|---:|---:|---:|
+| CICIDS2017 → CSE-CIC-IDS2018 | 0.08537530967418447 | 0.18219294039359213 | 63,241 | 817,496 | 100,000 | 0 |
+| CSE-CIC-IDS2018 → CICIDS2017 | 0.2571008570815823 | 0.7829572587403741 | 817,496 | 63,241 | 0 | 100,000 |
+
+| Shared family | CICIDS2017 source rows | CSE cleaned rows | CICIDS2017 → CSE recall | CSE → CICIDS2017 recall |
+|---|---:|---:|---:|---:|
+| BENIGN | 2,071,726 | 2,464,745 | 0.9928266666666666 | 0.98352 |
+| Bot | 1,948 | 286,191 | 4.542420970610536e-05 | 0.060574948665297744 |
+| BruteForce | 9,150 | 380,943 | 0.0 | 0.024153005464480876 |
+| WebAttack | 2,143 | 362 | 0.013812154696132596 | 0.0 |
+
+The CSE attack coverage is one capture day per observed family, so capture-day and per-family results are descriptive. The cross-dataset scores use a bounded CICIDS2017 sample and only labels shared by the selected files; they should not be interpreted as full-population performance or as evidence for DoS/DDoS, Infiltration, or PortScan transfer.

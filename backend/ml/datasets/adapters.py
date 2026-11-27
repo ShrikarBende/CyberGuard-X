@@ -6,12 +6,16 @@ similarly named features were generated with identical CICFlowMeter versions.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import logging
 from pathlib import Path
 import re
 from typing import Protocol
 
 import numpy as np
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 class DatasetAdapter(Protocol):
@@ -105,6 +109,17 @@ class CSECICIDS2018Adapter:
 
     root: Path = Path(__file__).resolve().parents[2] / "datasets" / "cse_cic_ids2018" / "processed"
     name: str = "CSE-CIC-IDS2018"
+    max_rows_per_capture: int = 50_000
+    sampling_seed: int = 42
+    read_chunk_rows: int = 100_000
+
+    def __post_init__(self):
+        if self.max_rows_per_capture < 1 or self.read_chunk_rows < 1:
+            raise ValueError("CSE capture row limits must be positive")
+
+    def _capture_seed(self, path: Path) -> int:
+        name_hash = int.from_bytes(hashlib.sha256(path.name.encode("utf-8")).digest()[:4], "big")
+        return (int(self.sampling_seed) + name_hash) % (2**32)
 
     def capture_files(self) -> list[Path]:
         if not self.root.is_dir():
@@ -120,36 +135,137 @@ class CSECICIDS2018Adapter:
             )
         return paths
 
-    def load_capture(self, path: Path) -> pd.DataFrame:
+    def load_capture(self, path: Path, *, keep_columns: list[str] | None = None) -> pd.DataFrame:
         path = Path(path)
-        frame = pd.read_csv(path, low_memory=False)
-        frame.columns = [str(c).strip() for c in frame.columns]
-        label_column = next((c for c in ("Label", "label") if c in frame.columns), None)
-        if label_column is None:
-            raise ValueError(f"CSE capture {path.name} has no Label column")
-        result = frame.rename(columns=CSE_FEATURE_COLUMNS)
-        result["raw_label"] = result[label_column].astype(str).str.strip()
-        result["Label"] = result[label_column].map(normalize_cse_label)
-        result["_capture_file"] = path.name
-        result["_capture_day"] = _capture_day(path)
-        if "Timestamp" in result.columns:
-            result["Timestamp"] = pd.to_datetime(result["Timestamp"], errors="coerce", utc=True)
-        # Data values are parsed strictly: a non-numeric feature is a schema error.
-        for column in CSE_FEATURE_COLUMNS.values():
-            if column in result:
-                converted = pd.to_numeric(result[column], errors="coerce")
-                invalid = result[column].notna() & converted.isna()
+        rng = np.random.default_rng(self._capture_seed(path))
+        attack_parts: list[pd.DataFrame] = []
+        benign_reservoir = pd.DataFrame()
+        benign_keys = np.empty(0, dtype=np.float64)
+        label_counts: dict[str, int] = {}
+        numeric_columns: list[str] = []
+        source_rows = 0
+        dropped_nonfinite_rows = 0
+        source_offset = 0
+
+        for frame in pd.read_csv(path, low_memory=False, chunksize=self.read_chunk_rows):
+            frame.columns = [str(c).strip() for c in frame.columns]
+            label_column = next((c for c in ("Label", "label") if c in frame.columns), None)
+            if label_column is None:
+                raise ValueError(f"CSE capture {path.name} has no Label column")
+            source_rows += len(frame)
+            result = frame.rename(columns=CSE_FEATURE_COLUMNS)
+            result["_source_row"] = np.arange(source_offset, source_offset + len(result), dtype=np.int64)
+            source_offset += len(result)
+            result["raw_label"] = frame[label_column].astype(str).str.strip()
+            result["Label"] = frame[label_column].map(normalize_cse_label)
+            result["_capture_file"] = path.name
+            result["_capture_day"] = _capture_day(path)
+            if "Timestamp" in result.columns:
+                result["Timestamp"] = pd.to_datetime(
+                    result["Timestamp"], errors="coerce", utc=True, dayfirst=True,
+                )
+
+            # Keep corrupt strings fatal; only parsed NaN/inf feature values are filtered.
+            numeric_columns = list(dict.fromkeys(
+                column for column in CSE_FEATURE_COLUMNS.values() if column in result.columns
+            ))
+            for column in numeric_columns:
+                original = result[column]
+                converted = pd.to_numeric(original, errors="coerce")
+                invalid = original.notna() & converted.isna()
                 if invalid.any():
                     raise ValueError(f"CSE capture {path.name} has non-numeric values in {column!r}")
                 result[column] = converted
-        numeric = result.select_dtypes(include=[np.number])
-        if not np.isfinite(numeric.to_numpy(dtype=np.float64)).all():
-            raise ValueError(f"CSE capture {path.name} contains non-finite feature values")
+
+            if numeric_columns:
+                numeric = result[numeric_columns].replace([np.inf, -np.inf], np.nan)
+                invalid_rows = numeric.isna().any(axis=1)
+                dropped_nonfinite_rows += int(invalid_rows.sum())
+                result.loc[:, numeric_columns] = numeric
+                result = result.loc[~invalid_rows].copy()
+            for column in numeric_columns:
+                result[column] = result[column].astype(np.float32)
+            numeric_values = result[numeric_columns].to_numpy(dtype=np.float32, copy=False)
+            if numeric_values.size and not np.isfinite(numeric_values).all():
+                raise ValueError(f"CSE capture {path.name} contains non-finite feature values after filtering")
+
+            for label, count in result["Label"].value_counts().items():
+                key = str(label)
+                label_counts[key] = label_counts.get(key, 0) + int(count)
+            attack_mask = result["Label"] != "BENIGN"
+            if attack_mask.any():
+                attack_parts.append(result.loc[attack_mask].copy())
+            benign = result.loc[~attack_mask].copy()
+            if not benign.empty:
+                new_keys = rng.random(len(benign))
+                candidates = pd.concat([benign_reservoir, benign], ignore_index=True)
+                candidate_keys = np.concatenate([benign_keys, new_keys])
+                if len(candidates) > self.max_rows_per_capture:
+                    selected = np.argpartition(candidate_keys, self.max_rows_per_capture - 1)[:self.max_rows_per_capture]
+                    benign_reservoir = candidates.iloc[selected].copy()
+                    benign_keys = candidate_keys[selected]
+                else:
+                    benign_reservoir = candidates
+                    benign_keys = candidate_keys
+
+        if source_rows == 0:
+            raise ValueError(f"CSE capture {path.name} contains no rows")
+        attacks = pd.concat(attack_parts, ignore_index=True) if attack_parts else pd.DataFrame()
+        attack_rows = len(attacks)
+        # The cap applies to the majority BENIGN class; attack rows are retained
+        # in full even when that makes the final capture exceed the cap.
+        benign_limit = self.max_rows_per_capture
+        if len(benign_reservoir) > benign_limit:
+            if benign_limit:
+                selected = np.argpartition(benign_keys, benign_limit - 1)[:benign_limit]
+                benign_reservoir = benign_reservoir.iloc[selected].copy()
+            else:
+                benign_reservoir = benign_reservoir.iloc[:0].copy()
+        sampled_out_benign = label_counts.get("BENIGN", 0) - len(benign_reservoir)
+        result = pd.concat([attacks, benign_reservoir], ignore_index=True)
+        result = result.sort_values("_source_row", kind="stable").drop(columns=["_source_row"]).reset_index(drop=True)
+
+        if dropped_nonfinite_rows:
+            logger.warning(
+                "CSE capture %s: dropped exactly %d rows with NaN or non-finite required numeric features",
+                path.name, dropped_nonfinite_rows,
+            )
+        if sampled_out_benign:
+            logger.info(
+                "CSE capture %s: retained all %d attack rows and sampled %d/%d BENIGN rows (seed=%d, target cap=%d)",
+                path.name, attack_rows, len(benign_reservoir), label_counts.get("BENIGN", 0),
+                self._capture_seed(path), self.max_rows_per_capture,
+            )
+        ingestion = {
+            "capture_file": path.name,
+            "capture_day": _capture_day(path),
+            "source_rows": source_rows,
+            "dropped_nonfinite_rows": dropped_nonfinite_rows,
+            "cleaned_rows": sum(label_counts.values()),
+            "attack_rows_retained": attack_rows,
+            "benign_rows_cleaned": label_counts.get("BENIGN", 0),
+            "benign_rows_retained": len(benign_reservoir),
+            "benign_rows_sampled_out": sampled_out_benign,
+            "retained_rows": len(result),
+            "max_benign_rows_per_capture": self.max_rows_per_capture,
+            "sampling_seed": self._capture_seed(path),
+            "label_counts_before_sampling": label_counts,
+        }
+        if keep_columns is not None:
+            selected_columns = [column for column in keep_columns if column in result.columns]
+            result = result.loc[:, selected_columns].copy()
+        result.attrs["cse_ingestion"] = ingestion
         return result
 
-    def load_all(self) -> pd.DataFrame:
-        frames = [self.load_capture(path) for path in self.capture_files()]
-        return pd.concat(frames, ignore_index=True)
+    def load_all(self, *, keep_columns: list[str] | None = None) -> pd.DataFrame:
+        frames = [self.load_capture(path, keep_columns=keep_columns) for path in self.capture_files()]
+        result = pd.concat(frames, ignore_index=True)
+        result.attrs["cse_ingestion"] = summarize_cse_ingestion(
+            [frame.attrs["cse_ingestion"] for frame in frames],
+            max_rows_per_capture=self.max_rows_per_capture,
+            sampling_seed=self.sampling_seed,
+        )
+        return result
 
     def capture_inventory(self) -> dict[str, dict[str, object]]:
         inventory: dict[str, dict[str, object]] = {}
@@ -164,6 +280,25 @@ class CSECICIDS2018Adapter:
                 row["families"][family] = row["families"].get(family, 0) + int(count)
                 row["family_files"].setdefault(family, []).append(path.name)
         return inventory
+
+
+def summarize_cse_ingestion(captures: list[dict], *, max_rows_per_capture: int, sampling_seed: int) -> dict:
+    """Summarize cleaning and sampling so evaluation reports retain provenance."""
+    total_keys = (
+        "source_rows", "dropped_nonfinite_rows", "cleaned_rows", "attack_rows_retained",
+        "benign_rows_cleaned", "benign_rows_retained", "benign_rows_sampled_out", "retained_rows",
+    )
+    totals = {key: sum(int(capture.get(key, 0)) for capture in captures) for key in total_keys}
+    return {
+        "sampling": {
+            "method": "retain every non-BENIGN row; deterministic reservoir-sample BENIGN rows to the per-capture cap",
+            "max_benign_rows_per_capture": int(max_rows_per_capture),
+            "seed": int(sampling_seed),
+            "feature_dtype": "float32",
+        },
+        "totals": totals,
+        "captures": captures,
+    }
 
 
 @dataclass(frozen=True)

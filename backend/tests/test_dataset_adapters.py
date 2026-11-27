@@ -64,6 +64,42 @@ def test_cse_adapter_rejects_bad_numeric_features(tmp_path):
         CSECICIDS2018Adapter(root=tmp_path).load_capture(path)
 
 
+def test_cse_adapter_drops_nonfinite_rate_rows_and_logs_exact_count(tmp_path, caplog):
+    path = tmp_path / "Wednesday-14-02-2018.csv"
+    _fixture_capture(path, ["BENIGN", "Bot", "BENIGN", "Bot", "BENIGN", "Bot", "BENIGN"])
+    frame = pd.read_csv(path)
+    frame["Flow Byts/s"] = [1.0, np.inf, 2.0, 3.0, 4.0, -np.inf, 6.0]
+    frame["Flow Pkts/s"] = [1.0, 1.0, -np.inf, 4.0, 5.0, 6.0, 7.0]
+    frame.to_csv(path, index=False)
+
+    result = CSECICIDS2018Adapter(root=tmp_path, read_chunk_rows=2).load_capture(path)
+
+    assert len(result) == 4
+    assert result["Label"].tolist() == ["BENIGN", "Bot", "BENIGN", "BENIGN"]
+    assert result.attrs["cse_ingestion"]["dropped_nonfinite_rows"] == 3
+    assert result.attrs["cse_ingestion"]["source_rows"] == 7
+    assert result["Flow Bytes/s"].dtype == np.float32
+    assert result["Flow Packets/s"].dtype == np.float32
+    assert np.isfinite(result[["Flow Bytes/s", "Flow Packets/s"]].to_numpy()).all()
+    assert "dropped exactly 3 rows" in caplog.text
+
+
+def test_cse_adapter_sampling_is_deterministic_and_retains_all_attacks(tmp_path):
+    path = tmp_path / "2018-02-14.csv"
+    _fixture_capture(path, ["BENIGN"] * 20 + ["Bot"] * 3)
+    adapter = CSECICIDS2018Adapter(root=tmp_path, max_rows_per_capture=10, sampling_seed=7, read_chunk_rows=4)
+
+    first = adapter.load_capture(path)
+    second = adapter.load_capture(path)
+
+    assert first.equals(second)
+    assert len(first) == 13
+    assert (first["Label"] == "Bot").sum() == 3
+    assert (first["Label"] == "BENIGN").sum() == 10
+    assert first["Flow Duration"].dtype == np.float32
+    assert first.attrs["cse_ingestion"]["benign_rows_sampled_out"] == 10
+
+
 def test_cross_dataset_pair_reports_only_shared_labels_and_features():
     train = pd.DataFrame({"Flow Duration": [1, 2, 3], "Flow IAT Mean": [1, 2, 3],
                           "Flow IAT Std": [1, 1, 1], "Total Length of Fwd Packets": [10, 20, 30],
@@ -126,6 +162,7 @@ def test_cse_leave_one_capture_day_out_keeps_each_day_held_out(tmp_path):
         CSECICIDS2018Adapter(root=tmp_path), model_factory=_majority_model,
     )
     assert result["n_capture_days"] == 2
+    assert result["protocol"].startswith("CSE-CIC-IDS2018 binary attack-vs-benign")
     assert [fold["held_out_capture_day"] for fold in result["folds"]] == ["2018-02-14", "2018-02-15"]
     assert all(fold["test_rows"] == 16 for fold in result["folds"])
     assert result["family_capture_counts"]["Bot"] == {
@@ -133,6 +170,19 @@ def test_cse_leave_one_capture_day_out_keeps_each_day_held_out(tmp_path):
         "n_capture_days": 2, "n_files": 2, "flow_count": 16,
     }
     assert result["aggregate"]["per_family_recall"]["Bot"]["n_capture_days_with_test_support"] == 2
+
+
+def test_cse_binary_capture_day_evaluation_supports_families_on_unique_days(tmp_path):
+    _fixture_capture(tmp_path / "2018-02-14.csv", ["BENIGN"] * 8 + ["Bot"] * 3)
+    _fixture_capture(tmp_path / "2018-02-22.csv", ["BENIGN"] * 8 + ["Brute Force -Web"] * 3)
+    result = cse_capture_day_evaluation(
+        CSECICIDS2018Adapter(root=tmp_path), model_factory=_majority_model,
+    )
+    assert len(result["folds"]) == 2
+    assert result["aggregate"]["per_family_recall"]["Bot"]["support"] == 3
+    assert result["aggregate"]["per_family_recall"]["WebAttack"]["support"] == 3
+    assert [fold["n_capture_days"] if "n_capture_days" in fold else fold["held_out_capture_day"]
+            for fold in result["folds"]] == ["2018-02-14", "2018-02-22"]
 
 
 def test_unsw_adapter_is_optional_and_reports_its_local_files(tmp_path):
