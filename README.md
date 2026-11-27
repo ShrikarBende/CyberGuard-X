@@ -1,12 +1,70 @@
-# Enterprise CyberGuard X
+# CyberGuard X
 
-Enterprise CyberGuard X is a SOC investigation prototype that combines network-flow classification and open-set recognition with endpoint, user-sequence, and host-graph detectors. Its SOC dashboard shows unified incident risk, branch evidence, unknown/novel triage, multi-modal explainability, and read-only RAG investigations.
+**An explainable, multi-layer Security Operations Center (SOC) prototype that detects known attacks, flags novel (unknown) threats, and helps analysts investigate them with grounded, human-approved AI assistance.**
 
-> **Evaluation status in one line:** the CICIDS2017 flow classifier and open-set detector are benchmarked against dataset labels; the endpoint, user-sequence, graph, and fusion branches rely on proxy or synthetic labels. Hardening changes (session-invariant features, Bot class weighting, per-family thresholds, host-window features, noise suppression) are implemented but have **not yet been shown to improve** the saved metrics. See [docs/RESULTS.md](docs/RESULTS.md).
+> B.Tech Information Technology, Final-Year Major Project, Vishwakarma Institute of Technology (VIT), Pune
+>
+> Author: Shrikar Bende | Academic year: 2026-27
+
+---
+
+## Table of contents
+
+1. [Problem and motivation](#problem-and-motivation)
+2. [What this project contributes](#what-this-project-contributes)
+3. [System at a glance](#system-at-a-glance)
+4. [Screenshots](#screenshots)
+5. [Architecture](#architecture)
+6. [Models and decision pipeline](#models-and-decision-pipeline)
+7. [Implemented features](#implemented-features)
+8. [Agentic investigation (opt-in)](#agentic-investigation-opt-in)
+9. [Evaluation: what is measured and what is not](#evaluation-what-is-measured-and-what-is-not)
+10. [Suggested demo walkthrough](#suggested-demo-walkthrough)
+11. [Run locally](#run-locally)
+12. [Docker deployment](#docker-deployment)
+13. [Analyst accounts and permissions](#analyst-accounts-and-permissions)
+14. [Tests](#tests)
+15. [Limitations](#limitations)
+16. [Tech stack](#tech-stack)
+
+---
+
+## Problem and motivation
+
+Modern SOC teams face two recurring problems:
+
+1. **Signature- and class-based detectors fail on novel attacks.** A classifier trained on known attack families has no principled way to say "this looks like nothing I have seen before."
+2. **Alerts without explanations are hard to trust.** Analysts need to know *why* a flow or incident was scored high, and what to do next, without an AI taking uncontrolled action.
+
+Enterprise CyberGuard X addresses both: it combines **known-threat classification with open-set (unknown) recognition**, fuses signals from **network, endpoint, user and host-graph layers**, and presents everything with **multi-modal explainability** and a **read-only, evidence-cited RAG assistant**.
+
+## What this project contributes
+
+| # | Contribution | Where to look |
+|---|---|---|
+| 1 | **Open-set network detection**: LightGBM flow classifier with confidence, energy/margin and compact-centroid rejection, so unfamiliar traffic is routed to `UNKNOWN_NOVEL` triage instead of being forced into a known class | [Latest open-set run](#latest-cicids-open-set-run) |
+| 2 | **Multi-branch detection and risk fusion**: endpoint (DAE + Isolation Forest), user sequence (TFT), host graph (GAT) and a calibrated logistic fusion layer producing a severity tier with per-component contributions | [Models](#models-and-decision-pipeline) |
+| 3 | **Explainability**: signed TreeSHAP attributions, risk-contribution bars, novelty distances, residual/temporal/edge explanations | [Screenshots](#screenshots) |
+| 4 | **Grounded investigation**: five-step cited RAG workflow with evidence-gated MITRE ATT&CK mapping; optional bounded agent that can only *propose* actions for human review (dry-run) | [Agentic investigation](#agentic-investigation-opt-in) |
+| 5 | **Honest evaluation methodology**: frozen session-disjoint holdout, multi-seed runs, bootstrap intervals, and explicit labelling of proxy-label results | [Evaluation](#evaluation-what-is-measured-and-what-is-not) |
+| 6 | **Security-conscious engineering**: signed model artifacts, role-based access (viewer/analyst/admin), audit trail, no default accounts | [Accounts](#analyst-accounts-and-permissions) |
+
+## System at a glance
+
+| Item | Detail |
+|---|---|
+| Frontend | React SOC dashboard (Vite), live updates over WebSocket |
+| Backend | FastAPI, SQLite (Alembic migrations), single-worker |
+| ML | LightGBM, PyTorch (DAE, TFT, GAT), scikit-learn (Isolation Forest, logistic fusion), SHAP |
+| Retrieval | FAISS-based RAG over a curated ATT&CK knowledge base (Enterprise ATT&CK v20.1 subset) |
+| Primary dataset | CICIDS2017 (plus supplemental CSE-CIC-IDS2018 exploratory evaluation, Sysmon and UNSW-NB15 for secondary branches) |
+| Safety stance | Read-only assistant; recommendations require human approval; agent approvals are dry-run only |
+
+> **Evaluation status in one line:** the CICIDS2017 flow classifier and open-set detector are benchmarked against dataset labels; the endpoint, user-sequence, graph and fusion branches rely on proxy or synthetic labels. See [docs/RESULTS.md](docs/RESULTS.md).
 
 ## Screenshots
 
-> Taken from a local development workspace with synthetic demo events and a held-out CICIDS2017 replay loaded. They illustrate the interface and are **not** evidence of detection performance; see [docs/RESULTS.md](docs/RESULTS.md) for evaluated results.
+> Taken from a local development workspace with synthetic demo events and a held-out CICIDS2017 replay loaded. They illustrate the interface and are **not** evidence of detection performance.
 
 ### Analyst sign-in
 
@@ -16,7 +74,7 @@ Signed bearer-token login with `viewer`, `analyst` and `admin` roles. There is n
 
 ### Executive overview
 
-Event totals per detection layer (user/identity, endpoint, network) alongside incident counts by severity and by review status. In this workspace the counts come from the held-out CICIDS2017 replay plus synthetic demo scenarios, so they illustrate the layout and are not a real-world incident summary. Layers that receive no input for a flow replay (user/identity, endpoint) show 0 flags.
+Event totals per detection layer (user/identity, endpoint, network) alongside incident counts by severity and review status. Counts here come from the held-out CICIDS2017 replay plus synthetic demo scenarios, so they illustrate the layout rather than a real-world incident summary. Layers that receive no input for a flow replay (user/identity, endpoint) show 0 flags.
 
 ![Executive Overview Dashboard showing total events analyzed, detection layers, and incidents by severity and status](Screenshots/02.png)
 
@@ -32,93 +90,17 @@ Events outside known-class confidence or centroid boundaries, with centroid dist
 
 ![Threat Intelligence page showing the Unknown / Novel Threat view](Screenshots/04.png)
 
-### RAG AI assistant
-
-Read-only assistant with FAISS retrieval and cited evidence. It recommends steps for human approval and cannot execute actions.
-
-![Grounded AI Security Assistant with incident context selector and suggested prompts](Screenshots/06.png)
-
 ### Explainability and risk scoring
 
 Signed TreeSHAP feature attributions for the LightGBM flow classifier, the unified risk breakdown, and open-set novelty distances.
 
 ![SHAP explainability page with unified risk, TreeSHAP attributions and open-set novelty](Screenshots/05.png)
 
-## Active model and decision pipeline
+### RAG AI assistant
 
-The codebase contains four trained model families:
+Read-only assistant with FAISS retrieval and cited evidence. It recommends steps for human approval and cannot execute actions.
 
-1. **Network flow classifier:** LightGBM is the saved live CICIDS model; the evaluation/training code also supports XGBoost.
-2. **Endpoint anomaly detector:** PyTorch denoising autoencoder (DAE) plus Isolation Forest.
-3. **User sequence model:** Temporal Fusion Transformer (TFT).
-4. **Host communication model:** edge-aware Graph Attention Network (GAT).
-
-Their outputs feed two distinct decision layers: open-set centroid/energy/margin checks and logistic-regression stacking risk fusion. The flow classifier's persisted verdict vocabulary includes `KNOWN_THREAT`, `UNKNOWN_CANDIDATE`, and `UNKNOWN_NOVEL`; the detailed open-set `decision_outcome` can report `ABSTAIN_NEEDS_REVIEW`. `KNOWN_ATTACK` is not the current API verdict. The fusion score is a calibrated triage score, not a real-world incident probability.
-
-Model-family presence does not imply independently validated production performance. See [the results and label provenance](docs/RESULTS.md) for saved artifact metadata, benchmark split details, proxy-label caveats, and unavailable external evaluation data.
-
-## Implemented features
-
-- CSV and JSON event ingestion with strict row validation, duplicate detection, optional CICIDS flow scoring, and background processing for large uploads.
-- LightGBM CICIDS2017 flow classification with confidence, energy/margin, compact-centroid distance, and calibrated open-set rejection. The stored detector field is `score`; `attack_probability` is derived as `1 - P(BENIGN)`.
-- Endpoint behavior scoring with a PyTorch denoising autoencoder and Isolation Forest. The checked-in artifact is unsupervised on 293 Sysmon capture windows; the bundled corpus does not provide a labeled benign/Atomic Red Team test pair.
-- A temporal user-sequence model (TFT) for weakly labeled sequence signals and a graph-attention model (GAT) for host-to-host anomaly proxy scores.
-- A calibrated logistic risk-fusion model combining user, endpoint, network flow, graph, open-set, and correlation-stage signals into a severity tier and normalized contribution bars.
-- SOC views for `UNKNOWN_NOVEL` triage (including centroid distance), per-incident risk contributions, multi-modal explainability, and OSCR/recall/F1/AUPRC evaluation summaries.
-- Grouped known-threat and unknown-candidate incidents, bounded sample-event evidence, risk component breakdowns, and probability-gated MITRE mappings.
-- Rule-based user and endpoint indicators, cross-layer correlation, and labelled synthetic demo scenarios. These indicators are rules, not ML predictions.
-- Scenario coverage: four interactive scenarios load by default (`multi_stage_takeover`, `brute_force_only`, `benign_admin`, `normal_employee_day`). `generate_all_taxonomy_scenarios()` additionally supplies the twelve named synthetic threat scenarios of the target taxonomy plus the two benign scenarios. These are developer-authored rule/demo fixtures, **not** captured attack data or benchmark coverage; `unknown_novel_zero_day` is only a synthetic proxy.
-- On-demand signed TreeSHAP explanations for supported CICIDS detections.
-- Read-only five-step RAG investigations (`retrieve → analyze → map → summarize → recommend`) with cited evidence, evidence-gated ATT&CK mapping, and human-approval-only recommendations.
-- **Agentic investigation (opt-in):** a separate bounded, tool-using investigation layer; the existing five-step RAG workflow remains deterministic. It saves an evidence-linked report and stages optional actions for human review. Approval is dry-run only and never executes a response. See the usage, privacy, limits, and role details below.
-- Curated ATT&CK technique references are versioned in `backend/app/rag/knowledge_metadata.json` against Enterprise ATT&CK v20.1 (reference verified 2026-11-19). They are a project-curated subset, not a complete synchronized catalog; ingesting MITRE Detection Strategies/Analytics is planned, not implemented.
-- Live event updates over WebSockets, incident review queue, evaluation summary page, and prepared held-out replay through the live engine.
-- Background model retraining for the `light` and `medium` profiles. A completed artifact replaces its profile bundle atomically; a failed job leaves the prior bundle in place.
-- **On-demand drift check (`POST /api/models/drift`, admin-only):** computes feature-level PSI/KS and optional prediction-distribution PSI from caller-supplied `reference_features` and `current_features` arrays (bounded by `DRIFT_MAX_ROWS` and `DRIFT_MAX_FEATURES`). This is an on-demand, caller-supplied comparison and **not** continuous live monitoring. *Planned:* store a signed training-time baseline in the artifact manifest and compare against recent live data, to be built with Phase 5a metrics.
-
-## Agentic investigation (opt-in)
-
-The agent investigates a selected incident through a bounded sequence of allowlisted tools and writes a report grounded in evidence returned during that run. The deterministic five-step RAG investigation is still available and unchanged. Agent reports are advisory; this feature does not claim to improve detection or analyst outcomes.
-
-Enable the layer with `AGENT_ENABLED=true`. Blank `AGENT_LLM_*` values inherit their corresponding `LLM_*` settings. OpenAI-compatible hosted services can use a URL and key; local Ollama can use a URL with no key. Never put credentials in `.env.example` or tracked files.
-
-| Setting | Default | Purpose |
-|---|---:|---|
-| `AGENT_ENABLED` | `false` | Opt in to agent endpoints. |
-| `AGENT_TOOL_MODE` | `native` | Native provider tools, with JSON-mode fallback after an unsupported native request. |
-| `AGENT_LLM_API_URL` | inherited / blank | OpenAI-compatible chat completions URL; URL-only local service is supported. |
-| `AGENT_LLM_API_KEY` | inherited / blank | Provider key; optional for local URL-only models. |
-| `AGENT_LLM_MODEL` | inherited / blank | Model name sent to the provider. |
-| `AGENT_MAX_STEPS` | `6` | LLM turns; hard ceiling `12`. |
-| `AGENT_MAX_TOOL_CALLS` | `12` | Tool calls; hard ceiling `30`. |
-| `AGENT_WALL_SECONDS` | `90` | Run wall time; hard ceiling `300` seconds. |
-| `AGENT_RESULT_CHARS` | `6000` | Per-tool result size; hard ceiling `20000` characters. |
-| `AGENT_MAX_CONCURRENT_RUNS` | `2` | Concurrent runs; hard ceiling `4`, with one run per incident. |
-| `AGENT_MAX_OUTPUT_TOKENS` | `1500` | Maximum provider output tokens per request. |
-| `AGENT_EXECUTION_MODE` | `dry_run` | Only supported execution mode; approvals are simulated. |
-| `AGENT_ALLOW_SELF_APPROVAL` | `false` | Demo-only opt-in for requester self-review; otherwise a different analyst is required, including for admins. |
-| `AGENT_PROPOSAL_TTL_HOURS` | `24` | Pending proposal lifetime before lazy expiry. |
-
-Authenticated users can read agent configuration, run summaries/details, and the proposal queue. Analysts and admins can start/cancel runs and approve or reject proposals. By default the requester cannot decide their own proposal. Approval records a simulated result only; no containment action is executed. Proposals for `RESOLVED` or `FALSE_POSITIVE` incidents cannot be approved.
-
-Routes are `GET /api/agent/config`, `POST /api/incidents/{incident_id}/agent-investigate`, `GET /api/agent/runs`, `GET /api/agent/runs/{run_id}`, `POST /api/agent/runs/{run_id}/cancel`, `GET /api/agent/proposals`, and the decision routes `POST /api/agent/proposals/{proposal_id}/approve` and `/api/agent/proposals/{proposal_id}/reject`. Run details include the persisted step trace; run-list responses omit steps.
-
-The configured provider receives the system instructions, incident and event identifiers, and any evidence requested by the tools. Evidence can include user IDs and usernames, device IDs and hostnames, source/destination IPs, event type/category, process names, scenarios, URLs/URIs, command lines, file paths, raw-payload text excerpts, detector summaries, and retrieved knowledge chunks. Only selected tools and fields are sent for a run, but telemetry can contain sensitive operational data. A local Ollama-compatible endpoint can keep these requests within the local environment by setting `AGENT_LLM_API_URL` to its chat-completions endpoint and leaving the key blank.
-
-Runs may finish as `completed`, `completed_fallback`, `limit_reached`, `failed`, or `cancelled`. Fallback and limit-reached runs include the deterministic baseline; step/tool limits request a final report using retrieved evidence when possible. Run coordination is process-local, so the agent layer supports one backend worker only.
-
-**Status:** implemented; measured results are in [docs/agent/RESULTS.md](docs/agent/RESULTS.md). The default FakeLLM run measures plumbing and guard behavior only; it does not measure real-model investigation quality.
-
-### Hardening changes (implemented, pending re-evaluation)
-
-These target the weaknesses listed under [Known limitations](#known-limitations). They are training/evaluation policy changes, not measured improvements; the saved bundles predate them.
-
-- **Session-invariant feature sanitization:** opt-in in `build_full_pipeline()`; removes topology and capture identifiers before scaling. Enabled by the comprehensive runner for session-disjoint runs.
-- **Bot class weighting:** balanced class weights plus a 2.5× multiplier for Bot in LightGBM training.
-- **Per-family open-set calibration:** thresholds from known-only validation quantiles per predicted family; an optional Youden/geometric-mean mode takes a separately labeled calibration set. The held-out family is excluded from threshold selection.
-- **Host-window features:** `HostWindowAggregator` exposes four rolling source-host features for replay/stream callers. Existing saved bundles do not consume them.
-- **Confidence-gated noise suppression:** suppresses only borderline network-only alerts with no rule, endpoint, or user corroboration; raw events remain stored. The 0.5% benign-alert target is a goal, not an achieved result.
-- **Hybrid RAG retrieval path** and an expanded 50-case RAG suite (20 direct ATT&CK, 15 adversarial, 15 multi-hop).
+![Grounded AI Security Assistant with incident context selector and suggested prompts](Screenshots/06.png)
 
 ## Architecture
 
@@ -142,97 +124,129 @@ flowchart TD
     H --> M
 ```
 
-## Run locally
+## Models and decision pipeline
 
-Requirements: Python 3.10+ and Node.js 18+.
+The codebase contains four trained model families:
 
-Backend, from the repository root:
+| Branch | Algorithm | Role |
+|---|---|---|
+| Network flow | **LightGBM** (saved live model; training code also supports XGBoost) | Known-attack classification on CICIDS2017 flow features |
+| Endpoint | **PyTorch denoising autoencoder + Isolation Forest** | Unsupervised endpoint behaviour anomaly scoring |
+| User sequence | **Temporal Fusion Transformer (TFT)** | Weakly labelled user-activity sequence signals |
+| Host communication | **Edge-aware Graph Attention Network (GAT)** | Host-to-host anomaly proxy scores |
 
-```powershell
-python -m pip install -r backend/requirements.txt
-cd backend
-uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --no-proxy-headers
-```
+Their outputs feed two decision layers:
 
-Model artifact verification is enabled by default (`ALLOW_UNSIGNED_MODELS=false`). On a fresh clone, the bundles in `backend/saved_models/` are unsigned, so startup refuses to load them with a missing-manifest error unless you either generate an `ARTIFACT_HMAC_KEY` (`python -c "import secrets; print(secrets.token_hex(32))"`) and run `python scripts/sign_existing_models.py`, or set `ALLOW_UNSIGNED_MODELS=true` for local development only (logs a warning on every load). See [docs/MODEL_ARTIFACT_SECURITY.md](docs/MODEL_ARTIFACT_SECURITY.md).
+- **Open-set checks:** centroid, energy and margin tests that decide whether a flow is a known class or should be escalated.
+- **Risk fusion:** logistic-regression stacking that outputs a calibrated triage score and severity tier.
 
-Uvicorn access logs show the immediate proxy peer address; the application applies its configured trusted-proxy policy separately for login attribution.
+The flow classifier's persisted verdicts are `KNOWN_THREAT`, `UNKNOWN_CANDIDATE` and `UNKNOWN_NOVEL`; the detailed open-set `decision_outcome` can also report `ABSTAIN_NEEDS_REVIEW`. The fusion score is a **calibrated triage score, not a real-world incident probability**.
 
-The API health URL is [http://127.0.0.1:8000/api/health](http://127.0.0.1:8000/api/health). API docs are at `/docs`; live events use `ws://127.0.0.1:8000/ws/live-events`.
+Model-family presence does not imply independently validated production performance; see [docs/RESULTS.md](docs/RESULTS.md).
 
-The application runtime supports SQLite only. `backend/app/database/session.py` rejects non-SQLite `DATABASE_URL` values with `ValueError` during startup, and a regression test covers PostgreSQL URLs. SQLite is used for local development, CI, and the Compose demonstration, which stores its database in the `cyberguardx_demo_sqlite_data` named volume. PostgreSQL application-runtime support is a planned Phase 5 upgrade; the separate staging-only recovery utility does not provide runtime PostgreSQL support. Run `alembic upgrade head` from `backend/` to apply schema migrations.
+## Implemented features
 
-### Signing model bundles for local demos
+**Detection and ingestion**
+- CSV and JSON ingestion with strict row validation, duplicate detection, optional CICIDS flow scoring, and background processing for large uploads.
+- LightGBM CICIDS2017 flow classification with confidence, energy/margin, compact-centroid distance and calibrated open-set rejection (`attack_probability` is derived as `1 - P(BENIGN)`).
+- Endpoint behaviour scoring (DAE + Isolation Forest), user-sequence scoring (TFT) and host-graph scoring (GAT).
+- Calibrated logistic risk fusion combining user, endpoint, network, graph, open-set and correlation-stage signals.
+- Rule-based user and endpoint indicators and cross-layer correlation (rules, not ML predictions).
 
-Runtime bundle verification uses `ARTIFACT_HMAC_KEY` (also accepted as `MODEL_ARTIFACT_HMAC_KEY`) and rejects unsigned bundles by default. Configure a key with at least 32 random bytes in the shell or local secret store. From the repository root, sign the existing trusted bundles:
+**Analyst experience**
+- SOC views for `UNKNOWN_NOVEL` triage, per-incident risk contributions, multi-modal explainability, and OSCR/recall/F1/AUPRC evaluation summaries.
+- Grouped known-threat and unknown-candidate incidents with bounded sample-event evidence and probability-gated MITRE mappings.
+- Live WebSocket updates, incident review queue, evaluation summary page, and held-out replay through the live engine.
+- On-demand signed TreeSHAP explanations for supported CICIDS detections.
 
-```powershell
-python scripts/sign_existing_models.py --models-dir backend/saved_models
-```
+**Investigation**
+- Read-only five-step RAG investigations (`retrieve → analyze → map → summarize → recommend`) with cited evidence, evidence-gated ATT&CK mapping and human-approval-only recommendations.
+- Opt-in agentic investigation (see next section).
+- Curated ATT&CK references versioned in `backend/app/rag/knowledge_metadata.json` against Enterprise ATT&CK v20.1 (verified 2026-11-19). This is a project-curated subset, not a complete synchronized catalog.
 
-To record a signed version in the file-based registry, run:
+**Operations**
+- Background retraining for the `light` and `medium` profiles; a completed artifact replaces its bundle atomically, and a failed job leaves the prior bundle in place.
+- On-demand drift check (`POST /api/models/drift`, admin-only) computing feature-level PSI/KS from caller-supplied reference and current arrays. This is a caller-supplied comparison, **not** continuous live monitoring.
+- Signed model artifacts with verification on load.
 
-```powershell
-python scripts/model_registry.py register network_flow backend/saved_models/cicids2017_medium_lightgbm.bundle.pkl --version-id local-demo
-```
+**Demo scenarios**
+- Four interactive scenarios load by default (`multi_stage_takeover`, `brute_force_only`, `benign_admin`, `normal_employee_day`). `generate_all_taxonomy_scenarios()` supplies the twelve named synthetic threat scenarios plus two benign ones. These are developer-authored fixtures, **not** captured attack data or benchmark coverage.
 
-The sign command writes manifests beside the bundles; it does not alter model contents. Never use a public or demo key in a real deployment. See [Model Artifact Security](docs/MODEL_ARTIFACT_SECURITY.md) for signing and rollback details.
+## Agentic investigation (opt-in)
 
-## Analyst accounts and permissions
+The agent investigates a selected incident through a bounded sequence of allowlisted tools and writes a report grounded in evidence returned during that run. The deterministic five-step RAG investigation is unchanged. Agent reports are advisory; this feature does not claim to improve detection or analyst outcomes.
 
-The API issues signed bearer tokens from `POST /api/auth/login`. Create the initial admin interactively from `backend/` with `python -m app.cli create_admin`, or set both `ADMIN_USERNAME` and `ADMIN_PASSWORD` for one-time startup setup. Environment bootstrap is ignored once any analyst account exists. Admins create additional accounts with `POST /api/auth/users`. Viewers have read-only access. Analysts can update incident status, add notes, use RAG chat, and analyze or upload telemetry. Admins can additionally load and replay demos, run correlation, retrain models, run evaluations, and manage accounts. Login attempts, incident status changes, and analyst notes are recorded in `analyst_activity`.
+**Safety design**
+- Disabled by default (`AGENT_ENABLED=false`).
+- Hard ceilings on steps, tool calls, wall time, result size and concurrency.
+- Proposed actions are staged for human review; **approval is dry-run only and never executes a response**.
+- By default the requester cannot approve their own proposal (including admins).
+- Proposals for `RESOLVED` or `FALSE_POSITIVE` incidents cannot be approved.
+- A local Ollama-compatible endpoint can keep requests inside the local environment (leave the API key blank).
 
-Database schema changes are managed by Alembic at startup. New installations are created from the baseline migration. Existing databases are adopted only when their tables and columns match the pre-auth baseline; a mismatch stops startup without dropping data. Back up the database before reviewing a migration. To inspect or run migrations manually from `backend/`, use `alembic current` and `alembic upgrade head`.
+**Status:** implemented; measured results are in [docs/agent/RESULTS.md](docs/agent/RESULTS.md). The default FakeLLM run measures plumbing and guard behaviour only, not real-model investigation quality.
 
-Frontend, in another terminal:
+<details>
+<summary><strong>Configuration, routes, privacy and run states</strong></summary>
 
-```powershell
-cd frontend
-npm install
-npm run dev
-```
+Enable with `AGENT_ENABLED=true`. Blank `AGENT_LLM_*` values inherit the corresponding `LLM_*` settings. Never put credentials in `.env.example` or tracked files.
 
-Open [http://localhost:5173](http://localhost:5173). The Vite development proxy forwards `/api` and `/ws` to the backend.
+| Setting | Default | Purpose |
+|---|---:|---|
+| `AGENT_ENABLED` | `false` | Opt in to agent endpoints. |
+| `AGENT_TOOL_MODE` | `native` | Native provider tools, with JSON-mode fallback after an unsupported native request. |
+| `AGENT_LLM_API_URL` | inherited / blank | OpenAI-compatible chat completions URL; URL-only local service is supported. |
+| `AGENT_LLM_API_KEY` | inherited / blank | Provider key; optional for local URL-only models. |
+| `AGENT_LLM_MODEL` | inherited / blank | Model name sent to the provider. |
+| `AGENT_MAX_STEPS` | `6` | LLM turns; hard ceiling `12`. |
+| `AGENT_MAX_TOOL_CALLS` | `12` | Tool calls; hard ceiling `30`. |
+| `AGENT_WALL_SECONDS` | `90` | Run wall time; hard ceiling `300` seconds. |
+| `AGENT_RESULT_CHARS` | `6000` | Per-tool result size; hard ceiling `20000` characters. |
+| `AGENT_MAX_CONCURRENT_RUNS` | `2` | Concurrent runs; hard ceiling `4`, with one run per incident. |
+| `AGENT_MAX_OUTPUT_TOKENS` | `1500` | Maximum provider output tokens per request. |
+| `AGENT_EXECUTION_MODE` | `dry_run` | Only supported execution mode; approvals are simulated. |
+| `AGENT_ALLOW_SELF_APPROVAL` | `false` | Demo-only opt-in for requester self-review. |
+| `AGENT_PROPOSAL_TTL_HOURS` | `24` | Pending proposal lifetime before lazy expiry. |
 
-To prepare the replay file, run this offline from the repository root:
+**Permissions:** authenticated users can read configuration, run summaries/details and the proposal queue. Analysts and admins can start/cancel runs and approve or reject proposals.
 
-```powershell
-python backend/ml/training/make_replay_sample.py
-```
+**Routes:** `GET /api/agent/config`, `POST /api/incidents/{incident_id}/agent-investigate`, `GET /api/agent/runs`, `GET /api/agent/runs/{run_id}`, `POST /api/agent/runs/{run_id}/cancel`, `GET /api/agent/proposals`, `POST /api/agent/proposals/{proposal_id}/approve`, `POST /api/agent/proposals/{proposal_id}/reject`. Run details include the persisted step trace; run-list responses omit steps.
 
-It writes a stratified 3,000-row sample to `backend/datasets/replay/replay_sample.csv.gz`. The UI or `python backend/ml/training/replay_test_split.py --n 3000 --speed 10` can request replay from a running backend. Retraining is available at `POST /api/models/retrain` with `{"profile":"light"}` or `{"profile":"medium"}`; poll `/api/models/retrain/status/{job_id}`.
+**Privacy:** the configured provider receives the system instructions, incident and event identifiers, and any evidence requested by the tools. Evidence can include user IDs and usernames, device IDs and hostnames, source/destination IPs, event type/category, process names, scenarios, URLs/URIs, command lines, file paths, raw-payload text excerpts, detector summaries and retrieved knowledge chunks. Only selected tools and fields are sent per run, but telemetry can contain sensitive operational data.
 
-## Docker deployment
+**Run states:** `completed`, `completed_fallback`, `limit_reached`, `failed`, `cancelled`. Fallback and limit-reached runs include the deterministic baseline. Run coordination is process-local, so the agent layer supports one backend worker only.
 
-Copy `.env.example` to `.env`, then set a non-empty `SECRET_KEY`. The example includes a URL-safe hex generator. Also either set `ARTIFACT_HMAC_KEY` and run `python scripts/sign_existing_models.py` against `backend/saved_models/` before starting, or set `ALLOW_UNSIGNED_MODELS=true` in `.env` for local demonstration only; otherwise backend startup stops with a missing-manifest error. For first startup on an empty database, either set both `ADMIN_USERNAME` and `ADMIN_PASSWORD` for one-time administrator bootstrap or create the administrator separately after startup. Compose stops with a clear error if `SECRET_KEY` is missing.
+</details>
 
-```powershell
-docker compose up --build
-```
+## Evaluation: what is measured and what is not
 
-Compose mounts the live database at `/app/data/cyberguardx.db` in the persistent named volume `cyberguardx_demo_sqlite_data`; startup applies Alembic migrations automatically. Compose reuses an existing named volume. Do not use `docker compose down -v` when preserving the database. See [docs/OPERATIONS.md](docs/OPERATIONS.md) for the supported single-backend operating boundary, concurrency results, and backup/restore procedure.
+This project separates **benchmarked** results from **proxy-label** results so that no number is over-claimed.
 
-The frontend container serves the UI and proxies `/api` and `/ws` to the backend; its health check uses `/api/health`. Open [http://localhost:3000](http://localhost:3000). The backend is bound to localhost on port 8000; the frontend is published on port 3000. The backend container is configured for one Uvicorn worker: upload, retrain, evaluation, replay, WebSocket, login-throttle, and agent coordination state is process-local. Running multiple workers or replicas is unsupported until these registries and broadcasts use shared coordination. Agent runs are persisted and interrupted `running` jobs are marked failed after restart; the other background-job status registries are lost on restart.
+| Branch | Label source | Evidence level |
+|---|---|---|
+| Network flow + open-set (LightGBM) | CICIDS2017 ground-truth labels | **Benchmarked** (multi-seed, leave-one-family-out) |
+| User sequence (TFT) | Heuristic sequence labels | **Proxy-label validated** |
+| Host graph (GAT) | UNSW-NB15 attack-category indicator | **Proxy-label validated** |
+| Risk fusion | Synthetic weak labels | **Proxy-label validated** |
+| Endpoint (DAE + IF) | Unsupervised, 293 Sysmon windows | No independent validation metrics |
 
-## Results
+### Evaluation methodology
 
-The generated report is available at [docs/RESULTS.md](docs/RESULTS.md).
+- A **frozen, session-disjoint holdout**: the complete Monday CICIDS2017 capture is reserved in `backend/ml/evaluation/holdout_manifest.json`; the baseline runner verifies its hash but never loads or scores those rows.
+- Development runs use seeds `42, 101, 202, 303, 404` and reserve complete capture sessions by attack family.
+- Results are written as JSON artifacts with source hashes, split assignments, per-seed metrics and bootstrap intervals, then rendered into `docs/RESULTS.md`.
 
-The network baseline uses a frozen session-disjoint holdout. The one-time manifest at `backend/ml/evaluation/holdout_manifest.json` reserves the complete Monday CICIDS2017 capture; the baseline runner verifies its hash but does not load or score its rows. The development run uses seeds `42, 101, 202, 303, 404` and reserves complete capture sessions by attack family. Do not recreate or edit the manifest for an ablation; create a separately versioned holdout only when deliberately starting a new evaluation program.
-
-Run the reproducible development baseline and regenerate `docs/RESULTS.md` with one command from the repository root:
+Reproduce from the repository root:
 
 ```powershell
 python scripts/run_network_eval.py
 ```
 
-The command writes a JSON artifact under `backend/ml/evaluation/results/` with source hashes, split assignments, per-seed metrics, bootstrap intervals, and the holdout manifest hash, then renders the report from that artifact and the saved auxiliary evaluation artifacts. The separate `python scripts/make_results_md.py` command only rerenders the latest saved results; it does not run model evaluation. Keep the final holdout locked until all planned ablations are complete.
-
-The historical tables below describe earlier split protocols and saved reports; they are context, not the generated five-seed baseline. Read [docs/RESULTS.md](docs/RESULTS.md) for the current artifact-backed development metrics and split limitations.
+(`python scripts/make_results_md.py` only re-renders the latest saved results; it does not run evaluation.)
 
 ### Latest CICIDS open-set run
 
-The table below uses the saved **medium profile, seed 42, 50% sample** report [`open_set_compact_margin97_medium_seed42.json`](backend/ml/evaluation/results/open_set_compact_margin97_medium_seed42.json) and the `confidence_energy_compact_union` detector. Values are on held-out unknown attack families; known macro F1 reflects known-class classification on each fold. This is one run, not a multi-seed estimate.
+Saved **medium profile, seed 42, 50% sample** report [`open_set_compact_margin97_medium_seed42.json`](backend/ml/evaluation/results/open_set_compact_margin97_medium_seed42.json), `confidence_energy_compact_union` detector, evaluated on held-out unknown attack families. This is one run, not a multi-seed estimate.
 
 | Held-out attack family | OSCR AUC | Unknown recall | Known macro F1 | AUPRC |
 |---|---:|---:|---:|---:|
@@ -241,20 +255,29 @@ The table below uses the saved **medium profile, seed 42, 50% sample** report [`
 | BruteForce | 0.9696 | 0.2836 | 0.9497 | 0.1060 |
 | WebAttack | 0.9905 | 0.9352 | 0.9593 | 0.6307 |
 | Bot | 0.7204 | 0.0000 | 0.9891 | 0.0029 |
-| Macro mean across these five families | **0.8930** | **0.3939** | **0.9576** | **0.3310** |
+| Macro mean (five families) | **0.8930** | **0.3939** | **0.9576** | **0.3310** |
 
-These results show strong separation for WebAttack and DoS/DDoS, but weak unknown recall for PortScan and Bot. The unweighted macro average keeps every held-out family equally represented.
+**Reading:** separation is strong for WebAttack and DoS/DDoS. PortScan and Bot are weak because a scan or bot pattern is visible across flows from one host, not inside a single flow; host-window features targeting this gap are implemented but not yet consumed by the saved bundles.
 
 ### Capture-session generalization
 
-Random row splits are optimistic for CICIDS2017 because near-duplicate flows from the same capture session can land in both train and test. The saved comparison uses a medium profile (50% sample, seeds 42 and 43, 60,000-row training caps, confidence detector). The session-disjoint arm had held-out unknown support in only **3 of 10** family/seed folds, so its intervals are wide. See [`medium_stratified_vs_session_disjoint.md`](backend/ml/evaluation/results/medium_stratified_vs_session_disjoint.md).
+Random row splits are optimistic for CICIDS2017 because near-duplicate flows from one capture session can land in both train and test. The saved comparison uses a medium profile (50% sample, seeds 42 and 43, 60,000-row training caps, confidence detector); see [`medium_stratified_vs_session_disjoint.md`](backend/ml/evaluation/results/medium_stratified_vs_session_disjoint.md).
 
 | Split | OSCR AUC | Unknown recall | Benign FPR | Known macro F1 |
 |---|---:|---:|---:|---:|
-| Stratified random | 0.7992 (0.6555–0.9429) | 0.4743 (0.2369–0.7118) | 0.0298 (0.0288–0.0308) | 0.9467 (0.9363–0.9571) |
-| Session-disjoint (sanitized features) | 0.5996 (0.2208–0.9785) | 0.1716 (0.0000–0.5055) | 0.0027 (0.0018–0.0036) | n/a |
+| Stratified random | 0.7992 (0.6555-0.9429) | 0.4743 (0.2369-0.7118) | 0.0298 (0.0288-0.0308) | 0.9467 (0.9363-0.9571) |
+| Session-disjoint (sanitized features) | 0.5996 (0.2208-0.9785) | 0.1716 (0.0000-0.5055) | 0.0027 (0.0018-0.0036) | n/a |
 
-The previously reported session-disjoint known macro-F1 (0.1897) averaged across labels with zero test support, so it is not a valid support-aware macro score. The saved comparison artifact lacks per-class values and support needed to recompute it; it is shown as n/a here. No evaluation was rerun. The stratified random value and the other comparison metrics are unchanged; intervals are across available family/seed folds. The bounded light-profile diagnostic in `comprehensive_benchmark_run.json` had several zero-support groups and is not comparable to these numbers; see RESULTS.md.
+The session-disjoint arm had held-out unknown support in only **3 of 10** family/seed folds, so its intervals are wide. The earlier session-disjoint known macro-F1 (0.1897) averaged across labels with zero test support, so it is not a valid support-aware score and is shown as n/a. No evaluation was rerun.
+
+### Secondary-branch artifact estimates
+
+| Branch | Data and split recorded in artifact | Estimate |
+|---|---|---|
+| Endpoint (DAE + IF) | Unsupervised on 293 Sysmon capture windows | No independent validation metrics stored |
+| User sequence (TFT) | 1,978 train / 495 validation sequences; 24 steps; Sysmon/CERT weak labels; seed 42 | Proxy-label validated: ROC AUC 0.99998, accuracy 0.9960, precision 0.9926, recall 0.9926. These mostly show the model recovers the heuristic; they are not ground-truth performance. |
+| Host graph (GAT) | 12,000 UNSW-NB15 rows; 1,148 positive; seed 42 | Proxy-label validated; no independent validation metrics stored |
+| Risk fusion | 4,800 train / 1,200 validation weakly labelled rows | Proxy-label validated: ROC AUC 0.8573, Brier 0.1507. A calibration estimate, not an end-to-end incident benchmark. |
 
 ### RAG retrieval
 
@@ -263,21 +286,10 @@ The previously reported session-disjoint known macro-F1 (0.1897) averaged across
 | Original developer-written suite | 20 | 0.85 | 0.90 | 0.875 |
 | Expanded suite (direct, adversarial, multi-hop) | 50 | 0.62 | 0.80 | 0.69 |
 
-The two suites differ in difficulty, so the drop is not a regression. The 50-case run also reports an extractive citation/ATT&CK-ID support score of 0.5602 (unsupported-assertion rate 0.4398). That is a narrow deterministic proxy for groundedness, not a human-judged hallucination rate, and says nothing about an external LLM generation path. The hybrid retrieval change did not improve these aggregates but passed a targeted exact-technique rank-1 test.
+The suites differ in difficulty, so the drop is not a regression. The 50-case run also reports an extractive citation/ATT&CK-ID support score of 0.5602 (unsupported-assertion rate 0.4398), a narrow deterministic proxy for groundedness rather than a human-judged hallucination rate.
 
-### Current branch artifact estimates
-
-These figures are read from the locally saved bundles in `backend/saved_models/`. Metrics are reported only where the artifact contains a validation evaluation; training rows and label notes are included to make the other estimates interpretable.
-
-| Branch / algorithm | Data and split recorded in artifact | Current estimate |
-|---|---|---|
-| Network flow — LightGBM + open-set fusion | CICIDS2017 medium profile; 50% sample; seed 42; leave-one-family-out evaluation | See the family-level OSCR/recall/F1/AUPRC table above. The bundle includes 78 flow features, compact class centroids, pooled covariance, benign Isolation Forest, energy/margin, and calibrated thresholds. |
-| Endpoint — Denoising Autoencoder + Isolation Forest | Saved bundle trained unsupervised on 293 Sysmon capture windows | No independent validation metrics are stored. The checked-in corpus does not establish a labeled benign baseline; do not interpret this bundle as a validated benign-only detector. |
-| User sequence — Temporal Fusion Transformer | 1,978 training sequences; 495 validation sequences; 24 steps; Sysmon/CERT weak labels; seed 42 | **proxy-label validated**: validation ROC AUC **0.99998**, accuracy **0.9960**, precision **0.9926**, recall **0.9926** on heuristic proxy labels. This saved bundle predates the user-disjoint split and records `stratified_sequence_level_80_20`; these values mostly show the model recovers the heuristic and are not ground-truth performance. |
-| Network graph — Graph Attention Network | 12,000 UNSW-NB15 rows; 1,148 rows marked positive; seed 42 | **proxy-label validated**: no independent validation metrics are stored. The positive target is "non-benign attack category" as a multi-host anomaly proxy, not ground-truth lateral movement. |
-| Risk fusion — calibrated logistic meta-model | 4,800 weakly labeled training rows; 1,200 validation rows; synthetic weak-label source | **proxy-label validated**: validation ROC AUC **0.8573**, Brier score **0.1507**; validation positive rate 52.4%. This is a calibration/meta-model estimate on weak labels, not an end-to-end incident benchmark. |
-
-The UI evaluation page reads saved multi-seed evaluation summaries from `/api/evaluation/summary`; a multi-seed result is preferred for model comparisons. The estimates above are the currently available local artifact reports and are not a substitute for repeated, independently labeled test runs.
+<details>
+<summary><strong>Manifest-tracked multi-seed baseline (earlier detector set)</strong></summary>
 
 <!-- GENERATED RESULTS: START -->
 ## Manifest-tracked multi-seed baseline
@@ -318,56 +330,126 @@ Generated from completed JSON files in `backend/ml/evaluation/results/`. Means a
 
 <!-- GENERATED RESULTS: END -->
 
-## Project status and limitations
+</details>
 
-> [!IMPORTANT]
-> **Detection is not production-validated.** This repository is a research and engineering prototype; do not treat its scores or verdicts as production-grade threat detection.
+## Suggested demo walkthrough
 
-- **Dataset coverage:** CICIDS2017 remains the primary benchmark. A supplemental exploratory evaluation uses three CSE-CIC-IDS2018 capture-day files and reports leave-one-capture-day-out plus cross-dataset transfer results in [docs/RESULTS.md](docs/RESULTS.md). Each observed CSE attack family appears on only one capture day, and the transfer run uses bounded, label-stratified samples; these results do not establish broad cross-capture or production performance.
-- **One capture day per attack family:** Within the CICIDS2017 development split (Tuesday–Friday; Monday is reserved untouched), each target attack family appears on a single capture day (`n=1`).
-- **Proxy labels on secondary branches:** The endpoint (DAE + Isolation Forest), user sequence (TFT), host communication graph (GAT), and risk-fusion branches rely on unsupervised, weakly supervised, or synthetic proxy labels rather than independently captured attack/benign pairs.
-- **Further reading:**
-  - [docs/AUDIT.md](docs/AUDIT.md) — system & model audit
-  - [docs/RESULTS.md](docs/RESULTS.md) — saved benchmark results, label provenance, and ablations
-  - [docs/PHASE2_EVALUATION_PROTOCOL.md](docs/PHASE2_EVALUATION_PROTOCOL.md) — evaluation splits and protocol rules
-  - [docs/MODEL_ARTIFACT_SECURITY.md](docs/MODEL_ARTIFACT_SECURITY.md) — artifact signing, key rotation, and safe-format roadmap
+A five-minute path through the system for a live presentation:
 
-## Known evaluation limitations
+1. **Sign in** as an analyst (role-based access, no default account).
+2. **Executive overview**: show layer totals and incident severity/status.
+3. **Load a demo scenario** (e.g. `multi_stage_takeover`) or start the held-out CICIDS2017 **replay**, and watch events arrive in the **live feed**. Point out the amber `synthetic_demo` banner.
+4. **Unknown / novel triage**: open an `UNKNOWN_NOVEL` event and explain centroid distance and novelty score.
+5. **Explainability**: open a detection and show TreeSHAP attributions and the unified risk breakdown.
+6. **RAG assistant**: run the five-step investigation on an incident and show cited evidence and the human-approval recommendation.
+7. **(Optional) Agent**: with `AGENT_ENABLED=true`, run an agent investigation and show a staged proposal; approve it to demonstrate the dry-run-only guarantee.
+8. **Evaluation page**: close on the honest results and limitations.
 
-- **One capture day per target attack family (`n=1`).** In the frozen CICIDS2017 development scope (Tuesday–Friday; Monday is the reserved untouched holdout), each of the four target families appears on only one capture day (`BruteForce` on Tuesday, `WebAttack` on Thursday, `Bot` and `PortScan` on Friday). Consequently, per-family generalization for Bot, WebAttack, BruteForce, and PortScan cannot be reliably measured on this dataset; results at `n=1` held-out capture day or session are **indicative only**.
-- **Binary leave-one-capture-day-out scope.** The binary attack-vs-benign leave-one-capture-day-out evaluation across the 4 development capture days (`n=4` day units) measures aggregate attack-vs-benign discrimination across days, not per-family generalization or open-set rejection; per-family recall on each held-out day is descriptive only (`n=1` capture day per family). Across held-out days, per-day FPR ranged from `4.5%–15.0%` (`0.0447` on Friday to `0.1498` on Thursday); because attack rates in the sampled development data are higher than real traffic, precision figures are optimistic.
-- **Missing timestamps and host identifiers in local CSVs.** The checked-in CICIDS2017 CSV exports omit `Timestamp`, `Flow ID`, and source/destination IP columns, so host-window context features remain zero and within-capture time-blocked splits cannot be run on these files.
+## Run locally
 
-## Known limitations
+Requirements: Python 3.10+ and Node.js 18+.
 
-- **Dataset coverage and sampling.** The primary multi-seed benchmark uses CICIDS2017, a 2017 testbed with known labelling problems, on 15% (`light`) and 50% (`medium`) hash samples and 3 seeds. A supplemental CSE-CIC-IDS2018 evaluation is reported separately; it covers three capture days, with only one day per observed attack family. Its cross-dataset transfer result uses at most 50,000 CICIDS2017 rows per label and up to 50,000 CSE BENIGN rows per capture while retaining all CSE attack rows. Neither result represents an unrestricted full-data or production evaluation.
-- **Optimistic random splits.** Older saved open-set runs use stratified row splits and can leak capture-session near-duplicates. The session-disjoint comparison exists but only 3 of 10 family/seed folds had unknown support, so its intervals are wide.
-- **Weak unknown detection for PortScan and Bot.** A scan is visible across flows from one host, not within a single flow. Host-window features are implemented but not yet consumed by the saved bundles. Bot (197 rows) and WebAttack (216 rows) also have few unknown test rows.
-- **Bot is the weakest known class** (mean F1 0.8207); the 2.5× class weight has not been re-evaluated.
-- **Replay is illustrative.** Replay profile, split type, and sampling method are not recorded in the saved metadata, and families under 100 flows (Bot, BruteForce, WebAttack) are not interpretable. The 3.1% benign false-alert rate was measured before noise suppression; the post-suppression rate has not been measured.
-- **Proxy labels.** TFT, GAT, and Fusion metrics and scores are marked **proxy-label validated** because they use heuristic sequence labels, attack-category indicators, or synthetic/weak labels with feedback. These results do not establish independently labeled real-world incident performance. The endpoint bundle has no labeled benign-versus-Atomic-Red-Team evaluation; see [the isolated Sysmon collection guide](docs/ENDPOINT_DATA_COLLECTION.md).
-- **No ablation yet.** The benefit of cross-layer fusion over single branches has not been measured. Correlation thresholds and the twelve-scenario taxonomy are developer-written demo values, not calibrated or captured attack data.
-- **RAG coverage is limited.** Both retrieval suites are developer-authored, and the support score is an extractive proxy, not human-judged factual faithfulness.
-- The agent layer is opt-in and its FakeLLM evaluation measures plumbing only. Real-model investigation quality, latency, and resistance to prompt injection remain unevaluated. Agent reports are advisory, cite only evidence returned in that run, and preserve the repo's synthetic and proxy-label caveats.
-- **Pending metrics.** Per-class AUPRC, Cohen's kappa, balanced accuracy, and the standalone OSCR/FPR95 summary are emitted by new runs but not yet recorded for the saved artifacts.
+**Backend** (from the repository root):
 
-## Planned next steps
+```powershell
+python -m pip install -r backend/requirements.txt
+cd backend
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --no-proxy-headers
+```
 
-1. Re-train and re-evaluate with the hardening changes, one change at a time, with seeds and confidence intervals.
-2. Re-run PortScan and Bot open-set evaluation with host-window features enabled.
-3. Add a fusion/cross-layer ablation (each branch alone, each removed, full system).
-4. Rebuild the replay from held-out rows with recorded provenance and measure the post-suppression benign alert rate.
-5. Collect labeled benign and Atomic Red Team Sysmon captures for an endpoint evaluation.
+**Model artifact verification** is on by default (`ALLOW_UNSIGNED_MODELS=false`). On a fresh clone the bundles in `backend/saved_models/` are unsigned, so startup refuses to load them with a missing-manifest error unless you either:
+
+- generate a key (`python -c "import secrets; print(secrets.token_hex(32))"`), set it as `ARTIFACT_HMAC_KEY`, and run `python scripts/sign_existing_models.py`, **or**
+- set `ALLOW_UNSIGNED_MODELS=true` (local development only; logs a warning on every load).
+
+See [docs/MODEL_ARTIFACT_SECURITY.md](docs/MODEL_ARTIFACT_SECURITY.md).
+
+**Create the first admin** from `backend/`:
+
+```powershell
+python -m app.cli create_admin
+```
+
+(or set both `ADMIN_USERNAME` and `ADMIN_PASSWORD` for one-time startup setup; ignored once any account exists).
+
+**Frontend** (second terminal):
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Open [http://localhost:5173](http://localhost:5173). The Vite dev proxy forwards `/api` and `/ws` to the backend. The API health URL is [http://127.0.0.1:8000/api/health](http://127.0.0.1:8000/api/health), API docs are at `/docs`, and live events use `ws://127.0.0.1:8000/ws/live-events`.
+
+<details>
+<summary><strong>Signing, registry, replay, retraining and database notes</strong></summary>
+
+**Signing model bundles.** Configure `ARTIFACT_HMAC_KEY` (also accepted as `MODEL_ARTIFACT_HMAC_KEY`) with at least 32 random bytes, then from the repository root:
+
+```powershell
+python scripts/sign_existing_models.py --models-dir backend/saved_models
+```
+
+To record a signed version in the file-based registry:
+
+```powershell
+python scripts/model_registry.py register network_flow backend/saved_models/cicids2017_medium_lightgbm.bundle.pkl --version-id local-demo
+```
+
+The sign command writes manifests beside the bundles and does not alter model contents. Never use a public or demo key in a real deployment.
+
+**Replay sample.** Prepare offline from the repository root:
+
+```powershell
+python backend/ml/training/make_replay_sample.py
+```
+
+This writes a stratified 3,000-row sample to `backend/datasets/replay/replay_sample.csv.gz`. Request replay from the UI or with `python backend/ml/training/replay_test_split.py --n 3000 --speed 10`.
+
+**Retraining.** `POST /api/models/retrain` with `{"profile":"light"}` or `{"profile":"medium"}`; poll `/api/models/retrain/status/{job_id}`.
+
+**Database.** The runtime supports **SQLite only**; non-SQLite `DATABASE_URL` values are rejected at startup (`backend/app/database/session.py`, with a regression test for PostgreSQL URLs). PostgreSQL runtime support is a planned Phase 5 upgrade; the separate staging-only recovery utility does not provide it. Schema changes are managed by Alembic (`alembic current`, `alembic upgrade head` from `backend/`). Existing databases are adopted only when tables and columns match the pre-auth baseline; a mismatch stops startup without dropping data. Back up before reviewing a migration.
+
+Uvicorn access logs show the immediate proxy peer address; the application applies its configured trusted-proxy policy separately for login attribution.
+
+</details>
+
+## Docker deployment
+
+1. Copy `.env.example` to `.env` and set a non-empty `SECRET_KEY` (the example includes a URL-safe hex generator).
+2. Either set `ARTIFACT_HMAC_KEY` and sign the bundles, or set `ALLOW_UNSIGNED_MODELS=true` for local demonstration only.
+3. For first startup on an empty database, either set `ADMIN_USERNAME` and `ADMIN_PASSWORD` for one-time bootstrap, or create the admin after startup.
+
+```powershell
+docker compose up --build
+```
+
+Open [http://localhost:3000](http://localhost:3000). The backend is bound to localhost:8000 and the frontend is published on port 3000 (it proxies `/api` and `/ws`; health check uses `/api/health`).
+
+Compose stores the database at `/app/data/cyberguardx.db` in the named volume `cyberguardx_demo_sqlite_data`, and startup applies Alembic migrations automatically. **Do not use `docker compose down -v` if you want to keep the database.** The backend runs a **single Uvicorn worker**: upload, retrain, evaluation, replay, WebSocket, login-throttle and agent coordination state is process-local, so multiple workers or replicas are unsupported. See [docs/OPERATIONS.md](docs/OPERATIONS.md) for the operating boundary, concurrency results and backup/restore procedure.
+
+## Analyst accounts and permissions
+
+The API issues signed bearer tokens from `POST /api/auth/login`.
+
+| Role | Capabilities |
+|---|---|
+| `viewer` | Read-only access |
+| `analyst` | Update incident status, add notes, use RAG chat, analyze or upload telemetry, start/cancel agent runs, decide agent proposals |
+| `admin` | Everything above, plus load/replay demos, run correlation, retrain models, run evaluations, run drift checks, manage accounts |
+
+Admins create additional accounts with `POST /api/auth/users`. Login attempts, incident status changes and analyst notes are recorded in `analyst_activity`.
 
 ## Tests
 
-Run the backend suite from the repository root:
+Backend (from the repository root):
 
 ```powershell
 python -m pytest backend/tests -v
 ```
 
-Run the frontend checks from `frontend/`:
+Frontend (from `frontend/`):
 
 ```powershell
 npm ci
@@ -376,4 +458,34 @@ npm run lint
 npm run build
 ```
 
-The application runtime and CI tests use SQLite; the Compose demonstration uses a persistent SQLite volume. The runtime explicitly rejects PostgreSQL URLs at startup. PostgreSQL application-runtime support remains a planned Phase 5 upgrade. The separate SQLite-to-PostgreSQL recovery utility is staging-only and requires its own approved target, server allowlist, and cluster identity; it is not runtime database support and is not run by the standard test suite or Compose startup. See [the recovery procedure](docs/SQLITE_TO_POSTGRES_RECOVERY.md) and [operations guide](docs/OPERATIONS.md) for their safeguards and boundaries.
+Application runtime and CI tests use SQLite.
+
+## Limitations
+
+> This is a research prototype, not production-validated threat detection.
+
+- **Proxy labels:** the endpoint, user-sequence, graph and fusion branches use proxy or synthetic labels, so their metrics are not ground-truth performance.
+- **Dataset scope:** each CICIDS2017 attack family appears on only one capture day, so per-family results are indicative only.
+- **Weak unknown detection:** PortScan and Bot have low unknown recall because they only show up across multiple flows from one host.
+- **No fusion ablation yet:** the benefit of combining branches has not been measured.
+- **Single worker, SQLite only:** multi-worker and PostgreSQL support are planned.
+
+**Next:** re-evaluate with host-window features, add a fusion ablation, and collect labelled endpoint data.
+
+Full details and planned fixes: [docs/RESULTS.md](docs/RESULTS.md).
+
+
+
+## Tech stack
+
+**Backend:** Python, FastAPI, WebSockets
+
+**Database:** SQLite (schema migrations with Alembic); PostgreSQL support planned
+
+**ML / data:** LightGBM, XGBoost (training option), PyTorch, scikit-learn, SHAP, FAISS
+
+**Frontend:** React, Vite
+
+**DevOps:** Docker Compose, pytest, ESLint
+
+**Datasets:** CICIDS2017, CSE-CIC-IDS2018, UNSW-NB15, Sysmon captures, CERT-style weak labels
