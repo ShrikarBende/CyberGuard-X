@@ -51,3 +51,24 @@ Status: **not_evaluable**. The final holdout remains untouched; comparison is pi
 **Why no delta is reported:** The development CICIDS2017 files lack Timestamp and/or source IP. HostWindowAggregator requires both and emits all-zero 60-second window features without them. The frozen baseline also records host-window context as zero, so an enabled-versus-disabled model comparison on this data would not change the treatment. No model was fitted and no ablation metrics or deltas are claimed.
 Required fields absent from development session headers: `source ip, timestamp`. No model was fitted for this ablation.
 A valid rerun requires flow telemetry containing per-row timestamps and source-host identifiers. Do not infer timestamps from row order or derive a 60-second window from aggregate flow IAT fields.
+## Controlled ablation 2: standalone branches versus calibrated fusion
+
+Feasibility artifact: [`branch_fusion_ablation_20261127T101010Z.json`](../backend/ml/evaluation/results/branch_fusion_ablation_20261127T101010Z.json).
+Status: **not_evaluable**. Required multi-seed metrics are not available because the branch data do not form a shared entity-disjoint labeled cohort.
+
+| Branch | Available data and label provenance | Entity-disjoint standalone metrics |
+|---|---|---|
+| Endpoint (Autoencoder + iForest) | synthetic benign fallback; real OTRF Sysmon attack captures are present | Not evaluable: No paired benign and Atomic Red Team entity-disjoint evaluation directories are present. |
+| User/Sequence (TFT) | OTRF Sysmon public attack captures; CERT logon cohort not present; heuristic risk labels from failed logons, host transitions, elevation and command activity | Not evaluated here: Proxy labels are generated from the same input indicators; not verified account-takeover ground truth. |
+| Host-Graph (GAT) | UNSW-NB15 captured network benchmark; labels use `attack_cat non-benign indicator` | Not evaluated here: Network attack-category proxy; not labeled lateral movement ground truth. |
+| Calibrated Fusion Meta-Classifier | `synthetic_weak_labels_v1`; Generated weak incident labels from synthetic branch-score profiles. | Not comparable: Current trainer uses row-level stratified train/validation split, not entity/session-disjoint splits. |
+
+| Comparison metric | Strongest standalone branch | Fusion on same held-out entities | Delta |
+|---|---:|---:|---:|
+| Precision / Recall / F1 / AUPRC / FPR | n/a | n/a | n/a |
+
+No fusion-improvement claim is made. Endpoint captures, user sequences, UNSW graph flows and Fusion training labels come from distinct cohorts and targets; the existing saved metrics cannot be paired into one test set. Synthetic fallback results are not real captured-log performance, and heuristic or attack-category proxy labels are not independent incident ground truth.
+
+The holdout manifest and frozen network baseline were hashed for integrity verification only; they were not modified, used for training, or scored.
+
+A valid rerun requires one independently labeled multi-modal cohort with aligned user, device, and capture/scenario identifiers. Split those entities into train, calibration, and test groups first; generate out-of-fold branch scores for training entities; fit/calibrate Fusion on training groups only; then compare each standalone branch and Fusion on the exact same untouched test entities.

@@ -1,0 +1,75 @@
+{
+  "artifact_schema_version": 1,
+  "run_id": "20261127T101010Z",
+  "created_at_utc": "2026-11-27T10:10:10.007827+00:00",
+  "ablation": "Endpoint + User/Sequence + Host-Graph standalone versus calibrated Fusion Meta-Classifier",
+  "status": "not_evaluable",
+  "seed_plan": [
+    42,
+    101,
+    202,
+    303,
+    404
+  ],
+  "required_split_policy": "group by device_id, user_id, scenario_id or capture_session; keep all related entities wholly within one split",
+  "data_provenance": {
+    "endpoint_autoencoder_iforest": {
+      "training_source_available": "synthetic benign fallback; real OTRF Sysmon attack captures are present",
+      "labeled_holdout_available": false,
+      "available_attack_capture_sessions": [
+        "cmd_bitsadmin_download_psh_script",
+        "empire_dllinjection_LoadLibrary_CreateRemoteThread",
+        "empire_mimikatz_logonpasswords",
+        "empire_persistence_registry_run_keys_standard",
+        "purplesharp_ad_playbook_I"
+      ],
+      "label_scope": "No paired benign and Atomic Red Team entity-disjoint evaluation directories are present.",
+      "entity_disjoint_evaluation": "not run; no labeled benign/attack capture pair to split by capture session"
+    },
+    "user_sequence_tft": {
+      "training_source_available": "OTRF Sysmon public attack captures; CERT logon cohort not present",
+      "label_source": "heuristic risk labels from failed logons, host transitions, elevation and command activity",
+      "label_scope": "Proxy labels are generated from the same input indicators; not verified account-takeover ground truth.",
+      "entity_disjoint_evaluation": "training code groups by user for its validation split, but this cohort is not aligned to Endpoint, GAT or Fusion test entities"
+    },
+    "host_graph_gat": {
+      "training_source_available": "UNSW-NB15 captured network benchmark",
+      "available_files": [
+        "UNSW-NB15_1.csv",
+        "UNSW-NB15_2.csv",
+        "UNSW-NB15_3.csv",
+        "UNSW-NB15_4.csv"
+      ],
+      "label_source": "attack_cat non-benign indicator",
+      "label_scope": "Network attack-category proxy; not labeled lateral movement ground truth.",
+      "entity_disjoint_evaluation": "existing trainer is transductive on one graph and does not save an entity-disjoint test evaluation"
+    },
+    "calibrated_fusion_meta_classifier": {
+      "training_data_path": "backend/datasets/fusion_training.csv",
+      "joint_training_file_present": false,
+      "joint_training_file_has_entity_key": false,
+      "fallback_training_source": "synthetic_weak_labels_v1",
+      "label_scope": "Generated weak incident labels from synthetic branch-score profiles.",
+      "split_scope": "Current trainer uses row-level stratified train/validation split, not entity/session-disjoint splits."
+    }
+  },
+  "entity_disjoint_evaluation": "not run because the required shared cohort and independent labels are unavailable",
+  "metrics": null,
+  "reasons": [
+    "The three standalone branches use distinct cohorts and targets, so their metrics are not estimates on a common evaluation population.",
+    "No shared entity-keyed labeled cohort contains aligned endpoint, user-sequence, and graph inputs with independent incident ground truth.",
+    "The available Fusion artifact is trained from synthetic weak-label profiles (or an absent optional CSV) and has no matching branch test rows.",
+    "Consequently, fusion-versus-strongest-branch deltas for F1, AUPRC, or FPR cannot be estimated without fabricating aligned examples or labels."
+  ],
+  "protected_artifacts": {
+    "holdout_manifest_sha256": "701a6fca14260729a21c47c9352e62af61526643b2ce44ba28bb000a0cb9b618",
+    "network_baseline_sha256": "cf47f604c009fc2c69b07525ef027a8f19f47e71604b9604dce124e45ce081e3",
+    "status": "hashed for integrity verification only; neither artifact was modified or used for training or scoring"
+  },
+  "requirements_for_valid_rerun": [
+    "A common, independently labeled multi-modal telemetry cohort with aligned device, user and capture/scenario identifiers.",
+    "Benign and attack endpoint captures separated by capture session; user-sequence incident labels not derived from the model input features.",
+    "A graph cohort with declared host-disjoint train/calibration/test components and independent attack labels.",
+    "Saved out-of-fold branch scores for the same entities, then fit/calibrate Fusion on training entities and evaluate all branches on the identical untouched test entities."
+  ]
+}

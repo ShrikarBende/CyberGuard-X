@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import statistics
 import argparse
 from pathlib import Path
@@ -15,6 +16,14 @@ SEEDS = (42, 43, 44)
 
 def read(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def mean_sd(values) -> str:
@@ -390,6 +399,80 @@ def latest_network_baseline() -> Path:
     raise FileNotFoundError("No complete network_baseline_*.json artifact exists; run scripts/run_network_eval.py first")
 
 
+def host_window_ablation_section() -> list[str]:
+    """Render the latest saved paired ablation status and baseline comparison."""
+    candidates = sorted(RESULTS.glob("ablation_host_window_*.json"), reverse=True)
+    if not candidates:
+        return []
+    ablation_path = candidates[0]
+    ablation = read(ablation_path)
+    baseline_path = RESULTS / ablation["baseline_artifact"]
+    if not baseline_path.is_file() or sha256_file(baseline_path) != ablation["baseline_artifact_sha256"]:
+        raise RuntimeError("Host-window ablation references a missing or changed frozen baseline artifact")
+    baseline = read(baseline_path)
+    families = {row["family"]: row for row in baseline["families"]}
+    baseline_values = {
+        "Bot recall": _metric_cell(families["Bot"], "recall"),
+        "PortScan recall": _metric_cell(families["PortScan"], "recall"),
+        "Bot precision": _metric_cell(families["Bot"], "precision"),
+        "PortScan precision": _metric_cell(families["PortScan"], "precision"),
+        "Bot F1": _metric_cell(families["Bot"], "f1"),
+        "PortScan F1": _metric_cell(families["PortScan"], "f1"),
+        "Macro unknown-review F1": f"{statistics.mean(row['metrics']['f1']['mean'] for row in baseline['families']):.4f}",
+        "Macro open-set rejection (recall)": f"{statistics.mean(row['metrics']['recall']['mean'] for row in baseline['families']):.4f}",
+        "Macro benign replay false-alert rate": f"{statistics.mean(row['metrics']['benign_replay_false_alert_rate']['mean'] for row in baseline['families']):.4f}",
+    }
+    lines = [
+        "", "## Controlled ablation 1: host-window features", "",
+        f"Ablation artifact: [`{ablation_path.name}`](../backend/ml/evaluation/results/{ablation_path.name}).",
+        f"Status: **{ablation['status']}**. The final holdout remains untouched; comparison is pinned to `{baseline_path.name}` with the same seeds and split rules.",
+        "", "| Metric | Frozen baseline | Host-window ablation | Delta |", "|---|---:|---:|---:|",
+    ]
+    for metric, value in baseline_values.items():
+        lines.append(f"| {metric} | {value} | n/a | n/a |")
+    if ablation.get("status") == "not_evaluable":
+        missing = sorted({field for item in ablation.get("development_header_findings", [])
+                          for field in item.get("missing_required_window_fields", [])})
+        lines += [
+            "", f"**Why no delta is reported:** {ablation['reason']}",
+            f"Required fields absent from development session headers: `{', '.join(missing) or 'development files unavailable'}`. No model was fitted for this ablation.",
+            "A valid rerun requires flow telemetry containing per-row timestamps and source-host identifiers. Do not infer timestamps from row order or derive a 60-second window from aggregate flow IAT fields.",
+        ]
+    return lines
+
+
+def branch_fusion_ablation_section() -> list[str]:
+    """Render the latest saved branch/fusion feasibility and provenance artifact."""
+    candidates = sorted(RESULTS.glob("branch_fusion_ablation_*.json"), reverse=True)
+    if not candidates:
+        return []
+    artifact_path = candidates[0]
+    artifact = read(artifact_path)
+    protected = artifact["protected_artifacts"]
+    holdout_path = ROOT / "backend" / "ml" / "evaluation" / "holdout_manifest.json"
+    network_path = RESULTS / "network_baseline_20261127T093255Z.json"
+    if (sha256_file(holdout_path) != protected["holdout_manifest_sha256"] or
+            sha256_file(network_path) != protected["network_baseline_sha256"]):
+        raise RuntimeError("Protected holdout or network baseline changed since branch/fusion feasibility record")
+    sources = artifact["data_provenance"]
+    lines = [
+        "", "## Controlled ablation 2: standalone branches versus calibrated fusion", "",
+        f"Feasibility artifact: [`{artifact_path.name}`](../backend/ml/evaluation/results/{artifact_path.name}).",
+        f"Status: **{artifact['status']}**. Required multi-seed metrics are not available because the branch data do not form a shared entity-disjoint labeled cohort.",
+        "", "| Branch | Available data and label provenance | Entity-disjoint standalone metrics |", "|---|---|---|",
+        f"| Endpoint (Autoencoder + iForest) | {sources['endpoint_autoencoder_iforest']['training_source_available']} | Not evaluable: {sources['endpoint_autoencoder_iforest']['label_scope']} |",
+        f"| User/Sequence (TFT) | {sources['user_sequence_tft']['training_source_available']}; {sources['user_sequence_tft']['label_source']} | Not evaluated here: {sources['user_sequence_tft']['label_scope']} |",
+        f"| Host-Graph (GAT) | {sources['host_graph_gat']['training_source_available']}; labels use `{sources['host_graph_gat']['label_source']}` | Not evaluated here: {sources['host_graph_gat']['label_scope']} |",
+        f"| Calibrated Fusion Meta-Classifier | `{sources['calibrated_fusion_meta_classifier']['fallback_training_source']}`; {sources['calibrated_fusion_meta_classifier']['label_scope']} | Not comparable: {sources['calibrated_fusion_meta_classifier']['split_scope']} |",
+        "", "| Comparison metric | Strongest standalone branch | Fusion on same held-out entities | Delta |", "|---|---:|---:|---:|",
+        "| Precision / Recall / F1 / AUPRC / FPR | n/a | n/a | n/a |",
+        "", "No fusion-improvement claim is made. Endpoint captures, user sequences, UNSW graph flows and Fusion training labels come from distinct cohorts and targets; the existing saved metrics cannot be paired into one test set. Synthetic fallback results are not real captured-log performance, and heuristic or attack-category proxy labels are not independent incident ground truth.",
+        "", "The holdout manifest and frozen network baseline were hashed for integrity verification only; they were not modified, used for training, or scored.",
+        "", "A valid rerun requires one independently labeled multi-modal cohort with aligned user, device, and capture/scenario identifiers. Split those entities into train, calibration, and test groups first; generate out-of-fold branch scores for training entities; fit/calibrate Fusion on training groups only; then compare each standalone branch and Fusion on the exact same untouched test entities.",
+    ]
+    return lines
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--agent-only", action="store_true", help="update only the generated agent evaluation section from the latest agent_eval JSON")
@@ -408,5 +491,8 @@ if __name__ == "__main__":
         print(f"Wrote historical report to {OUTPUT}")
     else:
         artifact = args.network_baseline or latest_network_baseline()
-        OUTPUT.write_text(render_network_baseline(artifact), encoding="utf-8")
+        report = render_network_baseline(artifact)
+        report += "\n".join(host_window_ablation_section())
+        report += "\n".join(branch_fusion_ablation_section())
+        OUTPUT.write_text(report, encoding="utf-8")
         print(f"Wrote {OUTPUT} from saved artifact {artifact}")
