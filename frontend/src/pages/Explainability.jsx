@@ -134,8 +134,8 @@ export default function Explainability() {
           {!modalities.open_set_novelty?.length ? <EmptyState icon={AlertCircle} title="No novelty flags are associated with this incident." className="mt-3 min-h-28 rounded-xl px-3 py-4" /> : <div className="mt-3 space-y-2">{noveltyRows.map((row, i) => { const distance = Number(row.centroid_distance); const meter = maxNoveltyDistance > 0 && Number.isFinite(distance) ? Math.max(0, Math.min(1, distance / maxNoveltyDistance)) : 0; return <div key={i} className="rounded-xl border border-purple-400/15 bg-purple-400/[0.045] p-3 text-xs"><div className="flex flex-wrap justify-between gap-2"><Badge tone="novel">{row.label || 'UNKNOWN_NOVEL'}</Badge><span className="font-mono tabular-nums text-purple-200">Distance {row.centroid_distance == null ? '—' : distance.toFixed(4)}</span></div><div className="mt-2 h-1 overflow-hidden rounded-full bg-white/[0.07]" aria-hidden="true"><div className="h-full rounded-full bg-purple-400" style={{ width: `${meter * 100}%` }} /></div><p className="mt-2 text-slate-400">{row.rationale || 'No novelty rationale recorded.'}</p></div>; })}</div>}
         </section>
         <EvidenceList title="Endpoint DAE reconstruction residuals" rows={modalities.endpoint_reconstruction_residuals} empty="No endpoint residuals are stored." icon={Database} />
-        <EvidenceList title="User sequence TFT temporal attention" rows={modalities.user_temporal_attention} empty="No temporal attention steps are stored." icon={UserRound} />
-        <EvidenceList title="Network GAT edge attention" rows={modalities.network_graph_edge_attention} empty="No graph edge attention is stored." icon={Network} />
+        <EvidenceList title="User sequence TFT temporal attention · proxy-label validated" rows={modalities.user_temporal_attention} empty="No temporal attention steps are stored." icon={UserRound} />
+        <EvidenceList title="Network GAT edge attention · proxy-label validated" rows={modalities.network_graph_edge_attention} empty="No graph edge attention is stored." icon={Network} />
       </div>
     </>}
     {loading && <p className="text-xs text-slate-500">Loading incident evidence…</p>}

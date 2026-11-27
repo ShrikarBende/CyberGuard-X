@@ -103,6 +103,9 @@ def test_explainability_returns_fusion_and_multimodal_payload(tmp_path, monkeypa
         assert response["available"] is True
         assert response["calibrated_risk_score"] == pytest.approx(.63)
         assert response["severity"] == "HIGH"
+        assert response["proxy_label_validation"]["status"] == "proxy-label validated"
+        assert set(response["proxy_label_validation"]["branches"]) == {"TFT", "GAT", "Fusion"}
+        assert "independently labeled real-world" in response["proxy_label_validation"]["limitation"]
         assert sum(response["per_layer_contributions"].values()) == pytest.approx(100.0)
         assert response["explanations"]["endpoint_reconstruction_residuals"]
         assert response["explanations"]["user_temporal_attention"]

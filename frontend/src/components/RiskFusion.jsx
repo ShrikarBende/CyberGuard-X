@@ -117,6 +117,10 @@ export default function RiskFusion({ explanation }) {
         </div>
       </div>
 
+      <div role="note" className="mt-4 rounded-xl border border-amber-400/20 bg-amber-400/[0.06] p-3 text-xs leading-relaxed text-amber-100">
+        <strong>proxy-label validated.</strong> TFT and GAT validation use heuristic or attack-category proxy labels; Fusion uses synthetic/weak labels and feedback. These signals do not establish independently labeled real-world incident performance.
+      </div>
+
       <div className="mt-6 grid gap-x-7 gap-y-4 sm:grid-cols-2">
         {rows.map(([key, label], index) => {
           const percent = contributionValues[index];

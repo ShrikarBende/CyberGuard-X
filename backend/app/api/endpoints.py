@@ -703,6 +703,17 @@ def get_explainability(
         "fusion_confidence": float(fusion.get("fusion_confidence", 0.5)),
         "calibration_source": fusion.get("calibration_source", "synthetic_weak_labels_plus_feedback"),
         "risk_score_interpretation": "calibrated triage score (0-100), not a real-world incident probability",
+        "proxy_label_validation": {
+            "status": "proxy-label validated",
+            "limitation": ("TFT labels are heuristic weak labels; GAT labels indicate attack-category presence; "
+                           "Fusion labels are synthetic/weak proxies with feedback. These signals do not establish "
+                           "independently labeled real-world incident performance."),
+            "branches": {
+                "TFT": "Heuristic sequence labels derived from event indicators; no verified account-takeover ground truth.",
+                "GAT": "Non-benign attack-category labels; not verified lateral-movement ground truth.",
+                "Fusion": "Synthetic/weak-label calibration plus analyst feedback; not a paired independent incident benchmark.",
+            },
+        },
         "severity": inc.severity,
         "threat_classification": inc.threat_classification,
         "risk_breakdown": risk_breakdown,

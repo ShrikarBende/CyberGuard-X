@@ -165,9 +165,9 @@ Status: **not_evaluable**. Required multi-seed metrics are not available because
 | Branch | Available data and label provenance | Entity-disjoint standalone metrics |
 |---|---|---|
 | Endpoint (Autoencoder + iForest) | synthetic benign fallback; real OTRF Sysmon attack captures are present | Not evaluable: No paired benign and Atomic Red Team entity-disjoint evaluation directories are present. |
-| User/Sequence (TFT) | OTRF Sysmon public attack captures; CERT logon cohort not present; heuristic risk labels from failed logons, host transitions, elevation and command activity | Not evaluated here: Proxy labels are generated from the same input indicators; not verified account-takeover ground truth. |
-| Host-Graph (GAT) | UNSW-NB15 captured network benchmark; labels use `attack_cat non-benign indicator` | Not evaluated here: Network attack-category proxy; not labeled lateral movement ground truth. |
-| Calibrated Fusion Meta-Classifier | `synthetic_weak_labels_v1`; Generated weak incident labels from synthetic branch-score profiles. | Not comparable: Current trainer uses row-level stratified train/validation split, not entity/session-disjoint splits. |
+| User/Sequence (TFT) | OTRF Sysmon public attack captures; CERT logon cohort not present; heuristic risk labels from failed logons, host transitions, elevation and command activity | **proxy-label validated** only: proxy labels are generated from the same input indicators; not verified account-takeover ground truth. |
+| Host-Graph (GAT) | UNSW-NB15 captured network benchmark; labels use `attack_cat non-benign indicator` | **proxy-label validated** only: network attack-category proxy; not labeled lateral movement ground truth. |
+| Calibrated Fusion Meta-Classifier | `synthetic_weak_labels_v1`; Generated weak incident labels from synthetic branch-score profiles. | **proxy-label validated** only: current trainer uses row-level stratified train/validation split, not entity/session-disjoint splits. |
 
 | Comparison metric | Strongest standalone branch | Fusion on same held-out entities | Delta |
 |---|---:|---:|---:|
