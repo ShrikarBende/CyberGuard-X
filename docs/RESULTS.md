@@ -30,3 +30,24 @@ Unknown review semantics: confidence-threshold rejection is a triage proxy for U
 The bootstrap interval resamples the five seed-level estimates on fixed development test sessions. It reflects seed variability, not uncertainty across a large sample of independent capture sessions.
 CICIDS2017 source files contain no timestamps. Host-window features therefore remain zero in this baseline, and the final holdout consists of one complete source-file session.
 Per-seed supports, session assignments, thresholds, excluded unseen test labels, and row-bootstrap intervals are recorded in the linked JSON artifact.
+
+## Controlled ablation 1: host-window features
+
+Ablation artifact: [`ablation_host_window_20261127T095602Z.json`](../backend/ml/evaluation/results/ablation_host_window_20261127T095602Z.json).
+Status: **not_evaluable**. The final holdout remains untouched; comparison is pinned to `network_baseline_20261127T093255Z.json` with the same seeds and split rules.
+
+| Metric | Frozen baseline | Host-window ablation | Delta |
+|---|---:|---:|---:|
+| Bot recall | 0.0649 (0.0000–0.1948) | n/a | n/a |
+| PortScan recall | 0.1364 (0.0080–0.3342) | n/a | n/a |
+| Bot precision | 0.0146 (0.0000–0.0438) | n/a | n/a |
+| PortScan precision | 0.6185 (0.3638–0.8731) | n/a | n/a |
+| Bot F1 | 0.0239 (0.0000–0.0716) | n/a | n/a |
+| PortScan F1 | 0.1880 (0.0154–0.4324) | n/a | n/a |
+| Macro unknown-review F1 | 0.2116 | n/a | n/a |
+| Macro open-set rejection (recall) | 0.2433 | n/a | n/a |
+| Macro benign replay false-alert rate | 0.0339 | n/a | n/a |
+
+**Why no delta is reported:** The development CICIDS2017 files lack Timestamp and/or source IP. HostWindowAggregator requires both and emits all-zero 60-second window features without them. The frozen baseline also records host-window context as zero, so an enabled-versus-disabled model comparison on this data would not change the treatment. No model was fitted and no ablation metrics or deltas are claimed.
+Required fields absent from development session headers: `source ip, timestamp`. No model was fitted for this ablation.
+A valid rerun requires flow telemetry containing per-row timestamps and source-host identifiers. Do not infer timestamps from row order or derive a 60-second window from aggregate flow IAT fields.

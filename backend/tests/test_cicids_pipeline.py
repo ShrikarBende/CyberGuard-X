@@ -47,8 +47,8 @@ from ml.evaluation.open_set_pipeline import threshold_from_known_validation, kno
 
 @pytest.fixture(scope="session")
 def pipeline():
-    """Load the full pipeline once per test session."""
-    return build_full_pipeline(force_reload=False, seed=42)
+    """Load a deterministic CICIDS sample for pipeline invariants under CI memory limits."""
+    return build_full_pipeline(force_reload=False, seed=42, sample=0.15)
 
 
 @pytest.fixture(scope="session")

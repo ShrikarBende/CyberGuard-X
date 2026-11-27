@@ -1,0 +1,137 @@
+{
+  "artifact_schema_version": 1,
+  "run_id": "20261127T095602Z",
+  "created_at_utc": "2026-11-27T09:56:02.310658+00:00",
+  "ablation": "60-second host/source sliding-window features",
+  "status": "not_evaluable",
+  "baseline_artifact": "network_baseline_20261127T093255Z.json",
+  "baseline_artifact_sha256": "cf47f604c009fc2c69b07525ef027a8f19f47e71604b9604dce124e45ce081e3",
+  "dataset": {
+    "version": "CICIDS2017",
+    "sha256": "9bb6edafdf07613af60d43f231e3d74b3fe9a7a308e4475d28446d326f72a1bd",
+    "processed_development_sample_sha256": "c31a87dde5b5696974cd48cd1206e236dfa29a729d52bbe08e1c0917821b6a22",
+    "sample_fraction": 0.15,
+    "sample_method": "stable feature-row hash modulo 100, threshold 15; applied only to development source sessions",
+    "source_file_sha256": [
+      {
+        "file": "Monday-WorkingHours.pcap_ISCX.csv",
+        "bytes": 176927918,
+        "sha256": "852c4beb34eda186f32561fa79df7a0747e92e1a6535b01270820dd9ffe17f34"
+      },
+      {
+        "file": "Tuesday-WorkingHours.pcap_ISCX.csv",
+        "bytes": 135078995,
+        "sha256": "52b8692ae8c7d2ed04671fe2b98335693c0a92c7ab157d8c8b534d6523080851"
+      },
+      {
+        "file": "Wednesday-workingHours.pcap_ISCX.csv",
+        "bytes": 225166395,
+        "sha256": "893c27dc968bf7a8adef1689f90be55ca4a4dc3088fb63d6ff247ac56856df2a"
+      },
+      {
+        "file": "Thursday-WorkingHours-Morning-WebAttacks.pcap_ISCX.csv",
+        "bytes": 52023263,
+        "sha256": "d67066211fb1689c78406f1506f4c44704ecb92088353d5c96d96d6474eb819d"
+      },
+      {
+        "file": "Thursday-WorkingHours-Afternoon-Infilteration.pcap_ISCX.csv",
+        "bytes": 83102436,
+        "sha256": "6bcda3857c2504676034e3ea57762d38393cc734cb377a726bd5cb153961b1b5"
+      },
+      {
+        "file": "Friday-WorkingHours-Morning.pcap_ISCX.csv",
+        "bytes": 58316725,
+        "sha256": "53a41c24d570ea83b7ac55b2e94df94e7a8216aeb80a2af0246b6bc8bb543000"
+      },
+      {
+        "file": "Friday-WorkingHours-Afternoon-PortScan.pcap_ISCX.csv",
+        "bytes": 76906168,
+        "sha256": "ca1824c51bfbb7b3c72290a11be04366ba8815878c6a1cc5c44cb1cee269e99b"
+      },
+      {
+        "file": "Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv",
+        "bytes": 77123859,
+        "sha256": "6ff1580f5f81c0ae28a26f7631721018577f5f7c5e0feac28b795fcfe7b411ee"
+      }
+    ]
+  },
+  "seeds": [
+    42,
+    101,
+    202,
+    303,
+    404
+  ],
+  "split_rules": {
+    "session_unit": "complete source CSV capture session; CICIDS2017 source files have no Timestamp column",
+    "development_test": "for each family, every development source session containing that family is held out as test; those sessions are excluded from train and validation",
+    "development_validation": "one complete non-test source session is selected by GroupShuffleSplit using the recorded seed",
+    "training": "all other development sessions; held-out-family rows are removed from train and validation; scaling and thresholds use training/validation only",
+    "unknown_test_population": "target-family rows in that family\u2019s reserved development test sessions",
+    "known_test_population": "non-target test rows whose labels occur in that fold\u2019s training data; other unseen labels are excluded and counted"
+  },
+  "holdout": {
+    "source_sessions": [
+      "Monday-WorkingHours.pcap_ISCX.csv"
+    ],
+    "manifest_sha256": "701a6fca14260729a21c47c9352e62af61526643b2ce44ba28bb000a0cb9b618",
+    "status": "untouched; no holdout CSV opened or parsed"
+  },
+  "feature_requirements": [
+    "source ip",
+    "timestamp"
+  ],
+  "development_header_findings": [
+    {
+      "source_file": "Tuesday-WorkingHours.pcap_ISCX.csv",
+      "missing_required_window_fields": [
+        "source ip",
+        "timestamp"
+      ]
+    },
+    {
+      "source_file": "Wednesday-workingHours.pcap_ISCX.csv",
+      "missing_required_window_fields": [
+        "source ip",
+        "timestamp"
+      ]
+    },
+    {
+      "source_file": "Thursday-WorkingHours-Morning-WebAttacks.pcap_ISCX.csv",
+      "missing_required_window_fields": [
+        "source ip",
+        "timestamp"
+      ]
+    },
+    {
+      "source_file": "Thursday-WorkingHours-Afternoon-Infilteration.pcap_ISCX.csv",
+      "missing_required_window_fields": [
+        "source ip",
+        "timestamp"
+      ]
+    },
+    {
+      "source_file": "Friday-WorkingHours-Morning.pcap_ISCX.csv",
+      "missing_required_window_fields": [
+        "source ip",
+        "timestamp"
+      ]
+    },
+    {
+      "source_file": "Friday-WorkingHours-Afternoon-PortScan.pcap_ISCX.csv",
+      "missing_required_window_fields": [
+        "source ip",
+        "timestamp"
+      ]
+    },
+    {
+      "source_file": "Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv",
+      "missing_required_window_fields": [
+        "source ip",
+        "timestamp"
+      ]
+    }
+  ],
+  "reason": "The development CICIDS2017 files lack Timestamp and/or source IP. HostWindowAggregator requires both and emits all-zero 60-second window features without them. The frozen baseline also records host-window context as zero, so an enabled-versus-disabled model comparison on this data would not change the treatment. No model was fitted and no ablation metrics or deltas are claimed.",
+  "metrics": null
+}
