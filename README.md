@@ -159,6 +159,16 @@ The API health URL is [http://127.0.0.1:8000/api/health](http://127.0.0.1:8000/a
 
 The application runtime supports SQLite only. `backend/app/database/session.py` rejects non-SQLite `DATABASE_URL` values with `ValueError` during startup, and a regression test covers PostgreSQL URLs. SQLite is used for local development, CI, and the Compose demonstration, which stores its database in the `cyberguardx_demo_sqlite_data` named volume. PostgreSQL application-runtime support is a planned Phase 5 upgrade; the separate staging-only recovery utility does not provide runtime PostgreSQL support. Run `alembic upgrade head` from `backend/` to apply schema migrations.
 
+### Signing model bundles for local demos
+
+Runtime model loading rejects unsigned or modified `.pkl`/`.joblib` bundles. Before starting a local demo, configure `MODEL_ARTIFACT_HMAC_KEY` with at least 32 random bytes in the shell or local secret store, then from `backend/` sign and register the flow bundle:
+
+```powershell
+python scripts/register_model_artifact.py saved_models/cicids2017_medium_lightgbm.bundle.pkl --name network_flow --version local-demo
+```
+
+Repeat for optional endpoint, TFT, GAT, or Fusion bundles using their registry names (`endpoint`, `user_tft`, `network_gat`, `risk_fusion`) if those branches are enabled. Keep the same key available to the running backend. The command creates a signed manifest, stores an immutable version under `saved_models/v/`, and updates `models/registry.json`; it does not change model contents. See [Model Artifact Security](docs/MODEL_ARTIFACT_SECURITY.md) for key handling and rollback details. Do not use a demo or public key in a real deployment.
+
 ## Analyst accounts and permissions
 
 The API issues signed bearer tokens from `POST /api/auth/login`. Create the initial admin interactively from `backend/` with `python -m app.cli create_admin`, or set both `ADMIN_USERNAME` and `ADMIN_PASSWORD` for one-time startup setup. Environment bootstrap is ignored once any analyst account exists. Admins create additional accounts with `POST /api/auth/users`. Viewers have read-only access. Analysts can update incident status, add notes, use RAG chat, and analyze or upload telemetry. Admins can additionally load and replay demos, run correlation, retrain models, run evaluations, and manage accounts. Login attempts, incident status changes, and analyst notes are recorded in `analyst_activity`.
