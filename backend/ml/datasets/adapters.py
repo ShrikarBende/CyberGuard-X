@@ -156,12 +156,13 @@ class CSECICIDS2018Adapter:
         for path in self.capture_files():
             frame = self.load_capture(path)
             day = str(frame["_capture_day"].iloc[0]) if len(frame) else _capture_day(path)
-            row = inventory.setdefault(day, {"files": [], "flows": 0, "families": {}})
+            row = inventory.setdefault(day, {"files": [], "flows": 0, "families": {}, "family_files": {}})
             row["files"].append(path.name)
             row["flows"] += int(len(frame))
             counts = frame["Label"].value_counts().to_dict()
             for family, count in counts.items():
                 row["families"][family] = row["families"].get(family, 0) + int(count)
+                row["family_files"].setdefault(family, []).append(path.name)
         return inventory
 
 

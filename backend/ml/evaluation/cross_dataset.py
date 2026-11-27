@@ -120,15 +120,43 @@ def cse_capture_day_evaluation(adapter: CSECICIDS2018Adapter | None = None, *, s
         day = str(frame["_capture_day"].iloc[0]) if len(frame) else "unknown"
         if day in frames_by_day:
             frames_by_day[day].append(frame)
+    expected_families = ("Bot", "WebAttack", "BruteForce", "DosDDoS", "Infiltration", "PortScan")
+    family_capture_counts = {}
+    for family in expected_families:
+        family_days = [day for day, stats in inventory.items()
+                       if day != "unknown" and int(stats["families"].get(family, 0)) > 0]
+        family_capture_counts[family] = {
+            "capture_days": family_days,
+            "n_capture_days": len(family_days),
+            "n_files": sum(len(inventory[day]["family_files"].get(family, [])) for day in family_days),
+            "flow_count": sum(int(inventory[day]["families"].get(family, 0)) for day in family_days),
+        }
     folds = []
     for held_out in days:
         train = pd.concat([f for day, items in frames_by_day.items() if day != held_out for f in items], ignore_index=True)
         test = pd.concat(frames_by_day[held_out], ignore_index=True)
         folds.append({"held_out_capture_day": held_out,
                       **evaluate_frames(train, test, seed=seed, model_factory=model_factory)})
+    per_family = {}
+    for family in expected_families:
+        recalls = [fold["per_family"][family]["recall"] for fold in folds
+                   if family in fold["per_family"] and fold["per_family"][family]["support"] > 0]
+        per_family[family] = {
+            "mean_recall_descriptive": float(np.mean(recalls)) if recalls else None,
+            "n_capture_days_with_test_support": len(recalls),
+        }
+    macro_f1s = [float(fold["macro_f1"]) for fold in folds]
     return {
         "protocol": "CSE-CIC-IDS2018 leave-one-capture-day-out",
-        "n_capture_days": len(days), "capture_days": days, "seed": int(seed), "folds": folds,
+        "n_capture_days": len(days), "capture_days": days, "seed": int(seed),
+        "family_capture_counts": family_capture_counts,
+        "aggregate": {
+            "mean_capture_day_macro_f1": float(np.mean(macro_f1s)),
+            "std_capture_day_macro_f1": float(np.std(macro_f1s)),
+            "macro_f1_unit": "capture day; unweighted mean of held-out-day macro-F1",
+            "per_family_recall": per_family,
+        },
+        "folds": folds,
     }
 
 

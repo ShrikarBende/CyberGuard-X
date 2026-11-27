@@ -128,6 +128,11 @@ def test_cse_leave_one_capture_day_out_keeps_each_day_held_out(tmp_path):
     assert result["n_capture_days"] == 2
     assert [fold["held_out_capture_day"] for fold in result["folds"]] == ["2018-02-14", "2018-02-15"]
     assert all(fold["test_rows"] == 16 for fold in result["folds"])
+    assert result["family_capture_counts"]["Bot"] == {
+        "capture_days": ["2018-02-14", "2018-02-15"],
+        "n_capture_days": 2, "n_files": 2, "flow_count": 16,
+    }
+    assert result["aggregate"]["per_family_recall"]["Bot"]["n_capture_days_with_test_support"] == 2
 
 
 def test_unsw_adapter_is_optional_and_reports_its_local_files(tmp_path):
