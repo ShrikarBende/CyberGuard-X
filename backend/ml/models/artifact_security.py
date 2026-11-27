@@ -309,3 +309,80 @@ def verify_and_load_joblib(
         manifest_path=manifest_path,
     )
     return joblib.load(artifact_path)
+
+
+def archive_and_install_signed_bundle(
+    staged_path: Path | str,
+    staged_bundle: dict[str, Any],
+    target_path: Path | str,
+    *,
+    hmac_key: str | None = None,
+    allow_unsigned: bool | None = None,
+    backup_tag: str | None = None,
+) -> dict[str, Any]:
+    """
+    Sign a staged bundle after version checks, archive the previous version for rollback,
+    and atomically install the new bundle + manifest as a single unit.
+    """
+    import shutil
+
+    staged = Path(staged_path)
+    target = Path(target_path)
+    target_manifest = manifest_path_for(target)
+    key = _resolve_hmac_key(hmac_key)
+    unsigned_allowed = _resolve_allow_unsigned(allow_unsigned)
+
+    if not key and not unsigned_allowed:
+        raise ArtifactSecurityError(
+            f"Refusing to install retrained bundle {target}: {HMAC_ENV_VAR} is not set "
+            f"and {ALLOW_UNSIGNED_ENV_VAR} is false."
+        )
+    if not key and unsigned_allowed:
+        logger.warning(
+            "SECURITY WARNING: Installing unsigned retrained bundle without %s (%s=true): %s",
+            HMAC_ENV_VAR,
+            ALLOW_UNSIGNED_ENV_VAR,
+            target,
+        )
+
+    # 1. Build and stage manifest for the new bundle (with artifact_filename set to target.name)
+    staged_manifest_tmp = staged.with_name(f".{target.name}.{os.getpid()}.manifest.tmp")
+    manifest = build_manifest(staged, staged_bundle, hmac_key=key or None)
+    manifest["artifact_filename"] = target.name
+    if key:
+        manifest["hmac_sha256"] = compute_manifest_hmac(manifest, key)
+    staged_manifest_tmp.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+
+    # 2. Archive previous version (bundle + manifest) for rollback if target exists
+    archived_bundle_path: Path | None = None
+    archived_manifest_path: Path | None = None
+    if target.is_file():
+        versions_dir = target.parent / "versions"
+        versions_dir.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        suffix = f"{stamp}_{backup_tag}" if backup_tag else stamp
+        archived_bundle_path = versions_dir / f"{target.name}.{suffix}"
+        shutil.copy2(target, archived_bundle_path)
+        if target_manifest.is_file():
+            archived_manifest_path = versions_dir / f"{target_manifest.name}.{suffix}"
+            shutil.copy2(target_manifest, archived_manifest_path)
+
+    # 3. Atomically install bundle and manifest together; roll back on error
+    try:
+        os.replace(staged, target)
+        os.replace(staged_manifest_tmp, target_manifest)
+    except Exception:
+        staged_manifest_tmp.unlink(missing_ok=True)
+        if archived_bundle_path and archived_bundle_path.is_file():
+            shutil.copy2(archived_bundle_path, target)
+            if archived_manifest_path and archived_manifest_path.is_file():
+                shutil.copy2(archived_manifest_path, target_manifest)
+        raise
+
+    return {
+        "target": str(target),
+        "manifest": str(target_manifest),
+        "archived_bundle": str(archived_bundle_path) if archived_bundle_path else None,
+        "archived_manifest": str(archived_manifest_path) if archived_manifest_path else None,
+        "manifest_data": manifest,
+    }

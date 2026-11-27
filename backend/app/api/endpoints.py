@@ -842,12 +842,17 @@ def retrain_model(
             trained_path = train_final(**trainer_kwargs)
             if not Path(trained_path).is_file():
                 raise FileNotFoundError(f"Training completed without producing artifact: {trained_path}")
-            from ml.models.artifact_security import verify_and_load_joblib
+            from ml.models.artifact_security import (
+                archive_and_install_signed_bundle,
+                verify_and_load_joblib,
+            )
             staged_bundle = verify_and_load_joblib(trained_path, allow_unsigned=True)
             if not isinstance(staged_bundle, dict) or not staged_bundle.get("model_version"):
                 raise ValueError("Training produced an invalid model bundle.")
-            # Same-directory replacement is atomic; the current bundle remains intact until here.
-            os.replace(trained_path, target)
+            # Sign after version check, archive previous version, and install bundle + manifest atomically.
+            install_info = archive_and_install_signed_bundle(
+                trained_path, staged_bundle, target, backup_tag=job_id[:8]
+            )
             fusion_feedback = [sample for sample in feedback_samples if sample.get("fusion_features")]
             fusion_metrics = None
             if fusion_feedback:
@@ -863,7 +868,11 @@ def retrain_model(
                         before_metrics["fusion_artifact_read_error"] = type(exc).__name__
                 fusion_path = train_fusion_meta(output_path=fusion_temporary, feedback_samples=fusion_feedback)
                 fusion_bundle = verify_and_load_joblib(fusion_path, allow_unsigned=True)
-                os.replace(fusion_path, FUSION_ARTIFACT_PATH)
+                if not isinstance(fusion_bundle, dict) or not fusion_bundle.get("model_version"):
+                    raise ValueError("Fusion training produced an invalid model bundle.")
+                archive_and_install_signed_bundle(
+                    fusion_path, fusion_bundle, FUSION_ARTIFACT_PATH, backup_tag=job_id[:8]
+                )
                 from ml import fusion_meta
                 fusion_meta._BUNDLE_CACHE = fusion_bundle
                 fusion_metrics = {"validation_metrics": fusion_bundle.get("validation_metrics"),

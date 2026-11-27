@@ -66,4 +66,33 @@ def test_successful_retrain_atomically_installs_profile_artifact(tmp_path, monke
     assert status["status"] == "completed", status.get("error")
     assert joblib.load(target)["model_version"] == "new-light"
     assert detection_engine._MODEL_BUNDLE_CACHE["model_version"] == "new-light"
+    assert (tmp_path / f"{target.name}.manifest.json").is_file()
+    versions_dir = tmp_path / "versions"
+    assert any(p.name.startswith(f"{target.name}.") for p in versions_dir.iterdir())
+    clean_engine.dispose()
+
+
+def test_retrain_signs_manifest_and_verifies_strictly(tmp_path, monkeypatch):
+    from ml.models.artifact_security import verify_and_load_joblib
+
+    monkeypatch.setenv("ALLOW_UNSIGNED_MODELS", "false")
+    monkeypatch.setenv("ARTIFACT_HMAC_KEY", "retrain-hmac-key")
+    target = tmp_path / "light.bundle.pkl"
+    joblib.dump({"model_version": "old-light"}, target)
+    monkeypatch.setattr(trainer, "ARTIFACT_PATH", target)
+    monkeypatch.setattr(detection_engine, "MODEL_BUNDLE_PATH", target)
+    monkeypatch.setattr(detection_engine, "_MODEL_BUNDLE_CACHE", {"model_version": "old-light"})
+    clean_engine = create_engine(f"sqlite:///{tmp_path / 'clean2.sqlite'}", connect_args={"check_same_thread": False})
+    monkeypatch.setattr(endpoints, "SessionLocal", sessionmaker(bind=clean_engine))
+
+    def fake_training(profile, output_path):
+        joblib.dump({"model_version": "signed-light-v2"}, output_path)
+        return output_path
+
+    monkeypatch.setattr(trainer, "train_final", fake_training)
+    started = endpoints.retrain_model(endpoints.RetrainRequest(profile="light"))
+    status = _wait_for_job(started["job_id"])
+    assert status["status"] == "completed", status.get("error")
+    loaded = verify_and_load_joblib(target)
+    assert loaded["model_version"] == "signed-light-v2"
     clean_engine.dispose()
