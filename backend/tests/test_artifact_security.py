@@ -112,3 +112,120 @@ def test_sign_existing_models_cli_signs_directory(tmp_path, monkeypatch):
     assert len(results) == 2
     assert verify_and_load_joblib(a)["model_version"] == "a-v1"
     assert verify_and_load_joblib(b)["model_version"] == "b-v1"
+
+
+# ---------------------------------------------------------------------------
+# All 6 real bundles + per-loader-family failure-mode coverage
+# ---------------------------------------------------------------------------
+
+ALL_SIX_BUNDLES = [
+    "cicids2017_medium_lightgbm.bundle.pkl",
+    "cicids2017_lightgbm.bundle.pkl",
+    "endpoint_behavior.bundle.pkl",
+    "user_tft.bundle.pkl",
+    "network_gat.bundle.pkl",
+    "risk_fusion_meta.joblib",
+]
+
+
+def _configure_loader_target(monkeypatch, family: str, target_path: Path) -> callable:
+    """Point a loader family at target_path, reset its process cache, and return its loader."""
+    from app.detection import engine
+    from ml import fusion_meta
+
+    if family == "cicids":
+        monkeypatch.setattr(engine, "MODEL_BUNDLE_PATH", target_path)
+        monkeypatch.setattr(engine, "_MODEL_BUNDLE_CACHE", None)
+        return engine.load_model_bundle
+    if family == "endpoint":
+        monkeypatch.setattr(engine, "ENDPOINT_BUNDLE_PATH", target_path)
+        monkeypatch.setattr(engine, "_ENDPOINT_BUNDLE_CACHE", None)
+        return engine.load_endpoint_bundle
+    if family == "user_tft":
+        monkeypatch.setattr(engine, "USER_BUNDLE_PATH", target_path)
+        monkeypatch.setattr(engine, "_USER_BUNDLE_CACHE", None)
+        return engine.load_user_bundle
+    if family == "network_gat":
+        monkeypatch.setattr(engine, "NETWORK_GAT_BUNDLE_PATH", target_path)
+        monkeypatch.setattr(engine, "_NETWORK_GAT_BUNDLE_CACHE", None)
+        return engine.load_network_gat_bundle
+    if family == "fusion":
+        monkeypatch.setattr(fusion_meta, "ARTIFACT_PATH", target_path)
+        monkeypatch.setattr(fusion_meta, "_BUNDLE_CACHE", None)
+        return fusion_meta.load_fusion_bundle
+    raise ValueError(f"Unknown loader family: {family}")
+
+
+@pytest.mark.requires_data(reason="Requires the 6 model bundles in backend/saved_models")
+def test_all_six_real_bundles_load_signed_in_temp_dir(tmp_path, monkeypatch):
+    """Copy all 6 bundles to a temp dir, sign with a temp key, and load via verified loaders."""
+    import shutil
+
+    saved_dir = BACKEND / "saved_models"
+    missing = [name for name in ALL_SIX_BUNDLES if not (saved_dir / name).is_file()]
+    if missing:
+        pytest.skip(f"Missing bundles in {saved_dir}: {missing}")
+
+    for name in ALL_SIX_BUNDLES:
+        shutil.copy2(saved_dir / name, tmp_path / name)
+
+    test_key = "temp-all-six-bundles-hmac-key"
+    results = sign_models_in_dir(tmp_path, test_key)
+    assert len(results) == 6
+
+    monkeypatch.setenv("ALLOW_UNSIGNED_MODELS", "false")
+    monkeypatch.setenv("ARTIFACT_HMAC_KEY", test_key)
+
+    family_map = [
+        ("cicids", "cicids2017_medium_lightgbm.bundle.pkl"),
+        ("cicids", "cicids2017_lightgbm.bundle.pkl"),
+        ("endpoint", "endpoint_behavior.bundle.pkl"),
+        ("user_tft", "user_tft.bundle.pkl"),
+        ("network_gat", "network_gat.bundle.pkl"),
+        ("fusion", "risk_fusion_meta.joblib"),
+    ]
+    for family, filename in family_map:
+        loader = _configure_loader_target(monkeypatch, family, tmp_path / filename)
+        loaded = loader()
+        assert isinstance(loaded, dict)
+        assert loaded.get("model_version"), f"Expected model_version in {filename}"
+
+
+@pytest.mark.parametrize(
+    "family,filename",
+    [
+        ("cicids", "cicids.bundle.pkl"),
+        ("endpoint", "endpoint.bundle.pkl"),
+        ("user_tft", "user_tft.bundle.pkl"),
+        ("network_gat", "network_gat.bundle.pkl"),
+        ("fusion", "risk_fusion_meta.joblib"),
+    ],
+)
+@pytest.mark.parametrize("failure_mode", ["tampered", "wrong_key", "missing_manifest"])
+def test_each_loader_family_rejects_untrusted_artifacts(
+    tmp_path, monkeypatch, family: str, filename: str, failure_mode: str
+):
+    """Every loader family must reject tampered files, wrong keys, and missing manifests."""
+    target = tmp_path / filename
+    dummy_bundle = {"model_version": "v-test"}
+    joblib.dump(dummy_bundle, target)
+    loader = _configure_loader_target(monkeypatch, family, target)
+
+    monkeypatch.setenv("ALLOW_UNSIGNED_MODELS", "false")
+    valid_key = "family-test-hmac-key"
+
+    if failure_mode == "missing_manifest":
+        monkeypatch.setenv("ARTIFACT_HMAC_KEY", valid_key)
+        with pytest.raises(ArtifactSecurityError, match="missing manifest"):
+            loader()
+    elif failure_mode == "wrong_key":
+        write_manifest(target, dummy_bundle, hmac_key=valid_key)
+        monkeypatch.setenv("ARTIFACT_HMAC_KEY", "wrong-hmac-key")
+        with pytest.raises(ArtifactSecurityError, match="HMAC signature verification failed"):
+            loader()
+    elif failure_mode == "tampered":
+        write_manifest(target, dummy_bundle, hmac_key=valid_key)
+        monkeypatch.setenv("ARTIFACT_HMAC_KEY", valid_key)
+        target.write_bytes(target.read_bytes() + b"TAMPERED")
+        with pytest.raises(ArtifactSecurityError, match="SHA-256 mismatch"):
+            loader()
