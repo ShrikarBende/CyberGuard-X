@@ -31,7 +31,7 @@ function EvidenceList({ title, rows, empty, icon: Icon = Database }) {
     {!rows?.length ? <EmptyState icon={Icon} title={empty} className="min-h-28 rounded-xl px-3 py-4" /> : <div className="max-h-64 space-y-2 overflow-auto">
       {rows.map((row, index) => <div key={`${row.event_id || row.feature || 'evidence'}-${index}`} className="rounded-xl border border-[var(--line)] bg-white p-3">
         {row.event_id && <p className="mb-1 text-xs font-mono text-slate-500">Event {row.event_id}</p>}
-        <pre className="whitespace-pre-wrap break-words text-xs text-slate-300">{readable(row.top_features || row.attention || row.edge_attention || row.top_suspicious_edges || row.evidence || row)}</pre>
+        <pre className="whitespace-pre-wrap break-words text-xs text-slate-300">{readable(row.feature_attributions?.length ? row.feature_attributions : row.top_features || row.attention || row.edge_attention || row.top_suspicious_edges || row.evidence || row)}</pre>
         {row.centroid_distance != null && <p className="mt-2 text-xs text-amber-200">Centroid distance: <span className="font-mono tabular-nums">{Number(row.centroid_distance).toFixed(4)}</span></p>}
       </div>)}
     </div>}
@@ -134,8 +134,9 @@ export default function Explainability() {
           {!modalities.open_set_novelty?.length ? <EmptyState icon={AlertCircle} title="No novelty flags are associated with this incident." className="mt-3 min-h-28 rounded-xl px-3 py-4" /> : <div className="mt-3 space-y-2">{noveltyRows.map((row, i) => { const distance = Number(row.centroid_distance); const meter = maxNoveltyDistance > 0 && Number.isFinite(distance) ? Math.max(0, Math.min(1, distance / maxNoveltyDistance)) : 0; return <div key={i} className="rounded-xl border border-purple-400/15 bg-purple-400/[0.045] p-3 text-xs"><div className="flex flex-wrap justify-between gap-2"><Badge tone="novel">{row.label || 'UNKNOWN_NOVEL'}</Badge><span className="font-mono tabular-nums text-purple-200">Distance {row.centroid_distance == null ? '—' : distance.toFixed(4)}</span></div><div className="mt-2 h-1 overflow-hidden rounded-full bg-white/[0.07]" aria-hidden="true"><div className="h-full rounded-full bg-purple-400" style={{ width: `${meter * 100}%` }} /></div><p className="mt-2 text-slate-400">{row.rationale || 'No novelty rationale recorded.'}</p></div>; })}</div>}
         </section>
         <EvidenceList title="Endpoint DAE reconstruction residuals" rows={modalities.endpoint_reconstruction_residuals} empty="No endpoint residuals are stored." icon={Database} />
-        <EvidenceList title="User sequence TFT temporal attention · proxy-label validated" rows={modalities.user_temporal_attention} empty="No temporal attention steps are stored." icon={UserRound} />
+        <EvidenceList title="User sequence TFT attention · proxy-label validated" rows={modalities.user_temporal_attention} empty="No temporal attention steps are stored." icon={UserRound} />
         <EvidenceList title="Network GAT edge attention · proxy-label validated" rows={modalities.network_graph_edge_attention} empty="No graph edge attention is stored." icon={Network} />
+        <p className="xl:col-span-3 rounded-xl border border-amber-400/20 bg-amber-400/[0.05] p-3 text-xs text-amber-100">{modalities.non_causal_note || 'Attention and reconstruction scores are non-causal indicators, not causal explanations.'} TFT, GAT, and Fusion evidence remains proxy-label validated; see the limitations above.</p>
       </div>
     </>}
     {loading && <p className="text-xs text-slate-500">Loading incident evidence…</p>}
