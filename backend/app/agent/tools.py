@@ -4,6 +4,7 @@ from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import json
 import logging
+import re
 import uuid
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -80,6 +81,23 @@ ARG_MODELS = {
     "list_unknown_candidates": LimitArgs,
     "propose_action": ProposalArgs,
 }
+
+_SENSITIVE_FIELD = re.compile(
+    r"(?:^|[_-])(?:password|passwd|secret|token|credential|api[_-]?key|authorization|cookie|private[_-]?key)(?:$|[_-])",
+    re.IGNORECASE,
+)
+
+
+def redact_sensitive_fields(value):
+    """Remove common credential fields from every tool result before it reaches an LLM."""
+    if isinstance(value, dict):
+        return {key: ("[REDACTED]" if isinstance(key, str) and _SENSITIVE_FIELD.search(key)
+                      else redact_sensitive_fields(item)) for key, item in value.items()}
+    if isinstance(value, list):
+        return [redact_sensitive_fields(item) for item in value]
+    if isinstance(value, tuple):
+        return [redact_sensitive_fields(item) for item in value]
+    return value
 
 TOOL_DESCRIPTIONS = {
     "run_baseline_investigation": "Run the deterministic baseline first. Returns a compact investigation trace, retrieved reference IDs, and incident/event evidence IDs; it does not modify the incident.",
@@ -267,6 +285,7 @@ class ToolRegistry:
                 raise ValueError("incident is outside this run scope")
             result = self.handlers[name](args, db, incident, run_id, requested_by, seen_ids)
             result.validated_args = args.model_dump(mode="json")
+            result.data = redact_sensitive_fields(result.data)
             cap = int(settings.AGENT_RESULT_CHARS)
             if result.scan_text:
                 result.scan_text = result.scan_text[:cap]
