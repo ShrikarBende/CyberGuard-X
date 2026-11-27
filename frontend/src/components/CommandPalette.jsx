@@ -133,27 +133,27 @@ export default function CommandPalette({ open, onClose, role, setActivePage }) {
       <div className="flex items-center gap-3 border-b border-white/10 px-5 py-4">
         <Search aria-hidden="true" className="h-4 w-4 shrink-0 text-slate-400" />
         <input ref={inputRef} id="soc-command-search" type="text" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search pages, incidents, techniques…" aria-label="Search pages, incidents, and MITRE techniques" aria-activedescendant={results[activeIndex] ? `command-${results[activeIndex].id}` : undefined} role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="soc-command-results" className="min-w-0 flex-1 bg-transparent text-sm text-slate-100 outline-none placeholder:text-slate-500" />
-        <button type="button" onClick={onClose} aria-label="Close command palette" title="Close" className="rounded-md border border-white/10 px-2 py-1 font-mono text-[10px] text-slate-400 hover:text-white">Esc</button>
+        <button type="button" onClick={onClose} aria-label="Close command palette" title="Close" className="rounded-md border border-white/10 px-2 py-1 font-mono text-xs text-slate-400 hover:text-white">Esc</button>
       </div>
 
       <div id="soc-command-results" role="listbox" aria-label="Command palette results" className="max-h-[min(60vh,30rem)] overflow-y-auto p-2">
         {loading && <p role="status" className="px-3 py-5 text-xs text-slate-400">Loading incidents…</p>}
         {loadError && incidents?.length === 0 && <p role="status" className="px-3 py-3 text-xs text-amber-200">Incidents are currently unavailable.</p>}
         {groups.map((group) => <section key={group.title} role="group" aria-label={group.title} className="mb-2 last:mb-0">
-          <h2 className="px-3 pb-1 pt-2 text-[9px] font-bold uppercase tracking-[0.18em] text-slate-500">{group.title}</h2>
+          <h2 className="px-3 pb-1 pt-2 text-xs font-semibold text-[var(--muted)]">{group.title}</h2>
           {group.items.map((item) => {
             const currentIndex = resultIndex++;
             return <button key={item.id} id={`command-${item.id}`} type="button" role="option" aria-selected={currentIndex === activeIndex} onMouseEnter={() => setActiveIndex(currentIndex)} onClick={() => selectResult(item)} className={`flex w-full items-center justify-between gap-4 rounded-xl px-3 py-2.5 text-left transition-colors ${currentIndex === activeIndex ? 'bg-blue-500/15 text-slate-100' : 'text-slate-300 hover:bg-white/[0.04]'}`}>
-              <span className="min-w-0"><span className="block truncate text-xs font-medium">{item.title}</span><span className="mt-0.5 block truncate text-[10px] text-slate-500">{item.subtitle}</span></span>
+              <span className="min-w-0"><span className="block truncate text-xs font-medium">{item.title}</span><span className="mt-0.5 block truncate text-xs text-slate-500">{item.subtitle}</span></span>
               {currentIndex === activeIndex && <CornerDownLeft aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-blue-200" />}
             </button>;
           })}
         </section>)}
         {!loading && !loadError && results.length === 0 && <p className="px-3 py-6 text-center text-xs text-slate-500">No matching pages or incidents.</p>}
-        {!loading && incidents?.length === 0 && !loadError && <p className="px-3 pb-3 text-center text-[10px] text-slate-500">No incidents are currently available.</p>}
+        {!loading && incidents?.length === 0 && !loadError && <p className="px-3 pb-3 text-center text-xs text-slate-500">No incidents are currently available.</p>}
       </div>
 
-      <div className="flex items-center justify-between border-t border-white/10 px-4 py-2.5 text-[9px] text-slate-500">
+      <div className="flex items-center justify-between border-t border-white/10 px-4 py-2.5 text-xs text-slate-500">
         <span>Press ? for keyboard shortcuts</span><span className="flex items-center gap-2"><span className="inline-flex items-center gap-1"><ArrowUp className="h-3 w-3" /><ArrowDown className="h-3 w-3" /> Navigate</span><span><CornerDownLeft className="mr-1 inline h-3 w-3" />Open</span></span>
       </div>
     </div>

@@ -137,15 +137,15 @@ function DetectionCell({ children, detectionId, flash }) {
 function OverviewTooltip({ active, payload, label, formatter }) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="min-w-36 rounded-xl border border-white/10 bg-slate-950/95 p-3 shadow-2xl backdrop-blur-xl">
-      {label != null && <p className="mb-2 text-[13px] font-normal text-slate-300">{label}</p>}
+    <div className="glass min-w-36 rounded-xl p-3 text-[var(--ink)]">
+      {label != null && <p className="mb-2 text-xs font-normal text-[var(--muted)]">{label}</p>}
       <div className="space-y-1.5">
         {payload.map((item, index) => {
           const formatted = formatter ? formatter(item.value, item.name, item) : [item.value, item.name];
           return (
-            <div key={`${item.dataKey || item.name}-${index}`} className="flex items-center justify-between gap-5 text-[11px]">
-              <span className="flex items-center gap-2 text-slate-300"><i aria-hidden="true" className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color || item.fill }} />{formatted[1] || item.name}</span>
-              <span className="soc-mono font-medium text-slate-100">{formatted[0]}</span>
+            <div key={`${item.dataKey || item.name}-${index}`} className="flex items-center justify-between gap-5 text-xs">
+              <span className="flex items-center gap-2 text-[var(--muted)]"><i aria-hidden="true" className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color || item.fill }} />{formatted[1] || item.name}</span>
+              <span className="soc-mono font-medium text-[var(--ink)]">{formatted[0]}</span>
             </div>
           );
         })}
@@ -154,7 +154,7 @@ function OverviewTooltip({ active, payload, label, formatter }) {
   );
 }
 
-export default function Overview({ onSelectIncident }) {
+export default function Overview({ onSelectIncident, onNavigateToIncidents }) {
   const root = useRef(null);
   const previousAlertIds = useRef(null);
   const flashResetTimer = useRef(null);
@@ -166,6 +166,7 @@ export default function Overview({ onSelectIncident }) {
   const [flashAlertIds, setFlashAlertIds] = useState(() => new Set());
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
+  const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
   const [activeSlice, setActiveSlice] = useState(null);
 
   useGSAP(() => {
@@ -224,6 +225,7 @@ export default function Overview({ onSelectIncident }) {
         previousAlertIds.current = nextIds;
         setStats(dashStats);
         setRecentAlerts(alerts);
+        setLastUpdatedAt(Date.now());
         setLoadError(false);
       } catch (err) {
         console.error('Failed to load overview data:', err);
@@ -284,15 +286,17 @@ export default function Overview({ onSelectIncident }) {
 
   return (
     <div ref={root} className="mx-auto w-full max-w-[1600px] space-y-6">
+      <header className="overview-entrance"><h1 className="font-display text-3xl font-bold leading-tight tracking-tight text-[var(--ink)]">Executive Overview Dashboard</h1><p className="mt-1 text-sm text-[var(--muted)]">Security posture, incident counts, and recent detection results</p></header>
       {loadError && (
         <div role="status" className="overview-entrance rounded-2xl border border-amber-400/25 bg-amber-400/[0.07] p-4 text-sm text-amber-100">
           <p className="font-semibold">Overview data could not be refreshed.</p>
           <p className="mt-1 text-xs text-slate-300">Showing the last successfully loaded results when available. The existing 10-second refresh will try again.</p>
         </div>
       )}
+      {lastUpdatedAt && <p className="overview-entrance -mt-3 text-xs text-slate-400" role="status" aria-live="polite">{loadError ? 'Data may be stale · ' : 'Updated · '}{new Date(lastUpdatedAt).toLocaleTimeString()}</p>}
       {stats?.total_detections === 0 && <div role="status" className="overview-entrance rounded-2xl border border-white/[0.08] bg-[var(--soc-panel)] p-4 text-sm text-slate-300">No detections yet. Ingest an event and run it through the detector to populate this view.</div>}
 
-      <FlowOrb totalEvents={stats?.total_events} layers={layers} incidents={incidents} incidentLoadError={incidentLoadError} extraKpis={extraKpis} />
+      <FlowOrb totalEvents={stats?.total_events} layers={layers} incidents={incidents} incidentLoadError={incidentLoadError} extraKpis={extraKpis} onReviewIncidents={onNavigateToIncidents} engineStatus={stats?.system_status || '—'} />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <Card className="overview-entrance min-w-0 p-5 sm:p-6 lg:col-span-2 transition-transform duration-200 hover:-translate-y-0.5">
@@ -301,7 +305,7 @@ export default function Overview({ onSelectIncident }) {
               <h2 className="text-sm font-semibold text-slate-100">Enterprise Risk Score Trend (Last 60 Min)</h2>
               <p className="mt-1 text-xs text-slate-400">Stored incident risk scores over time</p>
             </div>
-            <span className="flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-400/20 bg-emerald-400/[0.06] px-2.5 py-1 text-[11px] font-medium text-emerald-200">
+            <span className="flex shrink-0 items-center gap-1.5 rounded-full border border-emerald-400/20 bg-emerald-400/[0.06] px-2.5 py-1 text-xs font-medium text-emerald-200">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" /> API data
             </span>
           </div>
@@ -310,21 +314,13 @@ export default function Overview({ onSelectIncident }) {
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={riskTrend} margin={{ top: 10, right: 8, bottom: 0, left: -14 }}>
                   <defs>
-                    <linearGradient id={`${chartId}-risk-fill`} x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="var(--soc-critical)" stopOpacity={0.24} />
-                      <stop offset="95%" stopColor="var(--soc-critical)" stopOpacity={0.01} />
-                    </linearGradient>
-                    <filter id={`${chartId}-risk-glow`} x="-30%" y="-50%" width="160%" height="200%">
-                      <feGaussianBlur stdDeviation="3" result="blur" />
-                      <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-                    </filter>
                   </defs>
                   <CartesianGrid strokeDasharray="3 6" stroke={chartTheme.grid} vertical={false} />
                   <XAxis dataKey="time" tick={{ fill: chartTheme.axis, fontSize: 11, fontFamily: 'var(--soc-font-mono)' }} axisLine={false} tickLine={false} tickMargin={10} />
                   <YAxis domain={[0, 100]} tick={{ fill: chartTheme.axis, fontSize: 11, fontFamily: 'var(--soc-font-mono)' }} axisLine={false} tickLine={false} tickMargin={8} />
                   <Tooltip content={<OverviewTooltip formatter={(value) => [`${value}%`, 'Risk score']} />} cursor={{ stroke: 'rgba(148,163,184,.22)', strokeDasharray: '3 4' }} />
-                  <Area type="monotone" dataKey="risk" stroke="none" fill={`url(#${chartId}-risk-fill)`} isAnimationActive={!prefersReducedMotion()} animationDuration={850} />
-                  <Line type="monotone" dataKey="risk" stroke="var(--soc-critical)" strokeWidth={2.5} dot={{ r: 3, fill: 'var(--soc-critical)', stroke: 'var(--soc-panel)', strokeWidth: 2 }} activeDot={{ r: 6, fill: 'var(--soc-critical)', stroke: '#fff', strokeWidth: 2 }} filter={`url(#${chartId}-risk-glow)`} isAnimationActive={!prefersReducedMotion()} animationDuration={850} />
+                  <Area type="monotone" dataKey="risk" stroke="none" fill="rgba(37,53,240,.11)" isAnimationActive={!prefersReducedMotion()} animationDuration={400} />
+                  <Line type="monotone" dataKey="risk" stroke="var(--cobalt)" strokeWidth={2} dot={{ r: 3, fill: 'var(--cobalt)', stroke: 'var(--card)', strokeWidth: 2 }} activeDot={{ r: 6, fill: 'var(--cobalt)', stroke: '#fff', strokeWidth: 2 }} isAnimationActive={!prefersReducedMotion()} animationDuration={400} />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -344,6 +340,16 @@ export default function Overview({ onSelectIncident }) {
             <p className="mt-1 text-xs text-slate-400">MITRE ATT&CK &amp; Open-Set Classification</p>
           </div>
           {threatDistribution.length > 0 ? (
+            threatDistribution.length <= 6 ? <div className="mt-6 space-y-5" aria-label="Threat category breakdown chart">
+              {threatDistribution.map((item, index) => {
+                const maxValue = Math.max(1, ...threatDistribution.map((entry) => Number(entry.value) || 0));
+                const width = Math.max(0, Math.min(100, ((Number(item.value) || 0) / maxValue) * 100));
+                return <div key={`${item.name}-${index}`}>
+                  <div className="mb-2 flex items-center justify-between gap-3 text-sm"><span className="text-[var(--muted)]">{item.name}</span><span className="soc-mono text-[var(--ink)]">{item.value}</span></div>
+                  <div className="h-2 overflow-hidden rounded-full bg-[var(--line)]"><div className="h-full rounded-full" style={{ width: `${width}%`, backgroundColor: categoryColor(item.name) }} /></div>
+                </div>;
+              })}
+            </div> : (
             <>
               <div className="relative mt-2 h-48" aria-label="Threat category breakdown chart">
                 <ResponsiveContainer width="100%" height="100%">
@@ -359,7 +365,7 @@ export default function Overview({ onSelectIncident }) {
                       onMouseEnter={(_, index) => setActiveSlice(index)}
                       onMouseLeave={() => setActiveSlice(null)}
                       isAnimationActive={!prefersReducedMotion()}
-                      animationDuration={850}
+                      animationDuration={400}
                     >
                       {threatDistribution.map((entry, index) => {
                         const color = categoryColor(entry.name);
@@ -371,12 +377,12 @@ export default function Overview({ onSelectIncident }) {
                 </ResponsiveContainer>
                 <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center">
                   <span className="font-[family-name:var(--soc-font-display)] text-2xl font-semibold text-slate-50">{threatTotal.toLocaleString()}</span>
-                  <span className="mt-0.5 text-[13px] font-normal text-slate-300">Total</span>
+                  <span className="mt-0.5 text-xs font-normal text-slate-300">Total</span>
                 </div>
               </div>
               <div className="mt-2 flex flex-wrap gap-2">
                 {threatDistribution.slice(0, 4).map((item, index) => (
-                  <span key={`${item.name}-${index}`} className="inline-flex items-center gap-2 rounded-lg border border-white/[0.07] bg-white/[0.025] px-2.5 py-1.5 text-[11px] text-slate-300">
+                      <span key={`${item.name}-${index}`} className="inline-flex items-center gap-2 rounded-lg border border-[var(--line)] bg-[var(--chip)] px-2.5 py-1.5 text-xs text-[var(--muted)]">
                     <span aria-hidden="true" className="h-2 w-2 rounded-full" style={{ backgroundColor: categoryColor(item.name) }} />
                     <span>{item.name}</span>
                     <span className="soc-mono text-slate-100">{item.value}</span>
@@ -384,6 +390,7 @@ export default function Overview({ onSelectIncident }) {
                 ))}
               </div>
             </>
+            )
           ) : (
             <EmptyState
               icon={ShieldAlert}
@@ -398,14 +405,14 @@ export default function Overview({ onSelectIncident }) {
       <Card className="overview-entrance min-w-0 overflow-hidden p-0">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.07] px-5 py-4 sm:px-6">
           <div>
-            <h2 className="text-[22px] font-light text-slate-100">Recent Detection Results</h2>
-            <p className="mt-1 text-[14px] font-normal text-slate-300">Real-time open-set inference scores and attack probabilities</p>
+            <h2 className="text-xl font-light text-slate-100">Recent Detection Results</h2>
+            <p className="mt-1 text-sm font-normal text-slate-300">Real-time open-set inference scores and attack probabilities</p>
           </div>
-          <span className="flex items-center gap-1.5 text-[11px] text-slate-400"><Clock3 aria-hidden="true" className="h-3.5 w-3.5" /> Latest detection results</span>
+          <span className="flex items-center gap-1.5 text-xs text-slate-400"><Clock3 aria-hidden="true" className="h-3.5 w-3.5" /> Latest detection results</span>
         </div>
         <div className="max-h-[32rem] overflow-auto overscroll-contain">
-          <table className="w-full min-w-[980px] border-separate border-spacing-y-1.5 text-left text-[14px]">
-            <thead className="sticky top-0 z-10 bg-[var(--soc-panel)] text-[13px] font-normal text-slate-300 shadow-[0_1px_0_rgba(255,255,255,.06)]">
+          <table className="w-full min-w-[980px] border-separate border-spacing-y-1.5 text-left text-sm">
+            <thead className="sticky top-0 z-10 bg-[var(--soc-panel)] text-xs font-normal text-slate-300 shadow-[0_1px_0_rgba(255,255,255,.06)]">
               <tr>
                 <th scope="col" className="px-4 py-3">Verdict</th>
                 <th scope="col" className="px-4 py-3">Threat Category</th>
@@ -436,7 +443,7 @@ export default function Overview({ onSelectIncident }) {
                 const flash = flashAlertIds.has(alert.detection_id);
                 return (
                   <tr key={alert.detection_id} className="soc-table-row">
-                    <DetectionCell detectionId={alert.detection_id} flash={flash}><Badge tone={verdictTone(alert.verdict)} className="text-[13px]">{verdict.replace(/_/g, ' ')}</Badge></DetectionCell>
+                    <DetectionCell detectionId={alert.detection_id} flash={flash}><Badge tone={verdictTone(alert.verdict)} className="text-xs">{verdict.replace(/_/g, ' ')}</Badge></DetectionCell>
                     <DetectionCell detectionId={alert.detection_id} flash={flash}><span className="font-medium text-slate-200">{alert.predicted_class}</span></DetectionCell>
                     <DetectionCell detectionId={alert.detection_id} flash={flash}><span className="soc-mono text-slate-300">{alert.layer}</span></DetectionCell>
                     <DetectionCell detectionId={alert.detection_id} flash={flash}><span className="tabular-nums">{alert.score == null || !Number.isFinite(Number(alert.score)) ? '—' : Number(alert.score).toFixed(2)}</span></DetectionCell>

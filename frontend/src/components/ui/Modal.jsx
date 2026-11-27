@@ -23,8 +23,8 @@ export default function Modal({ open, onClose, title, children, side = false, cl
   }, [open]);
 
   if (!open) return null;
-  return <div className={`fixed inset-0 z-50 flex ${side ? 'justify-end' : 'items-center justify-center'} bg-black/65 p-3 backdrop-blur-sm`} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose?.(); }}>
-    <section ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={title} className={`glass-panel max-h-full w-full ${side ? 'overflow-hidden flex flex-col' : 'overflow-y-auto'} overscroll-contain rounded-2xl ${side ? 'max-w-2xl rounded-r-none' : 'max-w-2xl'} ${className}`}>
+  return <div className={`fixed inset-0 z-50 flex ${side ? 'justify-end' : 'items-center justify-center'} bg-[rgba(18,20,28,.28)] p-3 backdrop-blur-[6px]`} onMouseDown={(event) => { if (event.target === event.currentTarget) onClose?.(); }}>
+    <section ref={dialogRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={title} className={`glass glass--strong max-h-full w-full ${side ? 'modal-side overflow-hidden flex flex-col' : 'overflow-y-auto'} overscroll-contain rounded-[26px] ${side ? 'max-w-2xl rounded-r-none' : 'max-w-2xl'} ${className}`}>
       {title && <h2 className="sr-only">{title}</h2>}{children}
     </section>
   </div>;

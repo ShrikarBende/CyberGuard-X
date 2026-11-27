@@ -56,9 +56,9 @@ export default function StatCard({ label, value, formatValue, detail, className 
         : String(displayValue ?? '—');
 
   return <GlassCard className={`flex min-h-36 flex-col justify-between p-5 ${className}`}>
-    <span className="text-[13px] font-normal text-slate-300">{label}</span>
+    <span className="text-xs font-medium text-[var(--muted)]">{label}</span>
     <div className="mt-3 flex items-end justify-between gap-3">
-      <span className="font-display text-5xl font-light leading-none tracking-tight tabular-nums text-slate-50">{shown}</span>
+      <span className="font-display text-7xl font-semibold leading-none tracking-[-.05em] tabular-nums text-[var(--ink)]">{shown}</span>
       {detail}
     </div>
   </GlassCard>;
