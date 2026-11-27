@@ -70,9 +70,43 @@ Model-family presence does not imply independently validated production performa
 - Scenario coverage: four interactive scenarios load by default (`multi_stage_takeover`, `brute_force_only`, `benign_admin`, `normal_employee_day`). `generate_all_taxonomy_scenarios()` additionally supplies the twelve named synthetic threat scenarios of the target taxonomy plus the two benign scenarios. These are developer-authored rule/demo fixtures, **not** captured attack data or benchmark coverage; `unknown_novel_zero_day` is only a synthetic proxy.
 - On-demand signed TreeSHAP explanations for supported CICIDS detections.
 - Read-only five-step RAG investigations (`retrieve → analyze → map → summarize → recommend`) with cited evidence, evidence-gated ATT&CK mapping, and human-approval-only recommendations.
+- **Agentic investigation (opt-in):** a separate bounded, tool-using investigation layer; the existing five-step RAG workflow remains deterministic. It saves an evidence-linked report and stages optional actions for human review. Approval is dry-run only and never executes a response. See the usage, privacy, limits, and role details below.
 - Curated ATT&CK technique references are versioned in `backend/app/rag/knowledge_metadata.json` against Enterprise ATT&CK v20.1 (reference verified 2026-11-19). They are a project-curated subset, not a complete synchronized catalog; ingesting MITRE Detection Strategies/Analytics is planned, not implemented.
 - Live event updates over WebSockets, incident review queue, evaluation summary page, and prepared held-out replay through the live engine.
 - Background model retraining for the `light` and `medium` profiles. A completed artifact replaces its profile bundle atomically; a failed job leaves the prior bundle in place.
+
+## Agentic investigation (opt-in)
+
+The agent investigates a selected incident through a bounded sequence of allowlisted tools and writes a report grounded in evidence returned during that run. The deterministic five-step RAG investigation is still available and unchanged. Agent reports are advisory; this feature does not claim to improve detection or analyst outcomes.
+
+Enable the layer with `AGENT_ENABLED=true`. Blank `AGENT_LLM_*` values inherit their corresponding `LLM_*` settings. OpenAI-compatible hosted services can use a URL and key; local Ollama can use a URL with no key. Never put credentials in `.env.example` or tracked files.
+
+| Setting | Default | Purpose |
+|---|---:|---|
+| `AGENT_ENABLED` | `false` | Opt in to agent endpoints. |
+| `AGENT_TOOL_MODE` | `native` | Native provider tools, with JSON-mode fallback after an unsupported native request. |
+| `AGENT_LLM_API_URL` | inherited / blank | OpenAI-compatible chat completions URL; URL-only local service is supported. |
+| `AGENT_LLM_API_KEY` | inherited / blank | Provider key; optional for local URL-only models. |
+| `AGENT_LLM_MODEL` | inherited / blank | Model name sent to the provider. |
+| `AGENT_MAX_STEPS` | `6` | LLM turns; hard ceiling `12`. |
+| `AGENT_MAX_TOOL_CALLS` | `12` | Tool calls; hard ceiling `30`. |
+| `AGENT_WALL_SECONDS` | `90` | Run wall time; hard ceiling `300` seconds. |
+| `AGENT_RESULT_CHARS` | `6000` | Per-tool result size; hard ceiling `20000` characters. |
+| `AGENT_MAX_CONCURRENT_RUNS` | `2` | Concurrent runs; hard ceiling `4`, with one run per incident. |
+| `AGENT_MAX_OUTPUT_TOKENS` | `1500` | Maximum provider output tokens per request. |
+| `AGENT_EXECUTION_MODE` | `dry_run` | Only supported execution mode; approvals are simulated. |
+| `AGENT_ALLOW_SELF_APPROVAL` | `false` | Demo-only opt-in for requester self-review; otherwise a different analyst is required, including for admins. |
+| `AGENT_PROPOSAL_TTL_HOURS` | `24` | Pending proposal lifetime before lazy expiry. |
+
+Authenticated users can read agent configuration, run summaries/details, and the proposal queue. Analysts and admins can start/cancel runs and approve or reject proposals. By default the requester cannot decide their own proposal. Approval records a simulated result only; no containment action is executed. Proposals for `RESOLVED` or `FALSE_POSITIVE` incidents cannot be approved.
+
+Routes are `GET /api/agent/config`, `POST /api/incidents/{incident_id}/agent-investigate`, `GET /api/agent/runs`, `GET /api/agent/runs/{run_id}`, `POST /api/agent/runs/{run_id}/cancel`, `GET /api/agent/proposals`, and the decision routes `POST /api/agent/proposals/{proposal_id}/approve` and `/api/agent/proposals/{proposal_id}/reject`. Run details include the persisted step trace; run-list responses omit steps.
+
+The configured provider receives the system instructions, incident and event identifiers, and any evidence requested by the tools. Evidence can include user IDs and usernames, device IDs and hostnames, source/destination IPs, event type/category, process names, scenarios, URLs/URIs, command lines, file paths, raw-payload text excerpts, detector summaries, and retrieved knowledge chunks. Only selected tools and fields are sent for a run, but telemetry can contain sensitive operational data. A local Ollama-compatible endpoint can keep these requests within the local environment by setting `AGENT_LLM_API_URL` to its chat-completions endpoint and leaving the key blank.
+
+Runs may finish as `completed`, `completed_fallback`, `limit_reached`, `failed`, or `cancelled`. Fallback and limit-reached runs include the deterministic baseline; step/tool limits request a final report using retrieved evidence when possible. Run coordination is process-local, so the agent layer supports one backend worker only.
+
+**Status:** implemented; measured results are in [docs/agent/RESULTS.md](docs/agent/RESULTS.md). The default FakeLLM run measures plumbing and guard behavior only; it does not measure real-model investigation quality.
 
 ### Hardening changes (implemented, pending re-evaluation)
 
@@ -116,12 +150,14 @@ Backend, from the repository root:
 ```powershell
 python -m pip install -r backend/requirements.txt
 cd backend
-uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --no-proxy-headers
 ```
+
+Uvicorn access logs show the immediate proxy peer address; the application applies its configured trusted-proxy policy separately for login attribution.
 
 The API health URL is [http://127.0.0.1:8000/api/health](http://127.0.0.1:8000/api/health). API docs are at `/docs`; live events use `ws://127.0.0.1:8000/ws/live-events`.
 
-SQLite is the default for local development and CI (`DATABASE_URL=sqlite:///./cyberguardx.db`). PostgreSQL is supported through SQLAlchemy with `postgresql+psycopg2://...`; the Compose deployment starts PostgreSQL with a healthcheck and waits for it before starting the backend. Run `alembic upgrade head` from `backend/` to apply schema migrations.
+SQLite is the only supported database for local development, CI, and the demonstration Compose deployment. Direct backend runs use `DATABASE_URL=sqlite:///./cyberguardx.db`; Compose sets `sqlite:////app/data/cyberguardx.db` in a dedicated persistent named volume. Run `alembic upgrade head` from `backend/` to apply schema migrations.
 
 ## Analyst accounts and permissions
 
@@ -149,7 +185,7 @@ It writes a stratified 3,000-row sample to `backend/datasets/replay/replay_sampl
 
 ## Docker deployment
 
-Copy `.env.example` to `.env`, then set non-empty `SECRET_KEY` and `POSTGRES_PASSWORD` values. The example shows a URL-safe hex generator for both. Compose stops with a clear error if either value is missing.
+Copy `.env.example` to `.env`, then set a non-empty `SECRET_KEY`. The example shows a URL-safe hex generator. For first startup on an empty database, either set both `ADMIN_USERNAME` and `ADMIN_PASSWORD` for one-time administrator bootstrap or create the administrator separately after startup. Compose stops with a clear error if `SECRET_KEY` is missing.
 
 ```powershell
 docker compose up --build
@@ -157,7 +193,9 @@ docker compose up --build
 
 The frontend container serves the UI and proxies `/api` and `/ws` to the backend. Its backend health check uses `/api/health`. Open [http://localhost:3000](http://localhost:3000).
 
-Compose uses the PostgreSQL service and persistent `pgdata` volume. Set `DATABASE_URL` to a SQLite URL instead when running the backend directly for local development or CI.
+Compose uses the persistent Docker volume `cyberguardx_demo_sqlite_data`, mounted at `/app/data`; the backend database path is fixed to `/app/data/cyberguardx.db` and cannot be overridden by `DATABASE_URL` from `.env`. A new empty volume produces a fresh database, and application startup applies Alembic migrations automatically. When retaining demo data, back up the runtime database together with its SQLite WAL/SHM sidecars while writers are quiesced. Do not use `docker compose down -v` when preserving the volume.
+
+The frontend serves the UI and proxies `/api` and `/ws` to the backend. The backend is bound to localhost on port 8000; the frontend is published on port 3000. The backend container is configured for one Uvicorn worker: upload, retrain, evaluation, replay, WebSocket, login-throttle, and agent coordination state is process-local. Running multiple workers or replicas is unsupported until these registries and broadcasts use shared coordination. SQLite serializes writes, so concurrent write-heavy demo jobs can contend; agent runs are persisted and interrupted `running` jobs are marked failed after restart, while other background-job status registries are lost on restart.
 
 ## Results
 
@@ -267,6 +305,7 @@ Generated from completed JSON files in `backend/ml/evaluation/results/`. Means a
 - **Proxy labels.** TFT, GAT, and fusion estimates are weakly supervised or synthetic proxies. The endpoint bundle has no labeled benign-versus-Atomic-Red-Team evaluation; separate capture directories are required.
 - **No ablation yet.** The benefit of cross-layer fusion over single branches has not been measured. Correlation thresholds and the twelve-scenario taxonomy are developer-written demo values, not calibrated or captured attack data.
 - **RAG coverage is limited.** Both retrieval suites are developer-authored, and the support score is an extractive proxy, not human-judged factual faithfulness.
+- The agent layer is opt-in and its FakeLLM evaluation measures plumbing only. Real-model investigation quality, latency, and resistance to prompt injection remain unevaluated. Agent reports are advisory, cite only evidence returned in that run, and preserve the repo's synthetic and proxy-label caveats.
 - **Pending metrics.** Per-class AUPRC, Cohen's kappa, balanced accuracy, and the standalone OSCR/FPR95 summary are emitted by new runs but not yet recorded for the saved artifacts.
 
 ## Planned next steps
@@ -279,8 +318,19 @@ Generated from completed JSON files in `backend/ml/evaluation/results/`. Means a
 
 ## Tests
 
-Run the backend suite with:
+Run the backend suite from the repository root:
 
 ```powershell
 python -m pytest backend/tests -v
 ```
+
+Run the frontend checks from `frontend/`:
+
+```powershell
+npm ci
+npm test
+npm run lint
+npm run build
+```
+
+The application and CI use SQLite. PostgreSQL URLs are rejected by the backend; there is no PostgreSQL service or conversion utility in this project.
