@@ -5,6 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from ml.datasets import adapters
 from ml.datasets.adapters import CSECICIDS2018Adapter, UNSWNB15Adapter, normalize_cse_label
 from ml.evaluation.cross_dataset import (
     _prepare_pair, cross_dataset_evaluation, cse_capture_day_evaluation,
@@ -66,7 +67,7 @@ def test_cse_adapter_rejects_bad_numeric_features(tmp_path):
 
 
 def test_cse_adapter_drops_nonfinite_rate_rows_and_logs_exact_count(tmp_path, caplog):
-    caplog.set_level(logging.INFO)
+    caplog.set_level(logging.INFO, logger=adapters.logger.name)
     path = tmp_path / "Wednesday-14-02-2018.csv"
     _fixture_capture(path, ["BENIGN", "Bot", "BENIGN", "Bot", "BENIGN", "Bot", "BENIGN"])
     frame = pd.read_csv(path)
@@ -74,7 +75,11 @@ def test_cse_adapter_drops_nonfinite_rate_rows_and_logs_exact_count(tmp_path, ca
     frame["Flow Pkts/s"] = [1.0, 1.0, -np.inf, 4.0, 5.0, 6.0, 7.0]
     frame.to_csv(path, index=False)
 
-    result = CSECICIDS2018Adapter(root=tmp_path, read_chunk_rows=2).load_capture(path)
+    adapters.logger.addHandler(caplog.handler)
+    try:
+        result = CSECICIDS2018Adapter(root=tmp_path, read_chunk_rows=2).load_capture(path)
+    finally:
+        adapters.logger.removeHandler(caplog.handler)
 
     assert len(result) == 4
     assert result["Label"].tolist() == ["BENIGN", "Bot", "BENIGN", "BENIGN"]
@@ -83,6 +88,7 @@ def test_cse_adapter_drops_nonfinite_rate_rows_and_logs_exact_count(tmp_path, ca
     assert result["Flow Bytes/s"].dtype == np.float32
     assert result["Flow Packets/s"].dtype == np.float32
     assert np.isfinite(result[["Flow Bytes/s", "Flow Packets/s"]].to_numpy()).all()
+    assert caplog.text
     assert "dropped exactly 3 rows" in caplog.text
 
 
