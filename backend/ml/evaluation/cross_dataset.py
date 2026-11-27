@@ -91,19 +91,23 @@ def evaluate_frames(train: pd.DataFrame, test: pd.DataFrame, *, seed: int = 42,
     }
 
 
-def cross_dataset_evaluation(cicids2017: pd.DataFrame, cse2018: pd.DataFrame, *, seed: int = 42) -> dict:
+def cross_dataset_evaluation(cicids2017: pd.DataFrame, cse2018: pd.DataFrame, *, seed: int = 42,
+                             model_factory: Callable | None = None) -> dict:
     """Run both CICIDS2017→2018 and 2018→CICIDS2017 directions."""
     return {
         "protocol": "cross-dataset, train CICIDS2017 test CSE-CIC-IDS2018 (and reverse)",
         "seed": int(seed),
         "directions": {
-            "CICIDS2017_to_CSE-CIC-IDS2018": evaluate_frames(cicids2017, cse2018, seed=seed),
-            "CSE-CIC-IDS2018_to_CICIDS2017": evaluate_frames(cse2018, cicids2017, seed=seed),
+            "CICIDS2017_to_CSE-CIC-IDS2018": evaluate_frames(cicids2017, cse2018, seed=seed,
+                                                              model_factory=model_factory),
+            "CSE-CIC-IDS2018_to_CICIDS2017": evaluate_frames(cse2018, cicids2017, seed=seed,
+                                                              model_factory=model_factory),
         },
     }
 
 
-def cse_capture_day_evaluation(adapter: CSECICIDS2018Adapter | None = None, *, seed: int = 42) -> dict:
+def cse_capture_day_evaluation(adapter: CSECICIDS2018Adapter | None = None, *, seed: int = 42,
+                               model_factory: Callable | None = None) -> dict:
     """Leave one filename-derived capture day out; files from one day stay grouped."""
     adapter = adapter or CSECICIDS2018Adapter()
     inventory = adapter.capture_inventory()
@@ -120,7 +124,8 @@ def cse_capture_day_evaluation(adapter: CSECICIDS2018Adapter | None = None, *, s
     for held_out in days:
         train = pd.concat([f for day, items in frames_by_day.items() if day != held_out for f in items], ignore_index=True)
         test = pd.concat(frames_by_day[held_out], ignore_index=True)
-        folds.append({"held_out_capture_day": held_out, **evaluate_frames(train, test, seed=seed)})
+        folds.append({"held_out_capture_day": held_out,
+                      **evaluate_frames(train, test, seed=seed, model_factory=model_factory)})
     return {
         "protocol": "CSE-CIC-IDS2018 leave-one-capture-day-out",
         "n_capture_days": len(days), "capture_days": days, "seed": int(seed), "folds": folds,

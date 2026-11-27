@@ -5,7 +5,9 @@ import pandas as pd
 import pytest
 
 from ml.datasets.adapters import CSECICIDS2018Adapter, UNSWNB15Adapter, normalize_cse_label
-from ml.evaluation.cross_dataset import _prepare_pair, cse_capture_day_evaluation
+from ml.evaluation.cross_dataset import (
+    _prepare_pair, cross_dataset_evaluation, cse_capture_day_evaluation,
+)
 
 
 def _fixture_capture(path: Path, labels):
@@ -81,6 +83,51 @@ def test_cse_multicapture_requires_multiple_named_days(tmp_path):
     _fixture_capture(tmp_path / "2018-02-14.csv", ["BENIGN", "Bot"])
     with pytest.raises(ValueError, match="at least two date-identifiable"):
         cse_capture_day_evaluation(CSECICIDS2018Adapter(root=tmp_path))
+
+
+def _majority_model(x_train, y_train, _x_val, _y_val, _classes, _seed):
+    prediction = int(np.bincount(y_train).argmax())
+
+    class Model:
+        def predict(self, values):
+            return np.full(len(values), prediction, dtype=np.int64)
+
+    return Model()
+
+
+def _canonical_fixture(labels):
+    return pd.DataFrame({
+        "Flow Duration": np.arange(len(labels), dtype=float) + 1,
+        "Flow IAT Mean": np.ones(len(labels)), "Flow IAT Std": np.ones(len(labels)),
+        "Total Length of Fwd Packets": np.arange(len(labels), dtype=float) + 10,
+        "Total Length of Bwd Packets": np.arange(len(labels), dtype=float) + 2,
+        "Destination Port": np.full(len(labels), 443), "Label": labels,
+    })
+
+
+def test_cross_dataset_evaluation_runs_both_transfer_directions():
+    labels = ["BENIGN"] * 10 + ["Bot"] * 10
+    result = cross_dataset_evaluation(
+        _canonical_fixture(labels), _canonical_fixture(labels),
+        model_factory=_majority_model,
+    )
+    assert result["protocol"].startswith("cross-dataset")
+    assert set(result["directions"]) == {
+        "CICIDS2017_to_CSE-CIC-IDS2018", "CSE-CIC-IDS2018_to_CICIDS2017",
+    }
+    assert all(row["test_rows"] == 20 for row in result["directions"].values())
+
+
+def test_cse_leave_one_capture_day_out_keeps_each_day_held_out(tmp_path):
+    labels = ["BENIGN"] * 8 + ["Bot"] * 8
+    _fixture_capture(tmp_path / "2018-02-14.csv", labels)
+    _fixture_capture(tmp_path / "2018-02-15.csv", labels)
+    result = cse_capture_day_evaluation(
+        CSECICIDS2018Adapter(root=tmp_path), model_factory=_majority_model,
+    )
+    assert result["n_capture_days"] == 2
+    assert [fold["held_out_capture_day"] for fold in result["folds"]] == ["2018-02-14", "2018-02-15"]
+    assert all(fold["test_rows"] == 16 for fold in result["folds"])
 
 
 def test_unsw_adapter_is_optional_and_reports_its_local_files(tmp_path):

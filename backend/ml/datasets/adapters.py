@@ -73,6 +73,7 @@ _LABELS = {
     "dos attacks-hulk": "DosDDoS", "dos attacks-slowhttptest": "DosDDoS",
     "dos attacks-goldeneye": "DosDDoS", "dos attacks-slowloris": "DosDDoS",
     "ddos attacks-loic-http": "DosDDoS", "ddos attacks-hoic": "DosDDoS",
+    "ddos attack-loic-http": "DosDDoS", "ddos attack-hoic": "DosDDoS",
     "infiltration": "Infiltration", "portscan": "PortScan",
 }
 _DATE = re.compile(r"(?<!\d)(20\d{2})[-_]?([01]\d)[-_]?([0-3]\d)(?!\d)")
