@@ -775,6 +775,56 @@ def get_cicids_dataset_info():
     }
 
 
+def _build_fusion_feedback_samples(feedback_activities: list[Any]) -> list[dict[str, Any]]:
+    """Build fusion retraining samples, keeping only the latest feedback per incident."""
+    raw_fusion: list[tuple[Any, dict[str, Any]]] = []
+    for item in feedback_activities:
+        if isinstance(item, dict):
+            details = dict(item)
+            target_id = details.get("source_incident_id") or details.get("incident_id") or details.get("target_id")
+        else:
+            details = dict(getattr(item, "details", None) or {})
+            target_id = (
+                details.get("source_incident_id")
+                or details.get("incident_id")
+                or getattr(item, "target_id", None)
+            )
+        if details.get("fusion_features"):
+            raw_fusion.append((target_id, details))
+
+    raw_count = len(raw_fusion)
+    latest_by_incident: dict[Any, dict[str, Any]] = {}
+    unkeyed: list[dict[str, Any]] = []
+    for incident_key, sample in raw_fusion:
+        if incident_key is not None and str(incident_key).strip():
+            latest_by_incident[str(incident_key)] = sample
+        else:
+            unkeyed.append(sample)
+
+    deduplicated = list(latest_by_incident.values()) + unkeyed
+    label_balance: dict[str, int] = {}
+    for sample in deduplicated:
+        label = sample.get("label")
+        if label is None:
+            target = sample.get("target")
+            if target == 1:
+                label = "CONFIRMED"
+            elif target == 0:
+                label = "FALSE_POSITIVE"
+            else:
+                label = "unknown"
+        key = str(label)
+        label_balance[key] = label_balance.get(key, 0) + 1
+
+    logger.info(
+        "Fusion retrain feedback: raw_rows=%d, deduplicated_rows=%d, label_balance=%s",
+        raw_count,
+        len(deduplicated),
+        label_balance,
+    )
+    return deduplicated
+
+
 @router.post("/models/retrain")
 def retrain_model(
     request: RetrainRequest,
@@ -799,6 +849,7 @@ def retrain_model(
 
     def run_training():
         feedback_db = None
+        feedback_activities = []
         feedback_samples = []
         before_metrics = {}
         try:
@@ -817,6 +868,7 @@ def retrain_model(
                     except Exception:
                         pass
                 logger.warning("Could not load analyst feedback for retraining; proceeding without it", exc_info=True)
+                feedback_activities = []
                 feedback_samples = []
             if target.is_file():
                 try:
@@ -853,7 +905,7 @@ def retrain_model(
             install_info = archive_and_install_signed_bundle(
                 trained_path, staged_bundle, target, backup_tag=job_id[:8]
             )
-            fusion_feedback = [sample for sample in feedback_samples if sample.get("fusion_features")]
+            fusion_feedback = _build_fusion_feedback_samples(feedback_activities)
             fusion_metrics = None
             if fusion_feedback:
                 from ml.fusion_meta import ARTIFACT_PATH as FUSION_ARTIFACT_PATH
