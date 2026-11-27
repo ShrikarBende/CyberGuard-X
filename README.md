@@ -157,7 +157,7 @@ Uvicorn access logs show the immediate proxy peer address; the application appli
 
 The API health URL is [http://127.0.0.1:8000/api/health](http://127.0.0.1:8000/api/health). API docs are at `/docs`; live events use `ws://127.0.0.1:8000/ws/live-events`.
 
-SQLite is used for local development, CI, and the Compose demonstration. Compose stores its runtime database in the `cyberguardx_demo_sqlite_data` named volume. The backend database URL and Alembic migrations also support PostgreSQL, and a separate staging-only recovery utility exists; the current Compose file does not start PostgreSQL. Run `alembic upgrade head` from `backend/` to apply schema migrations.
+The application runtime supports SQLite only. `backend/app/database/session.py` rejects non-SQLite `DATABASE_URL` values with `ValueError` during startup, and a regression test covers PostgreSQL URLs. SQLite is used for local development, CI, and the Compose demonstration, which stores its database in the `cyberguardx_demo_sqlite_data` named volume. PostgreSQL application-runtime support is a planned Phase 5 upgrade; the separate staging-only recovery utility does not provide runtime PostgreSQL support. Run `alembic upgrade head` from `backend/` to apply schema migrations.
 
 ## Analyst accounts and permissions
 
@@ -345,4 +345,4 @@ npm run lint
 npm run build
 ```
 
-The application and CI tests primarily use isolated SQLite databases, and the current Compose demonstration uses a persistent SQLite volume. PostgreSQL URLs are supported by the database configuration and migrations, but Compose does not start a PostgreSQL service. The separate SQLite-to-PostgreSQL recovery utility is staging-only and requires its own approved target, server allowlist, and cluster identity; it is not run by the standard test suite or Compose startup. See [the recovery procedure](docs/SQLITE_TO_POSTGRES_RECOVERY.md) and [operations guide](docs/OPERATIONS.md) for their safeguards and boundaries.
+The application runtime and CI tests use SQLite; the Compose demonstration uses a persistent SQLite volume. The runtime explicitly rejects PostgreSQL URLs at startup. PostgreSQL application-runtime support remains a planned Phase 5 upgrade. The separate SQLite-to-PostgreSQL recovery utility is staging-only and requires its own approved target, server allowlist, and cluster identity; it is not runtime database support and is not run by the standard test suite or Compose startup. See [the recovery procedure](docs/SQLITE_TO_POSTGRES_RECOVERY.md) and [operations guide](docs/OPERATIONS.md) for their safeguards and boundaries.
