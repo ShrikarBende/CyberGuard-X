@@ -157,7 +157,11 @@ Uvicorn access logs show the immediate proxy peer address; the application appli
 
 The API health URL is [http://127.0.0.1:8000/api/health](http://127.0.0.1:8000/api/health). API docs are at `/docs`; live events use `ws://127.0.0.1:8000/ws/live-events`.
 
+<<<<<<< HEAD
 SQLite is used for local development and CI (`DATABASE_URL=sqlite:///./cyberguardx.db`). The demonstration Compose deployment uses PostgreSQL; PostgreSQL remains supported by SQLAlchemy and the recovery tooling. Run `alembic upgrade head` from `backend/` to apply schema migrations.
+=======
+SQLite is the supported database for local development, CI, and Compose (`DATABASE_URL=sqlite:///./cyberguardx.db`). Compose stores its database in the `cyberguardx_demo_sqlite_data` named volume. Run `alembic upgrade head` from `backend/` to apply schema migrations.
+>>>>>>> b536072 (Add SQLite WAL hardening, backup/restore CLI, contention benchmark, and OPERATIONS.md)
 
 ## Analyst accounts and permissions
 
@@ -185,7 +189,11 @@ It writes a stratified 3,000-row sample to `backend/datasets/replay/replay_sampl
 
 ## Docker deployment
 
+<<<<<<< HEAD
 Copy `.env.example` to `.env`, then set non-empty `SECRET_KEY` and `POSTGRES_PASSWORD` values. The example includes a URL-safe hex generator. For first startup on an empty database, either set both `ADMIN_USERNAME` and `ADMIN_PASSWORD` for one-time administrator bootstrap or create the administrator separately after startup. Compose stops with a clear error if either required value is missing.
+=======
+Copy `.env.example` to `.env`, then set a non-empty `SECRET_KEY`. The example includes a URL-safe hex generator. For first startup on an empty database, either set both `ADMIN_USERNAME` and `ADMIN_PASSWORD` for one-time administrator bootstrap or create the administrator separately after startup. Compose stops with a clear error if `SECRET_KEY` is missing.
+>>>>>>> b536072 (Add SQLite WAL hardening, backup/restore CLI, contention benchmark, and OPERATIONS.md)
 
 ```powershell
 docker compose up --build
@@ -193,7 +201,11 @@ docker compose up --build
 
 The frontend container serves the UI and proxies `/api` and `/ws` to the backend. Its backend health check uses `/api/health`. Open [http://localhost:3000](http://localhost:3000).
 
+<<<<<<< HEAD
 Compose starts PostgreSQL 16 with database `cyberguardx`, stores its data in the dedicated named volume `cyberguardx_postgres_data`, and publishes host port 5433 on localhost only. The backend connects to `postgres:5432` over the internal `backend_database` network. Application startup applies Alembic migrations automatically. Before first deployment, confirm the named volume does not already exist; Compose reuses an existing named volume and does not guarantee it is empty. The SQLite recovery folder contains SQLite files, not a PostgreSQL data directory or dump, and Compose will not import that data. Populating PostgreSQL from the recovery copy requires the separate, reviewed conversion process. Preserve the SQLite original and recovery copy; do not mount them into the PostgreSQL service. Do not use `docker compose down -v` when preserving the PostgreSQL volume.
+=======
+Compose mounts the live database at `/app/data/cyberguardx.db` in the persistent named volume `cyberguardx_demo_sqlite_data`; startup applies Alembic migrations automatically. Compose reuses an existing named volume. Do not use `docker compose down -v` when preserving the database. See [docs/OPERATIONS.md](docs/OPERATIONS.md) for the supported single-backend operating boundary, concurrency results, and backup/restore procedure.
+>>>>>>> b536072 (Add SQLite WAL hardening, backup/restore CLI, contention benchmark, and OPERATIONS.md)
 
 The frontend serves the UI and proxies `/api` and `/ws` to the backend. The backend is bound to localhost on port 8000; the frontend is published on port 3000. The backend container is configured for one Uvicorn worker: upload, retrain, evaluation, replay, WebSocket, login-throttle, and agent coordination state is process-local. Running multiple workers or replicas is unsupported until these registries and broadcasts use shared coordination. Agent runs are persisted and interrupted `running` jobs are marked failed after restart; the other background-job status registries are lost on restart.
 
@@ -340,4 +352,8 @@ npm run lint
 npm run build
 ```
 
+<<<<<<< HEAD
 The application and CI tests primarily use isolated SQLite databases. The Compose demonstration uses PostgreSQL. The separate SQLite-to-PostgreSQL recovery utility is staging-only and requires its own approved target, server allowlist, and cluster identity; it is not run by the standard test suite or Compose startup. See [the recovery procedure](docs/SQLITE_TO_POSTGRES_RECOVERY.md) for its safeguards and approval boundaries.
+=======
+The application and CI use SQLite. PostgreSQL URLs are rejected by the backend; there is no PostgreSQL service in Compose. See [docs/OPERATIONS.md](docs/OPERATIONS.md) for SQLite backup, restore, and scaling limits.
+>>>>>>> b536072 (Add SQLite WAL hardening, backup/restore CLI, contention benchmark, and OPERATIONS.md)

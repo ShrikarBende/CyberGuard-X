@@ -45,9 +45,9 @@ from ml.evaluation.open_set_pipeline import threshold_from_known_validation, kno
 
 # ─── Fixtures (cached across tests in session) ───────────────────────────────
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def pipeline():
-    """Load a deterministic CICIDS sample for pipeline invariants under CI memory limits."""
+    """Load one deterministic CICIDS sample for module-level pipeline invariants."""
     return build_full_pipeline(force_reload=False, seed=42, sample=0.15)
 
 

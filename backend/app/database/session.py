@@ -24,9 +24,13 @@ def resolve_database_url(database_url: str):
 
 
 database_url = resolve_database_url(settings.DATABASE_URL)
+SQLITE_BUSY_TIMEOUT_MS = 10_000
 engine = create_engine(
     database_url,
-    connect_args={"check_same_thread": False},
+    connect_args={
+        "check_same_thread": False,
+        "timeout": SQLITE_BUSY_TIMEOUT_MS / 1000,
+    },
     pool_pre_ping=True
 )
 @event.listens_for(engine, "connect")
@@ -34,6 +38,8 @@ def _enable_sqlite_pragmas(connection, _record):
     cursor = connection.cursor()
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
+    cursor.execute("PRAGMA synchronous=NORMAL")
     cursor.close()
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

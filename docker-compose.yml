@@ -55,4 +55,3 @@ networks:
       config:
         - subnet: 10.254.254.0/28
           gateway: 10.254.254.1
-
