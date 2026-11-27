@@ -72,3 +72,50 @@ No fusion-improvement claim is made. Endpoint captures, user sequences, UNSW gra
 The holdout manifest and frozen network baseline were hashed for integrity verification only; they were not modified, used for training, or scored.
 
 A valid rerun requires one independently labeled multi-modal cohort with aligned user, device, and capture/scenario identifiers. Split those entities into train, calibration, and test groups first; generate out-of-fold branch scores for training entities; fit/calibrate Fusion on training groups only; then compare each standalone branch and Fusion on the exact same untouched test entities.
+## Controlled ablation 3: RAG retrieval and analyst-query benchmark
+
+Artifact: [`rag_ablation_20261127T102823Z.json`](../backend/ml/evaluation/results/rag_ablation_20261127T102823Z.json).
+Scope: curated local knowledge base plus 50-case labeled RAG benchmark; 20 existing direct mapping questions and 15 existing multi-hop questions from the repository test benchmark, plus 15 labeled evidence-missing, prompt-injection, and remediation-refusal cases authored for this evaluation.
+Knowledge-base SHA-256: `2b4691081d8d30f49f6128b85cf8e37ef106a8edc4f76bbe97a541adf4f042da`. Execution was deterministic and local-only: precomputed local chunk vectors and cached embedding model only; no LLM or live service was invoked.
+Technique labels: Expected source files and technique sets are explicit benchmark labels; multi-hop technique sets are analyst-authored annotations. Abstention/refusal labels are policy test expectations, not field analyst judgments.
+
+### Retrieval and answer-quality metrics
+
+Values are means with 95% query-bootstrap confidence intervals. All retrieval configurations use the identical 50 queries and local chunk corpus.
+
+| Retrieval configuration | Hit@1 | Hit@3 | MRR | Technique precision | Technique recall | Technique F1 | Citation grounding | Abstention/refusal accuracy |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| Dense cosine | 0.560 (0.420–0.700) | 0.720 (0.580–0.840) | 0.630 (0.503–0.750) | 0.593 (0.512–0.675) | 0.906 (0.815–0.981) | 0.716 (0.641–0.781) | 1.000 (1.000–1.000) | 1.000 (1.000–1.000) |
+| BM25 lexical | 0.500 (0.360–0.640) | 0.740 (0.620–0.860) | 0.607 (0.490–0.720) | 0.605 (0.512–0.707) | 0.868 (0.778–0.958) | 0.713 (0.641–0.783) | 1.000 (1.000–1.000) | 1.000 (1.000–1.000) |
+| Hybrid BM25 + dense RRF | 0.520 (0.380–0.660) | 0.780 (0.660–0.880) | 0.623 (0.507–0.733) | 0.545 (0.472–0.627) | 0.906 (0.820–0.980) | 0.681 (0.623–0.738) | 1.000 (1.000–1.000) | 1.000 (1.000–1.000) |
+
+### Retrieval by query category
+
+| Configuration | Category | Cases | Hit@1 | Hit@3 | MRR | Technique F1 | Citation grounding |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Dense cosine | evidence_missing_abstention | 5 | 0.200 (0.000–0.600) | 0.800 (0.400–1.000) | 0.433 (0.167–0.733) | n/a | n/a |
+| Dense cosine | exact_attack_lookup | 20 | 0.850 (0.700–1.000) | 0.900 (0.750–1.000) | 0.875 (0.725–1.000) | 0.576 (0.500–0.655) | 1.000 (1.000–1.000) |
+| Dense cosine | multi_stage_triage | 15 | 0.600 (0.333–0.867) | 0.867 (0.667–1.000) | 0.722 (0.522–0.900) | 0.827 (0.747–0.895) | 1.000 (1.000–1.000) |
+| Dense cosine | prompt_injection_resistance | 5 | 0.200 (0.000–0.600) | 0.200 (0.000–0.600) | 0.200 (0.000–0.600) | n/a | 1.000 (1.000–1.000) |
+| Dense cosine | remediation_execution_refusal | 5 | 0.000 (0.000–0.000) | 0.000 (0.000–0.000) | 0.000 (0.000–0.000) | n/a | n/a |
+| BM25 lexical | evidence_missing_abstention | 5 | 0.400 (0.000–0.800) | 0.600 (0.200–1.000) | 0.500 (0.100–0.900) | n/a | n/a |
+| BM25 lexical | exact_attack_lookup | 20 | 0.750 (0.550–0.901) | 0.900 (0.750–1.000) | 0.825 (0.675–0.950) | 0.557 (0.484–0.630) | 1.000 (1.000–1.000) |
+| BM25 lexical | multi_stage_triage | 15 | 0.533 (0.267–0.800) | 0.733 (0.467–0.933) | 0.611 (0.389–0.822) | 0.853 (0.781–0.917) | 1.000 (1.000–1.000) |
+| BM25 lexical | prompt_injection_resistance | 5 | 0.000 (0.000–0.000) | 0.400 (0.000–0.800) | 0.167 (0.000–0.367) | n/a | 1.000 (1.000–1.000) |
+| BM25 lexical | remediation_execution_refusal | 5 | 0.000 (0.000–0.000) | 0.600 (0.200–1.000) | 0.267 (0.067–0.467) | n/a | n/a |
+| Hybrid BM25 + dense RRF | evidence_missing_abstention | 5 | 0.600 (0.200–1.000) | 1.000 (1.000–1.000) | 0.733 (0.467–1.000) | n/a | n/a |
+| Hybrid BM25 + dense RRF | exact_attack_lookup | 20 | 0.850 (0.700–1.000) | 0.950 (0.850–1.000) | 0.892 (0.758–1.000) | 0.537 (0.514–0.571) | 1.000 (1.000–1.000) |
+| Hybrid BM25 + dense RRF | multi_stage_triage | 15 | 0.400 (0.133–0.667) | 0.800 (0.600–1.000) | 0.556 (0.367–0.756) | 0.811 (0.761–0.857) | 1.000 (1.000–1.000) |
+| Hybrid BM25 + dense RRF | prompt_injection_resistance | 5 | 0.000 (0.000–0.000) | 0.200 (0.000–0.600) | 0.100 (0.000–0.300) | n/a | 1.000 (1.000–1.000) |
+| Hybrid BM25 + dense RRF | remediation_execution_refusal | 5 | 0.000 (0.000–0.000) | 0.400 (0.000–0.800) | 0.167 (0.000–0.367) | n/a | n/a |
+
+### Abstention and refusal by category
+
+| Category | Cases | Accuracy (95% CI) |
+|---|---:|---:|
+| evidence_missing_abstention | 5 | 1.000 (1.000–1.000) |
+| prompt_injection_resistance | 5 | 1.000 (1.000–1.000) |
+| remediation_execution_refusal | 5 | 1.000 (1.000–1.000) |
+
+Citation grounding is the fraction of citations resolving to a chunk in the retrieved context (160/160 hybrid citations). It measures the deterministic extractive path only; it does not measure LLM answer quality.
+Technique precision/recall/F1 compare retrieved-document ATT&CK technique candidates with the hand-labeled technique sets (33 answerable mapping cases). Abstention/refusal accuracy checks local deterministic policy behavior on 15 labeled safety cases; its perfect score is a code-path benchmark, not a human analyst or adversarial robustness study.

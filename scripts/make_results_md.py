@@ -473,6 +473,74 @@ def branch_fusion_ablation_section() -> list[str]:
     return lines
 
 
+def rag_ablation_section() -> list[str]:
+    """Render RAG retrieval, mapping, grounding, and safety metrics from JSON."""
+    candidates = sorted(RESULTS.glob("rag_ablation_*.json"), reverse=True)
+    if not candidates:
+        return []
+    artifact_path = candidates[0]
+    artifact = read(artifact_path)
+    if artifact.get("status") != "complete" or artifact.get("dataset", {}).get("benchmark_case_count") != 50:
+        raise RuntimeError("RAG ablation artifact is incomplete or does not contain the labeled 50-case suite")
+
+    def cell(metric: dict) -> str:
+        mean = metric.get("mean")
+        interval = metric.get("ci95") or [None, None]
+        if mean is None:
+            return "n/a"
+        return f"{float(mean):.3f} ({float(interval[0]):.3f}–{float(interval[1]):.3f})"
+
+    configs = artifact["configs"]
+    labels = {
+        "dense_cosine": "Dense cosine",
+        "bm25_lexical": "BM25 lexical",
+        "hybrid_bm25_dense_rrf": "Hybrid BM25 + dense RRF",
+    }
+    lines = [
+        "", "## Controlled ablation 3: RAG retrieval and analyst-query benchmark", "",
+        f"Artifact: [`{artifact_path.name}`](../backend/ml/evaluation/results/{artifact_path.name}).",
+        f"Scope: {artifact['dataset']['scope']}; {artifact['dataset']['benchmark_provenance']}",
+        f"Knowledge-base SHA-256: `{artifact['dataset']['knowledge_hash_sha256']}`. Execution was deterministic and local-only: {artifact['dataset']['external_calls']}.",
+        f"Technique labels: {artifact['dataset']['label_provenance']}",
+        "", "### Retrieval and answer-quality metrics", "",
+        "Values are means with 95% query-bootstrap confidence intervals. All retrieval configurations use the identical 50 queries and local chunk corpus.", "",
+        "| Retrieval configuration | Hit@1 | Hit@3 | MRR | Technique precision | Technique recall | Technique F1 | Citation grounding | Abstention/refusal accuracy |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    for key, label in labels.items():
+        result = configs[key]
+        mapping = result["technique_mapping"]
+        lines.append(
+            f"| {label} | {cell(result['retrieval']['hit_at_1'])} | {cell(result['retrieval']['hit_at_3'])} | "
+            f"{cell(result['retrieval']['mrr'])} | {cell(mapping['precision'])} | {cell(mapping['recall'])} | "
+            f"{cell(mapping['f1'])} | {cell(result['citation_grounding_rate'])} | "
+            f"{cell(result['abstention_refusal_accuracy']['overall'])} |"
+        )
+    lines += [
+        "", "### Retrieval by query category", "",
+        "| Configuration | Category | Cases | Hit@1 | Hit@3 | MRR | Technique F1 | Citation grounding |",
+        "|---|---|---:|---:|---:|---:|---:|---:|",
+    ]
+    for key, label in labels.items():
+        for category, metrics in configs[key]["by_category"].items():
+            lines.append(f"| {label} | {category} | {metrics['case_count']} | {cell(metrics['hit_at_1'])} | "
+                         f"{cell(metrics['hit_at_3'])} | {cell(metrics['mrr'])} | "
+                         f"{cell(metrics['technique_mapping']['f1'])} | {cell(metrics['citation_grounding_rate'])} |")
+    lines += [
+        "", "### Abstention and refusal by category", "",
+        "| Category | Cases | Accuracy (95% CI) |", "|---|---:|---:|",
+    ]
+    behavior = configs["hybrid_bm25_dense_rrf"]["abstention_refusal_accuracy"]
+    for category, metric in behavior["by_category"].items():
+        count = sum(row["category"] == category for row in configs["hybrid_bm25_dense_rrf"]["cases"])
+        lines.append(f"| {category} | {count} | {cell(metric)} |")
+    lines += [
+        "", f"Citation grounding is the fraction of citations resolving to a chunk in the retrieved context ({configs['hybrid_bm25_dense_rrf']['citation_support']['valid_citations']}/{configs['hybrid_bm25_dense_rrf']['citation_support']['total_citations']} hybrid citations). It measures the deterministic extractive path only; it does not measure LLM answer quality.",
+        f"Technique precision/recall/F1 compare retrieved-document ATT&CK technique candidates with the hand-labeled technique sets ({configs['hybrid_bm25_dense_rrf']['technique_mapping']['cases_scored']} answerable mapping cases). Abstention/refusal accuracy checks local deterministic policy behavior on {behavior['case_count']} labeled safety cases; its perfect score is a code-path benchmark, not a human analyst or adversarial robustness study.",
+    ]
+    return lines
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--agent-only", action="store_true", help="update only the generated agent evaluation section from the latest agent_eval JSON")
@@ -494,5 +562,6 @@ if __name__ == "__main__":
         report = render_network_baseline(artifact)
         report += "\n".join(host_window_ablation_section())
         report += "\n".join(branch_fusion_ablation_section())
+        report += "\n".join(rag_ablation_section())
         OUTPUT.write_text(report, encoding="utf-8")
         print(f"Wrote {OUTPUT} from saved artifact {artifact}")
