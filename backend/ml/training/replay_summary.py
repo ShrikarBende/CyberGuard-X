@@ -85,7 +85,8 @@ def create_summary(n: int = 5000, seed: int = 42) -> dict:
             f"Configured CICIDS model bundle was not found: {ARTIFACT_PATH}. "
             "Set MODEL_BUNDLE_PATH to an existing bundle; no alternate bundle is loaded."
         )
-    bundle = joblib.load(ARTIFACT_PATH)
+    from ml.models.artifact_security import verify_and_load_joblib
+    bundle = verify_and_load_joblib(ARTIFACT_PATH)
     pipeline = build_full_pipeline(seed=seed, sample=0.15, log1p=True)
     test_rows = pipeline["test_df"]
     selected = stratified_sample(test_rows, n, seed)

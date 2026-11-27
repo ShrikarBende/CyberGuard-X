@@ -168,3 +168,144 @@ def write_manifest(
     tmp.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     os.replace(tmp, dest)
     return dest
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _resolve_hmac_key(explicit_key: str | None = None) -> str:
+    if explicit_key is not None:
+        return explicit_key
+    env_val = os.environ.get(HMAC_ENV_VAR)
+    if env_val is not None:
+        return env_val
+    try:
+        from app.core.config import settings
+        return getattr(settings, HMAC_ENV_VAR, "") or ""
+    except Exception:
+        return ""
+
+
+def _resolve_allow_unsigned(explicit: bool | None = None) -> bool:
+    if explicit is not None:
+        return bool(explicit)
+    if ALLOW_UNSIGNED_ENV_VAR in os.environ:
+        return _env_flag(ALLOW_UNSIGNED_ENV_VAR, False)
+    try:
+        from app.core.config import settings
+        return bool(getattr(settings, ALLOW_UNSIGNED_ENV_VAR, False))
+    except Exception:
+        return False
+
+
+def verify_manifest(
+    artifact_path: Path | str,
+    *,
+    hmac_key: str | None = None,
+    allow_unsigned: bool | None = None,
+    manifest_path: Path | None = None,
+) -> dict[str, Any] | None:
+    """Verify manifest existence, JSON structure, SHA-256, and HMAC-SHA256."""
+    target = Path(artifact_path)
+    if not target.is_file():
+        raise FileNotFoundError(f"Model artifact not found: {target}")
+
+    unsigned_allowed = _resolve_allow_unsigned(allow_unsigned)
+    m_path = manifest_path or manifest_path_for(target)
+
+    if not m_path.is_file():
+        if unsigned_allowed:
+            logger.warning(
+                "SECURITY WARNING: Loading unsigned model artifact without manifest (%s=true): %s",
+                ALLOW_UNSIGNED_ENV_VAR,
+                target,
+            )
+            return None
+        raise ArtifactSecurityError(
+            f"Refusing to load model artifact {target}: missing manifest {m_path}. "
+            f"Run scripts/sign_existing_models.py or set {ALLOW_UNSIGNED_ENV_VAR}=true for local dev."
+        )
+
+    try:
+        raw_text = m_path.read_text(encoding="utf-8")
+        manifest = json.loads(raw_text)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ArtifactSecurityError(
+            f"Refusing to load model artifact {target}: manifest {m_path} is malformed or truncated ({exc})."
+        ) from exc
+
+    if not isinstance(manifest, dict):
+        raise ArtifactSecurityError(
+            f"Refusing to load model artifact {target}: manifest {m_path} must be a JSON object."
+        )
+
+    required_fields = ("manifest_version", "artifact_filename", "sha256")
+    missing_fields = [field for field in required_fields if not manifest.get(field)]
+    if missing_fields:
+        raise ArtifactSecurityError(
+            f"Refusing to load model artifact {target}: manifest {m_path} missing required fields {missing_fields}."
+        )
+
+    actual_sha = sha256_file(target)
+    expected_sha = str(manifest["sha256"])
+    if not hmac.compare_digest(actual_sha, expected_sha):
+        raise ArtifactSecurityError(
+            f"Refusing to load model artifact {target}: SHA-256 mismatch (file may be tampered)."
+        )
+
+    sig = manifest.get("hmac_sha256")
+    key = _resolve_hmac_key(hmac_key)
+    if not sig:
+        if unsigned_allowed:
+            logger.warning(
+                "SECURITY WARNING: Loading model artifact with unsigned manifest (%s=true): %s",
+                ALLOW_UNSIGNED_ENV_VAR,
+                target,
+            )
+            return manifest
+        raise ArtifactSecurityError(
+            f"Refusing to load model artifact {target}: manifest {m_path} has no hmac_sha256 signature."
+        )
+
+    if not key:
+        if unsigned_allowed:
+            logger.warning(
+                "SECURITY WARNING: Skipping HMAC check because %s is unset (%s=true): %s",
+                HMAC_ENV_VAR,
+                ALLOW_UNSIGNED_ENV_VAR,
+                target,
+            )
+            return manifest
+        raise ArtifactSecurityError(
+            f"Refusing to load model artifact {target}: {HMAC_ENV_VAR} is not set to verify HMAC signature."
+        )
+
+    expected_sig = compute_manifest_hmac(manifest, key)
+    if not hmac.compare_digest(str(sig), expected_sig):
+        raise ArtifactSecurityError(
+            f"Refusing to load model artifact {target}: HMAC signature verification failed "
+            "(wrong key or tampered manifest)."
+        )
+
+    return manifest
+
+
+def verify_and_load_joblib(
+    artifact_path: Path | str,
+    *,
+    hmac_key: str | None = None,
+    allow_unsigned: bool | None = None,
+    manifest_path: Path | None = None,
+) -> Any:
+    """Verify artifact manifest/hash/HMAC and load via joblib."""
+    verify_manifest(
+        artifact_path,
+        hmac_key=hmac_key,
+        allow_unsigned=allow_unsigned,
+        manifest_path=manifest_path,
+    )
+    return joblib.load(artifact_path)

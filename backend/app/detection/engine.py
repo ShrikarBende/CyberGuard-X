@@ -27,6 +27,7 @@ from app.models.entities import (
 )
 from app.schemas.schemas import SecurityEventCreate
 from app.services.websocket_manager import ws_manager
+from ml.models.artifact_security import verify_and_load_joblib
 from ml.preprocessing.cicids_pipeline import (
     HostWindowAggregator,
     add_protocol_invariant_features,
@@ -156,7 +157,7 @@ def load_endpoint_bundle() -> Optional[Dict[str, Any]]:
     """Load endpoint behavioral model bundle when it has been trained."""
     global _ENDPOINT_BUNDLE_CACHE
     if _ENDPOINT_BUNDLE_CACHE is None and ENDPOINT_BUNDLE_PATH.is_file():
-        bundle = joblib.load(ENDPOINT_BUNDLE_PATH)
+        bundle = verify_and_load_joblib(ENDPOINT_BUNDLE_PATH)
         required = {"dae", "isolation_forest", "feature_names", "feature_min", "feature_range",
                     "reconstruction_bounds", "iforest_bounds", "model_version"}
         missing = required.difference(bundle)
@@ -170,7 +171,7 @@ def load_user_bundle() -> Optional[Dict[str, Any]]:
     """Load the optional user-sequence TFT bundle once per process."""
     global _USER_BUNDLE_CACHE
     if _USER_BUNDLE_CACHE is None and USER_BUNDLE_PATH.is_file():
-        bundle = joblib.load(USER_BUNDLE_PATH)
+        bundle = verify_and_load_joblib(USER_BUNDLE_PATH)
         required = {"model", "feature_names", "feature_min", "feature_range", "sequence_length", "model_version"}
         missing = required.difference(bundle)
         if missing:
@@ -183,7 +184,7 @@ def load_network_gat_bundle() -> Optional[Dict[str, Any]]:
     """Load the optional communication-graph GAT bundle once per process."""
     global _NETWORK_GAT_BUNDLE_CACHE
     if _NETWORK_GAT_BUNDLE_CACHE is None and NETWORK_GAT_BUNDLE_PATH.is_file():
-        bundle = joblib.load(NETWORK_GAT_BUNDLE_PATH)
+        bundle = verify_and_load_joblib(NETWORK_GAT_BUNDLE_PATH)
         required = {"model", "host_index", "node_features_by_host", "incoming_by_host", "model_version"}
         missing = required.difference(bundle)
         if missing:
@@ -354,7 +355,7 @@ def load_model_bundle() -> Optional[Dict[str, Any]]:
                 f"Configured CICIDS model bundle was not found: {MODEL_BUNDLE_PATH}. "
                 "Set MODEL_BUNDLE_PATH to an existing bundle; no alternate bundle is loaded."
             )
-        bundle = joblib.load(MODEL_BUNDLE_PATH)
+        bundle = verify_and_load_joblib(MODEL_BUNDLE_PATH)
         required = {
             "model", "scaler", "feature_names", "log1p_columns", "class_names",
             "tau", "score_name", "model_version", "data_hash", "seed", "training_date",

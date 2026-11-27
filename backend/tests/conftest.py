@@ -17,6 +17,9 @@ def pytest_addoption(parser):
 
 def pytest_configure(config):
     global _pytest_evaluation_output
+    # Existing repository bundles in saved_models/ are unsigned until the operator
+    # runs scripts/sign_existing_models.py; security tests override this explicitly.
+    os.environ.setdefault("ALLOW_UNSIGNED_MODELS", "true")
     if config.getoption("--write-results"):
         os.environ.pop("CYBERGUARDX_TEST_RESULTS_DIR", None)
         return

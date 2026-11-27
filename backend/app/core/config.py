@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     MODEL_BUNDLE_PATH: str = str(
         BASE_DIR / "saved_models" / "cicids2017_medium_lightgbm.bundle.pkl"
     )
+    ARTIFACT_HMAC_KEY: str = ""
+    ALLOW_UNSIGNED_MODELS: bool = False
     # NOT CALIBRATED: placeholder probability gate for rule-based MITRE mapping.
     MITRE_MIN_PROBABILITY: float = 0.7
     RISK_HIGH_THRESHOLD: float = 60.0

@@ -4,8 +4,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Mapping
 
-import joblib
 import numpy as np
+
+from ml.models.artifact_security import verify_and_load_joblib
 
 FEATURE_NAMES = (
     "s_user", "s_endpoint", "s_network_flow", "s_network_graph",
@@ -54,7 +55,7 @@ def load_fusion_bundle(path: Path | str | None = None) -> dict | None:
         return _BUNDLE_CACHE
     if not target.is_file():
         return None
-    bundle = joblib.load(target)
+    bundle = verify_and_load_joblib(target)
     required = {"scaler", "model", "positive_coefficients", "model_version"}
     missing = required.difference(bundle)
     if missing:

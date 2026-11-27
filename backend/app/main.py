@@ -87,7 +87,8 @@ def _print_startup_summary() -> None:
             "Set MODEL_BUNDLE_PATH to an existing bundle; no alternate bundle is loaded."
         )
     try:
-        bundle = joblib.load(model_path)
+        from ml.models.artifact_security import verify_and_load_joblib
+        bundle = verify_and_load_joblib(model_path)
     except Exception as exc:
         raise RuntimeError(f"Could not read configured CICIDS model bundle: {model_path}: {exc}") from exc
     profile = bundle.get("profile", {})
