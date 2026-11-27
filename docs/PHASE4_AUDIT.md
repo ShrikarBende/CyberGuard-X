@@ -83,3 +83,19 @@ Every runtime and training serialization call found in `backend/`:
   - `backend/ml/models/registry.py:12-30` (`get_models_status()`) checks only `MODEL_BUNDLE_PATH.is_file()` and returns file path + boolean `is_trained`; it does **not** track version history, SHA-256 checksums, metrics, or support rollback.
 - **Drift monitoring:**
   - **None exists.** A search across `backend/` for `drift`, `psi`, or `kolmogorov` returned zero matches. There is currently no feature-distribution drift check (PSI/KS) and no prediction-distribution shift monitor.
+
+---
+
+## 6. Retrain Auth, Analyst Feedback Poisoning Exposure, and Saved-Models Writers (Step 1 Pre-Check)
+
+- **Authentication, role, and rate limiting on `POST /api/models/retrain`:**
+  - Requires an authenticated `AnalystAccount` with role `"admin"` (`Depends(require_roles("admin"))` at `backend/app/api/endpoints.py:781`).
+  - **Not rate-limited** by an HTTP rate limiter; concurrency is guarded only by `_RETRAIN_JOBS_LOCK` (`endpoints.py:792-794`), which returns `409 Conflict` while a retrain job is `"running"`.
+- **Who can write `analyst_feedback` rows and fusion-retrain influence:**
+  - Any `"analyst"` or `"admin"` account (`Depends(require_roles("analyst", "admin"))`) can trigger `analyst_feedback` writes via `PATCH /api/incidents/{incident_id}/status` with `status` in `{"CONFIRMED", "FALSE_POSITIVE"}` (`endpoints.py:475-499`) or `POST /api/incidents/{incident_id}/notes` with `note_in.feedback_label` set (`endpoints.py:556-585`).
+  - During `POST /api/models/retrain`, all `AnalystActivity` rows with `action_type == "analyst_feedback"` (`endpoints.py:809-812`) that have `fusion_features` (`endpoints.py:851`) are passed to `train_fusion_meta(..., feedback_samples=fusion_feedback)` (`endpoints.py:864`), which appends each valid sample to `x_train`/`y_train` (`backend/ml/training/train_fusion_meta.py:96-105`).
+  - **Data-poisoning exposure:** Because there is no per-incident deduplication, per-analyst cap, or feedback-weight cap, a compromised `"analyst"` account can repeatedly submit `CONFIRMED`/`FALSE_POSITIVE` labels on the same incident(s) to oversample/skew `x_train` when an `"admin"` triggers retraining.
+  - **What limits it today:** (1) `"viewer"` accounts cannot write feedback; (2) `fusion_features` are constructed server-side from persisted `Incident`/`DetectionResult` records (`_incident_feedback_sample`, `endpoints.py:504-533`) rather than arbitrary client-supplied feature vectors; (3) `train_fusion_meta` validates finite vectors and `target in (0, 1)` (`train_fusion_meta.py:99-102`); (4) retraining itself requires `"admin"` (`endpoints.py:781`).
+- **Other writers to `backend/saved_models/`:**
+  - None in application or script code outside `POST /api/models/retrain` (`endpoints.py:850,866`) and the five training scripts (`train_final.py:246`, `train_endpoint_branch.py:129`, `train_user_tft.py:168`, `train_network_gat.py:106`, `train_fusion_meta.py:151`).
+
