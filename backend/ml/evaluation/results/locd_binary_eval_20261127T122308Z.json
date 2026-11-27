@@ -1,0 +1,391 @@
+{
+  "artifact_schema_version": 1,
+  "artifact_type": "locd_binary_eval",
+  "run_id": "20261127T122308Z",
+  "run_status": "complete",
+  "created_at_utc": "2026-11-27T12:23:08.020624+00:00",
+  "protocol": {
+    "name": "binary attack-vs-benign leave-one-capture-day-out",
+    "scope": "CICIDS2017 development scope (4 held-out day units: Tue, Wed, Thu, Fri)",
+    "holdout_excluded": "Monday-WorkingHours.pcap_ISCX.csv",
+    "positive_class": "any non-BENIGN label",
+    "negative_class": "BENIGN",
+    "threshold_rule": "p95 of training BENIGN row scores (default threshold, unchanged)",
+    "model": "LightGBM multiclass; current repository class weights; no config change",
+    "feature_policy": "session-invariant sanitization; host-window features remain zero (no Timestamp/Source IP)",
+    "sample_fraction": 0.15,
+    "train_row_cap": 60000,
+    "per_family_recall_note": "descriptive only, n=1 capture day unit per family; not used for any accept/reject decision",
+    "bootstrap": {
+      "type": "paired over held-out capture-day units",
+      "resamples": 10000,
+      "seed": 20261127
+    },
+    "step_c_constraints": [
+      "no model change",
+      "no training/split change",
+      "no threshold tuning",
+      "no feature engineering change",
+      "Monday holdout file never loaded"
+    ]
+  },
+  "dataset": {
+    "version": "CICIDS2017",
+    "sha256": "9bb6edafdf07613af60d43f231e3d74b3fe9a7a308e4475d28446d326f72a1bd",
+    "sample_fraction": 0.15
+  },
+  "holdout": {
+    "file": "Monday-WorkingHours.pcap_ISCX.csv",
+    "manifest_sha256": "701a6fca14260729a21c47c9352e62af61526643b2ce44ba28bb000a0cb9b618",
+    "status": "frozen and untouched; never loaded for scoring or fitting"
+  },
+  "day_units": [
+    "Friday",
+    "Thursday",
+    "Tuesday",
+    "Wednesday"
+  ],
+  "n_day_units": 4,
+  "day_results": [
+    {
+      "held_out_day": "Tuesday",
+      "held_out_files": [
+        "Tuesday-WorkingHours.pcap_ISCX.csv"
+      ],
+      "train_files": [
+        "Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv",
+        "Friday-WorkingHours-Afternoon-PortScan.pcap_ISCX.csv",
+        "Friday-WorkingHours-Morning.pcap_ISCX.csv",
+        "Thursday-WorkingHours-Afternoon-Infilteration.pcap_ISCX.csv",
+        "Thursday-WorkingHours-Morning-WebAttacks.pcap_ISCX.csv",
+        "Wednesday-workingHours.pcap_ISCX.csv"
+      ],
+      "train_rows": 60000,
+      "test_rows": 63487,
+      "test_label_distribution": {
+        "BENIGN": 62046,
+        "BruteForce": 1441
+      },
+      "threshold": 0.01238850443565605,
+      "threshold_rule": "p95 of training BENIGN row scores",
+      "binary_operating_metrics": {
+        "tp": 364,
+        "fp": 4437,
+        "tn": 57609,
+        "fn": 1077,
+        "precision": 0.07581753801291398,
+        "recall": 0.25260235947258847,
+        "f1": 0.11662928548542134,
+        "fpr": 0.07151145923991876,
+        "support_positive": 1441,
+        "support_negative": 62046,
+        "total": 63487
+      },
+      "binary_auprc": 0.07441060715184054,
+      "per_family_recall_descriptive": {
+        "DosDDoS": {
+          "n": 0,
+          "recall": null,
+          "tp": 0,
+          "fn": 0,
+          "note": "no rows for this family on this day"
+        },
+        "PortScan": {
+          "n": 0,
+          "recall": null,
+          "tp": 0,
+          "fn": 0,
+          "note": "no rows for this family on this day"
+        },
+        "BruteForce": {
+          "n": 1441,
+          "tp": 364,
+          "fn": 1077,
+          "recall": 0.25260235947258847,
+          "note": "descriptive, n=1 capture day unit"
+        },
+        "WebAttack": {
+          "n": 0,
+          "recall": null,
+          "tp": 0,
+          "fn": 0,
+          "note": "no rows for this family on this day"
+        },
+        "Bot": {
+          "n": 0,
+          "recall": null,
+          "tp": 0,
+          "fn": 0,
+          "note": "no rows for this family on this day"
+        }
+      },
+      "families_on_day_per_protocol": [
+        "BruteForce"
+      ]
+    },
+    {
+      "held_out_day": "Wednesday",
+      "held_out_files": [
+        "Wednesday-workingHours.pcap_ISCX.csv"
+      ],
+      "train_files": [
+        "Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv",
+        "Friday-WorkingHours-Afternoon-PortScan.pcap_ISCX.csv",
+        "Friday-WorkingHours-Morning.pcap_ISCX.csv",
+        "Thursday-WorkingHours-Afternoon-Infilteration.pcap_ISCX.csv",
+        "Thursday-WorkingHours-Morning-WebAttacks.pcap_ISCX.csv",
+        "Tuesday-WorkingHours.pcap_ISCX.csv"
+      ],
+      "train_rows": 60000,
+      "test_rows": 91285,
+      "test_label_distribution": {
+        "BENIGN": 62581,
+        "DosDDoS": 28704
+      },
+      "threshold": 0.008963268266714897,
+      "threshold_rule": "p95 of training BENIGN row scores",
+      "binary_operating_metrics": {
+        "tp": 7013,
+        "fp": 3964,
+        "tn": 58617,
+        "fn": 21691,
+        "precision": 0.6388812972579029,
+        "recall": 0.24432134894091415,
+        "f1": 0.35346891459388624,
+        "fpr": 0.06334190888608364,
+        "support_positive": 28704,
+        "support_negative": 62581,
+        "total": 91285
+      },
+      "binary_auprc": 0.7035398984556829,
+      "per_family_recall_descriptive": {
+        "DosDDoS": {
+          "n": 28704,
+          "tp": 7013,
+          "fn": 21691,
+          "recall": 0.24432134894091415,
+          "note": "descriptive, n=1 capture day unit"
+        },
+        "PortScan": {
+          "n": 0,
+          "recall": null,
+          "tp": 0,
+          "fn": 0,
+          "note": "no rows for this family on this day"
+        },
+        "BruteForce": {
+          "n": 0,
+          "recall": null,
+          "tp": 0,
+          "fn": 0,
+          "note": "no rows for this family on this day"
+        },
+        "WebAttack": {
+          "n": 0,
+          "recall": null,
+          "tp": 0,
+          "fn": 0,
+          "note": "no rows for this family on this day"
+        },
+        "Bot": {
+          "n": 0,
+          "recall": null,
+          "tp": 0,
+          "fn": 0,
+          "note": "no rows for this family on this day"
+        }
+      },
+      "families_on_day_per_protocol": [
+        "DosDDoS"
+      ]
+    },
+    {
+      "held_out_day": "Thursday",
+      "held_out_files": [
+        "Thursday-WorkingHours-Afternoon-Infilteration.pcap_ISCX.csv",
+        "Thursday-WorkingHours-Morning-WebAttacks.pcap_ISCX.csv"
+      ],
+      "train_files": [
+        "Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv",
+        "Friday-WorkingHours-Afternoon-PortScan.pcap_ISCX.csv",
+        "Friday-WorkingHours-Morning.pcap_ISCX.csv",
+        "Tuesday-WorkingHours.pcap_ISCX.csv",
+        "Wednesday-workingHours.pcap_ISCX.csv"
+      ],
+      "train_rows": 60000,
+      "test_rows": 62084,
+      "test_label_distribution": {
+        "BENIGN": 61758,
+        "WebAttack": 326
+      },
+      "threshold": 0.011662998608807366,
+      "threshold_rule": "p95 of training BENIGN row scores",
+      "binary_operating_metrics": {
+        "tp": 324,
+        "fp": 9250,
+        "tn": 52508,
+        "fn": 2,
+        "precision": 0.03384165448088573,
+        "recall": 0.9938650306748467,
+        "f1": 0.06545454545454545,
+        "fpr": 0.14977816639139868,
+        "support_positive": 326,
+        "support_negative": 61758,
+        "total": 62084
+      },
+      "binary_auprc": 0.02964309270683268,
+      "per_family_recall_descriptive": {
+        "DosDDoS": {
+          "n": 0,
+          "recall": null,
+          "tp": 0,
+          "fn": 0,
+          "note": "no rows for this family on this day"
+        },
+        "PortScan": {
+          "n": 0,
+          "recall": null,
+          "tp": 0,
+          "fn": 0,
+          "note": "no rows for this family on this day"
+        },
+        "BruteForce": {
+          "n": 0,
+          "recall": null,
+          "tp": 0,
+          "fn": 0,
+          "note": "no rows for this family on this day"
+        },
+        "WebAttack": {
+          "n": 326,
+          "tp": 324,
+          "fn": 2,
+          "recall": 0.9938650306748467,
+          "note": "descriptive, n=1 capture day unit"
+        },
+        "Bot": {
+          "n": 0,
+          "recall": null,
+          "tp": 0,
+          "fn": 0,
+          "note": "no rows for this family on this day"
+        }
+      },
+      "families_on_day_per_protocol": [
+        "WebAttack"
+      ]
+    },
+    {
+      "held_out_day": "Friday",
+      "held_out_files": [
+        "Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv",
+        "Friday-WorkingHours-Afternoon-PortScan.pcap_ISCX.csv",
+        "Friday-WorkingHours-Morning.pcap_ISCX.csv"
+      ],
+      "train_files": [
+        "Thursday-WorkingHours-Afternoon-Infilteration.pcap_ISCX.csv",
+        "Thursday-WorkingHours-Morning-WebAttacks.pcap_ISCX.csv",
+        "Tuesday-WorkingHours.pcap_ISCX.csv",
+        "Wednesday-workingHours.pcap_ISCX.csv"
+      ],
+      "train_rows": 60000,
+      "test_rows": 92567,
+      "test_label_distribution": {
+        "BENIGN": 59423,
+        "DosDDoS": 19177,
+        "PortScan": 13661,
+        "Bot": 306
+      },
+      "threshold": 0.007692337086299128,
+      "threshold_rule": "p95 of training BENIGN row scores",
+      "binary_operating_metrics": {
+        "tp": 20329,
+        "fp": 2656,
+        "tn": 56767,
+        "fn": 12815,
+        "precision": 0.884446378072656,
+        "recall": 0.613353849867246,
+        "f1": 0.724367082969588,
+        "fpr": 0.04469649798899416,
+        "support_positive": 33144,
+        "support_negative": 59423,
+        "total": 92567
+      },
+      "binary_auprc": 0.8573777684729649,
+      "per_family_recall_descriptive": {
+        "DosDDoS": {
+          "n": 19177,
+          "tp": 19150,
+          "fn": 27,
+          "recall": 0.9985920634092924,
+          "note": "descriptive, n=1 capture day unit"
+        },
+        "PortScan": {
+          "n": 13661,
+          "tp": 1179,
+          "fn": 12482,
+          "recall": 0.08630407730034405,
+          "note": "descriptive, n=1 capture day unit"
+        },
+        "BruteForce": {
+          "n": 0,
+          "recall": null,
+          "tp": 0,
+          "fn": 0,
+          "note": "no rows for this family on this day"
+        },
+        "WebAttack": {
+          "n": 0,
+          "recall": null,
+          "tp": 0,
+          "fn": 0,
+          "note": "no rows for this family on this day"
+        },
+        "Bot": {
+          "n": 306,
+          "tp": 0,
+          "fn": 306,
+          "recall": 0.0,
+          "note": "descriptive, n=1 capture day unit"
+        }
+      },
+      "families_on_day_per_protocol": [
+        "Bot",
+        "PortScan",
+        "DosDDoS"
+      ]
+    }
+  ],
+  "aggregate_metrics_paired_day_bootstrap": {
+    "precision": {
+      "mean": 0.40824671695608966,
+      "ci95_lo": 0.054829596246899856,
+      "ci95_hi": 0.7616638376652795,
+      "n_days": 4
+    },
+    "recall": {
+      "mean": 0.5260356472388988,
+      "ci95_lo": 0.24846185420675132,
+      "ci95_hi": 0.8085493628742821,
+      "n_days": 4
+    },
+    "f1": {
+      "mean": 0.31497995712586024,
+      "ci95_lo": 0.09104191546998339,
+      "ci95_hi": 0.5724326335985463,
+      "n_days": 4
+    },
+    "fpr": {
+      "mean": 0.08233200812659881,
+      "ci95_lo": 0.05140023830172531,
+      "ci95_hi": 0.12816910201506992,
+      "n_days": 4
+    },
+    "binary_auprc": {
+      "mean": 0.41624284169683023,
+      "ci95_lo": 0.05202684992933661,
+      "ci95_hi": 0.7804588334643239,
+      "n_days": 4
+    }
+  }
+}

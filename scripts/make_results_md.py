@@ -455,6 +455,7 @@ def write_results(network_baseline: Path | None = None) -> Path:
     report += "\n".join(host_window_ablation_section())
     report += "\n".join(branch_fusion_ablation_section())
     report += "\n".join(rag_ablation_section())
+    report += "\n".join(locd_binary_eval_section())
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_text(report, encoding="utf-8")
     return OUTPUT
@@ -598,6 +599,126 @@ def rag_ablation_section() -> list[str]:
     lines += [
         "", f"Citation grounding is the fraction of citations resolving to a chunk in the retrieved context ({configs['hybrid_bm25_dense_rrf']['citation_support']['valid_citations']}/{configs['hybrid_bm25_dense_rrf']['citation_support']['total_citations']} hybrid citations). It measures the deterministic extractive path only; it does not measure LLM answer quality.",
         f"Technique precision/recall/F1 compare retrieved-document ATT&CK technique candidates with the hand-labeled technique sets ({configs['hybrid_bm25_dense_rrf']['technique_mapping']['cases_scored']} answerable mapping cases). Abstention/refusal accuracy checks local deterministic policy behavior on {behavior['case_count']} labeled safety cases; its perfect score is a code-path benchmark, not a human analyst or adversarial robustness study.",
+    ]
+    return lines
+
+
+def locd_binary_eval_section() -> list[str]:
+    """Render the latest saved LOCD binary evaluation artifact."""
+    candidates = sorted(RESULTS.glob("locd_binary_eval_*.json"), reverse=True)
+    if not candidates:
+        return []
+    artifact_path = candidates[0]
+    try:
+        artifact = read(artifact_path)
+    except (OSError, json.JSONDecodeError):
+        return []
+    if artifact.get("run_status") != "complete" or artifact.get("artifact_type") != "locd_binary_eval":
+        return []
+
+    proto = artifact.get("protocol", {})
+    agg = artifact.get("aggregate_metrics_paired_day_bootstrap", {})
+    day_results = artifact.get("day_results", [])
+    n_days = artifact.get("n_day_units", len(day_results))
+    holdout = artifact.get("holdout", {})
+
+    def _agg_cell(key: str) -> str:
+        entry = agg.get(key, {})
+        mean = entry.get("mean")
+        lo = entry.get("ci95_lo")
+        hi = entry.get("ci95_hi")
+        n = entry.get("n_days", 0)
+        if mean is None:
+            return "n/a"
+        note = entry.get("note", "")
+        cell = f"{float(mean):.4f} ({float(lo):.4f}–{float(hi):.4f})"
+        if note:
+            cell += f" ⚠ {note}"
+        return cell
+
+    # Build per-day summary table rows
+    day_rows = []
+    for dr in day_results:
+        ops = dr.get("binary_operating_metrics", {})
+        auprc = dr.get("binary_auprc")
+        auprc_str = f"{float(auprc):.4f}" if auprc is not None else "n/a"
+        prec = f"{float(ops['precision']):.4f}" if ops.get("precision") is not None else "n/a"
+        rec = f"{float(ops['recall']):.4f}" if ops.get("recall") is not None else "n/a"
+        f1 = f"{float(ops['f1']):.4f}" if ops.get("f1") is not None else "n/a"
+        fpr = f"{float(ops['fpr']):.4f}" if ops.get("fpr") is not None else "n/a"
+        families = ", ".join(dr.get("families_on_day_per_protocol", [])) or "—"
+        day_rows.append(
+            f"| {dr['held_out_day']} | {prec} | {rec} | {f1} | {auprc_str} | {fpr} "
+            f"| {dr['test_rows']:,} | {dr['binary_operating_metrics'].get('support_positive', 'n/a')} "
+            f"| {families} |"
+        )
+
+    # Per-family descriptive recall table
+    # Collect all families that appear across all days
+    all_families = sorted({
+        fam
+        for dr in day_results
+        for fam in dr.get("per_family_recall_descriptive", {})
+    })
+    family_recall_rows = []
+    for fam in all_families:
+        for dr in day_results:
+            entry = dr.get("per_family_recall_descriptive", {}).get(fam, {})
+            n = entry.get("n", 0)
+            if n > 0:
+                rec_val = entry.get("recall")
+                rec_str = f"{float(rec_val):.4f}" if rec_val is not None else "n/a"
+                family_recall_rows.append(
+                    f"| {fam} | {dr['held_out_day']} | {n} | {rec_str} "
+                    f"| descriptive, n=1 capture day unit |"
+                )
+
+    lines = [
+        "",
+        "## Step C: Binary attack-vs-benign leave-one-capture-day-out evaluation",
+        "",
+        f"**Protocol:** {proto.get('name', 'binary attack-vs-benign leave-one-capture-day-out')}. "
+        f"Scope: {proto.get('scope', '')}. "
+        f"Positive class: {proto.get('positive_class', 'any non-BENIGN label')}. "
+        f"Threshold: {proto.get('threshold_rule', '')}.",
+        "",
+        f"**Step C constraints:** measurement only; {'; '.join(proto.get('step_c_constraints', []))}.",
+        "",
+        f"Artifact: [`{artifact_path.name}`](../backend/ml/evaluation/results/{artifact_path.name}) "
+        f"(run `{artifact.get('run_id', '')}`).",
+        f"Dataset: `{artifact.get('dataset', {}).get('version', 'CICIDS2017')}`; "
+        f"SHA-256: `{artifact.get('dataset', {}).get('sha256', '')}`.",
+        f"Holdout: `{holdout.get('file', '')}` — {holdout.get('status', '')}.",
+        "",
+        "### Aggregate metrics — paired capture-day bootstrap",
+        "",
+        f"Bootstrap: paired over {n_days} held-out capture-day units, "
+        f"{proto.get('bootstrap', {}).get('resamples', 10000):,} resamples. "
+        f"Mean and 95% CI.",
+        "",
+        "| Metric | Mean (95% CI) |",
+        "|---|---:|",
+        f"| Binary precision | {_agg_cell('precision')} |",
+        f"| Binary recall    | {_agg_cell('recall')} |",
+        f"| Binary F1        | {_agg_cell('f1')} |",
+        f"| Binary AUPRC     | {_agg_cell('binary_auprc')} |",
+        f"| FPR              | {_agg_cell('fpr')} |",
+        "",
+        "### Per held-out day results",
+        "",
+        "| Held-out day | Precision | Recall | F1 | AUPRC | FPR | Test rows | Attack rows | Families present |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---|",
+        *day_rows,
+        "",
+        "### Per-family recall (descriptive only, n=1 capture day unit per family)",
+        "",
+        f"**{proto.get('per_family_recall_note', 'descriptive only')}** "
+        "These counts are observations, not evaluations of model capability. "
+        "With n=1 held-out day per family, per-family generalization cannot be reliably estimated.",
+        "",
+        "| Family | Held-out day | Attack rows | Recall | Note |",
+        "|---|---|---:|---:|---|",
+        *family_recall_rows,
     ]
     return lines
 

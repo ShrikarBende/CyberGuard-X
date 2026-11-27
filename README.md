@@ -301,6 +301,12 @@ Generated from completed JSON files in `backend/ml/evaluation/results/`. Means a
 
 <!-- GENERATED RESULTS: END -->
 
+## Known evaluation limitations
+
+- **One capture day per target attack family (`n=1`).** In the frozen CICIDS2017 development scope (Tuesday–Friday; Monday is the reserved untouched holdout), each of the four target families appears on only one capture day (`BruteForce` on Tuesday, `WebAttack` on Thursday, `Bot` and `PortScan` on Friday). Consequently, per-family generalization for Bot, WebAttack, BruteForce, and PortScan cannot be reliably measured on this dataset; results at `n=1` held-out capture day or session are **indicative only**.
+- **Binary leave-one-capture-day-out scope.** The binary attack-vs-benign leave-one-capture-day-out evaluation across the 4 development capture days (`n=4` day units) measures aggregate attack-vs-benign discrimination across days, not per-family generalization or open-set rejection; per-family recall on each held-out day is descriptive only (`n=1` capture day per family).
+- **Missing timestamps and host identifiers in local CSVs.** The checked-in CICIDS2017 CSV exports omit `Timestamp`, `Flow ID`, and source/destination IP columns, so host-window context features remain zero and within-capture time-blocked splits cannot be run on these files.
+
 ## Known limitations
 
 - **Single dataset.** All dataset-labeled results use CICIDS2017, a 2017 testbed with known labelling problems, evaluated on 15% (`light`) and 50% (`medium`) hash samples and 3 seeds. Results do not represent a full-data run.

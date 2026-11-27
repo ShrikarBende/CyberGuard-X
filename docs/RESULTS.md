@@ -225,3 +225,46 @@ Values are means with 95% query-bootstrap confidence intervals. All retrieval co
 
 Citation grounding is the fraction of citations resolving to a chunk in the retrieved context (160/160 hybrid citations). It measures the deterministic extractive path only; it does not measure LLM answer quality.
 Technique precision/recall/F1 compare retrieved-document ATT&CK technique candidates with the hand-labeled technique sets (33 answerable mapping cases). Abstention/refusal accuracy checks local deterministic policy behavior on 15 labeled safety cases; its perfect score is a code-path benchmark, not a human analyst or adversarial robustness study.
+## Step C: Binary attack-vs-benign leave-one-capture-day-out evaluation
+
+**Protocol:** binary attack-vs-benign leave-one-capture-day-out. Scope: CICIDS2017 development scope (4 held-out day units: Tue, Wed, Thu, Fri). Positive class: any non-BENIGN label. Threshold: p95 of training BENIGN row scores (default threshold, unchanged).
+
+**Step C constraints:** measurement only; no model change; no training/split change; no threshold tuning; no feature engineering change; Monday holdout file never loaded.
+
+Artifact: [`locd_binary_eval_20261127T122308Z.json`](../backend/ml/evaluation/results/locd_binary_eval_20261127T122308Z.json) (run `20261127T122308Z`).
+Dataset: `CICIDS2017`; SHA-256: `9bb6edafdf07613af60d43f231e3d74b3fe9a7a308e4475d28446d326f72a1bd`.
+Holdout: `Monday-WorkingHours.pcap_ISCX.csv` — frozen and untouched; never loaded for scoring or fitting.
+
+### Aggregate metrics — paired capture-day bootstrap
+
+Bootstrap: paired over 4 held-out capture-day units, 10,000 resamples. Mean and 95% CI.
+
+| Metric | Mean (95% CI) |
+|---|---:|
+| Binary precision | 0.4082 (0.0548–0.7617) |
+| Binary recall    | 0.5260 (0.2485–0.8085) |
+| Binary F1        | 0.3150 (0.0910–0.5724) |
+| Binary AUPRC     | 0.4162 (0.0520–0.7805) |
+| FPR              | 0.0823 (0.0514–0.1282) |
+
+### Per held-out day results
+
+| Held-out day | Precision | Recall | F1 | AUPRC | FPR | Test rows | Attack rows | Families present |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| Tuesday | 0.0758 | 0.2526 | 0.1166 | 0.0744 | 0.0715 | 63,487 | 1441 | BruteForce |
+| Wednesday | 0.6389 | 0.2443 | 0.3535 | 0.7035 | 0.0633 | 91,285 | 28704 | DosDDoS |
+| Thursday | 0.0338 | 0.9939 | 0.0655 | 0.0296 | 0.1498 | 62,084 | 326 | WebAttack |
+| Friday | 0.8844 | 0.6134 | 0.7244 | 0.8574 | 0.0447 | 92,567 | 33144 | Bot, PortScan, DosDDoS |
+
+### Per-family recall (descriptive only, n=1 capture day unit per family)
+
+**descriptive only, n=1 capture day unit per family; not used for any accept/reject decision** These counts are observations, not evaluations of model capability. With n=1 held-out day per family, per-family generalization cannot be reliably estimated.
+
+| Family | Held-out day | Attack rows | Recall | Note |
+|---|---|---:|---:|---|
+| Bot | Friday | 306 | 0.0000 | descriptive, n=1 capture day unit |
+| BruteForce | Tuesday | 1441 | 0.2526 | descriptive, n=1 capture day unit |
+| DosDDoS | Wednesday | 28704 | 0.2443 | descriptive, n=1 capture day unit |
+| DosDDoS | Friday | 19177 | 0.9986 | descriptive, n=1 capture day unit |
+| PortScan | Friday | 13661 | 0.0863 | descriptive, n=1 capture day unit |
+| WebAttack | Thursday | 326 | 0.9939 | descriptive, n=1 capture day unit |
