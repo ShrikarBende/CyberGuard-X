@@ -74,6 +74,7 @@ Model-family presence does not imply independently validated production performa
 - Curated ATT&CK technique references are versioned in `backend/app/rag/knowledge_metadata.json` against Enterprise ATT&CK v20.1 (reference verified 2026-11-19). They are a project-curated subset, not a complete synchronized catalog; ingesting MITRE Detection Strategies/Analytics is planned, not implemented.
 - Live event updates over WebSockets, incident review queue, evaluation summary page, and prepared held-out replay through the live engine.
 - Background model retraining for the `light` and `medium` profiles. A completed artifact replaces its profile bundle atomically; a failed job leaves the prior bundle in place.
+- **On-demand drift check (`POST /api/models/drift`, admin-only):** computes feature-level PSI/KS and optional prediction-distribution PSI from caller-supplied `reference_features` and `current_features` arrays (bounded by `DRIFT_MAX_ROWS` and `DRIFT_MAX_FEATURES`). This is an on-demand, caller-supplied comparison and **not** continuous live monitoring. *Planned:* store a signed training-time baseline in the artifact manifest and compare against recent live data, to be built with Phase 5a metrics.
 
 ## Agentic investigation (opt-in)
 
