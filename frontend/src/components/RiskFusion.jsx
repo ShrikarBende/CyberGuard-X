@@ -5,18 +5,18 @@ import { createMotionScope, motion } from '../lib/motion';
 import Badge from './ui/Badge';
 
 const rows = [
-  ['user_contribution', 'User Sequence (TFT)', 'bg-blue-400'],
-  ['endpoint_contribution', 'Endpoint (DAE + IF)', 'bg-blue-300'],
-  ['network_contribution', 'Network (Flow + GAT)', 'bg-indigo-400'],
-  ['open_set_contribution', 'Open-Set Novelty', 'bg-purple-400'],
+  ['user_contribution', 'User Sequence (TFT)', 'bg-[var(--line)]'],
+  ['endpoint_contribution', 'Endpoint (DAE + IF)', 'bg-[var(--line)]'],
+  ['network_contribution', 'Network (Flow + GAT)', 'bg-[var(--cobalt)]'],
+  ['open_set_contribution', 'Open-Set Novelty', 'bg-[var(--novel)]'],
 ];
 
 const severityStyle = {
-  LOW: { color: 'var(--soc-low)', shadow: 'rgba(85,163,255,.2)' },
-  MEDIUM: { color: 'var(--soc-medium)', shadow: 'rgba(245,185,66,.2)' },
-  HIGH: { color: 'var(--soc-high)', shadow: 'rgba(251,135,60,.2)' },
-  CRITICAL: { color: 'var(--soc-critical)', shadow: 'rgba(251,83,98,.22)' },
-  UNKNOWN_NOVEL: { color: 'var(--soc-novel)', shadow: 'rgba(192,132,252,.2)' },
+  LOW: { color: 'var(--soc-low)' },
+  MEDIUM: { color: 'var(--soc-medium)' },
+  HIGH: { color: 'var(--soc-high)' },
+  CRITICAL: { color: 'var(--soc-critical)' },
+  UNKNOWN_NOVEL: { color: 'var(--soc-novel)' },
 };
 
 export default function RiskFusion({ explanation }) {
@@ -99,21 +99,21 @@ export default function RiskFusion({ explanation }) {
     <section ref={root} className="soc-card rounded-2xl p-5 sm:p-6" aria-label="Unified calibrated risk">
       <div className="flex flex-wrap items-center justify-between gap-5">
         <div>
-          <p className="text-[13px] font-normal text-slate-400">Unified calibrated risk</p>
-          <p ref={scoreRef} className="mt-1 font-[family-name:var(--soc-font-display)] text-4xl font-light tracking-tight text-slate-50 tabular-nums">{scoreText}</p>
+          <p className="text-xs font-normal text-slate-400">Unified calibrated risk</p>
+            <p ref={scoreRef} style={{ color: riskStyle.color }} className="mt-1 font-[family-name:var(--soc-font-display)] text-7xl font-bold tracking-[-.05em] tabular-nums md:text-8xl">{scoreText}</p>
         </div>
         <div className="flex items-center gap-4">
           <div
             role="img"
             aria-label={`${tier} risk gauge at ${scoreText}`}
             className="grid h-24 w-24 place-items-center rounded-full p-[5px]"
-            style={{ background: `conic-gradient(${riskStyle.color} ${gaugePercent}%, rgba(255,255,255,.075) ${gaugePercent}% 100%)`, boxShadow: `0 0 26px ${riskStyle.shadow}` }}
+            style={{ background: `conic-gradient(${riskStyle.color} ${gaugePercent}%, var(--line) ${gaugePercent}% 100%)` }}
           >
             <div className="grid h-full w-full place-items-center rounded-full border border-white/[0.08] bg-[var(--soc-panel)]">
-              <span className="font-mono text-[11px] font-semibold text-slate-200">{tier}</span>
+              <span className="font-mono text-xs font-semibold text-slate-200">{tier}</span>
             </div>
           </div>
-          <Badge tone={tierTone} className="px-3 py-1.5 text-[11px] font-black tracking-wider">{tier}</Badge>
+          <Badge tone={tierTone} className="px-3 py-1.5 text-xs font-black tracking-wider">{tier}</Badge>
         </div>
       </div>
 
@@ -122,11 +122,11 @@ export default function RiskFusion({ explanation }) {
           const percent = contributionValues[index];
           return (
             <div key={key}>
-              <div className="mb-1.5 flex items-center justify-between gap-3 text-[11px]">
+              <div className="mb-1.5 flex items-center justify-between gap-3 text-xs">
                 <span className="text-slate-300">{label}</span>
                 <span className="font-mono tabular-nums text-slate-200">{percent.toFixed(1)}%</span>
               </div>
-              <div className="h-2 overflow-hidden rounded-full bg-white/[0.07]">
+              <div className="h-2 overflow-hidden rounded-full bg-[var(--line)]">
                 <div data-percent={percent} className={`risk-contribution-fill h-full w-full origin-left rounded-full ${rows[index][2]}`} />
               </div>
             </div>

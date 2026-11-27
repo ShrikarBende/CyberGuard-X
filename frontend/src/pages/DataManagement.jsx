@@ -17,7 +17,7 @@ function Collapsible({ title, badge, children, defaultOpen = false }) {
   const [open, setOpen] = useState(defaultOpen);
   const panelId = `panel-${title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`;
   return (
-    <div className="overflow-hidden rounded-xl border border-white/[0.08] bg-[#181818]/70 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
+    <div className="overflow-hidden rounded-xl border border-white/[0.08] bg-white/70 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
       <button
         type="button"
         aria-expanded={open}
@@ -28,7 +28,7 @@ function Collapsible({ title, badge, children, defaultOpen = false }) {
         <span className="text-xs font-bold text-slate-200 flex items-center gap-2">
           {title}
           {badge && (
-            <span className="rounded-full border border-blue-300/15 bg-blue-400/[0.06] px-2 py-0.5 font-mono text-[11px] tabular-nums text-blue-200">
+            <span className="rounded-full border border-blue-300/15 bg-blue-400/[0.06] px-2 py-0.5 font-mono text-xs tabular-nums text-blue-200">
               {badge}
             </span>
           )}
@@ -37,7 +37,7 @@ function Collapsible({ title, badge, children, defaultOpen = false }) {
       </button>
       <div id={panelId} aria-hidden={!open} inert={!open} className={`grid transition-[grid-template-rows] duration-300 ease-out ${open ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]'}`}>
         <div className="min-h-0 overflow-hidden">
-          <div className="border-t border-white/[0.06] bg-black/10 p-4">{children}</div>
+          <div className="border-t border-white/[0.06] bg-[var(--chip)] p-4">{children}</div>
         </div>
       </div>
     </div>
@@ -61,7 +61,7 @@ function KnownClassifierPanel({ data }) {
   if (!data || (![data.LightGBM, data.XGBoost].some((model) => model && (
     model.macro_f1 != null || model.accuracy != null || (Array.isArray(model.class_names) && model.class_names.length > 0)
   )))) return (
-    <div className="rounded-xl border border-dashed border-white/10 bg-black/10 p-6 text-center">
+    <div className="rounded-xl border border-dashed border-white/10 bg-[var(--chip)] p-6 text-center">
       <Database className="mx-auto mb-2 h-6 w-6 text-slate-500" />
       <p className="text-sm font-medium text-slate-200">Known-class metrics are unavailable in these results.</p>
       <p className="mt-1 text-xs text-slate-400">This section expects LightGBM and XGBoost class names, per-class precision, recall, F1 and support, plus macro-F1 and accuracy.</p>
@@ -73,14 +73,14 @@ function KnownClassifierPanel({ data }) {
     <div className="mb-4">
       <div className="flex items-center gap-3 mb-2">
         <span className="text-xs font-bold text-slate-200">{name}</span>
-        <span className="font-mono text-[10px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded">
+        <span className="font-mono text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded">
           Macro-F1: {f4(model?.macro_f1)}
         </span>
-        <span className="font-mono text-[10px] text-slate-400">Accuracy: {pct(model?.accuracy)}</span>
+        <span className="font-mono text-xs text-slate-400">Accuracy: {pct(model?.accuracy)}</span>
       </div>
       <div className="max-h-[28rem] overflow-auto rounded-lg">
-        <table className="w-full text-[11px] text-slate-300">
-          <thead className="sticky top-0 z-[1] bg-[#181818]">
+        <table className="w-full text-xs text-slate-300">
+          <thead className="sticky top-0 z-[1] bg-white">
             <tr className="border-b border-white/[0.08] text-slate-400">
               <th className="text-left pb-1 pr-4">Class</th>
               <th className="text-right pb-1 pr-4">Precision</th>
@@ -110,7 +110,7 @@ function KnownClassifierPanel({ data }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-3 text-[10px] font-mono text-slate-500">
+      <div className="flex flex-wrap gap-3 text-xs font-mono text-slate-500">
         <span>date: {date?.slice(0, 16).replace('T', ' ')} UTC</span>
         <span>data_hash: {data_hash}</span>
         <span className="text-amber-400">excluded: {excluded_labels?.join(', ')}</span>
@@ -136,7 +136,7 @@ function OpenSetPanel({ data }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-3 text-[10px] font-mono text-slate-500">
+      <div className="flex flex-wrap gap-3 text-xs font-mono text-slate-500">
         <span>date: {date?.slice(0, 16).replace('T', ' ')} UTC</span>
         <span>data_hash: {data_hash}</span>
         <span className="text-blue-400">threshold: {threshold_percentile}th pct of known-val scores</span>
@@ -146,8 +146,8 @@ function OpenSetPanel({ data }) {
       <div>
         <p className="text-xs font-bold text-slate-300 mb-2">Macro-Average Across All Families</p>
         <div className="max-h-[28rem] overflow-auto rounded-lg">
-          <table className="w-full text-[11px] text-slate-300">
-            <thead className="sticky top-0 z-[1] bg-[#181818]">
+          <table className="w-full text-xs text-slate-300">
+            <thead className="sticky top-0 z-[1] bg-white">
               <tr className="border-b border-white/[0.08] text-slate-400">
                 <th className="text-left pb-1 pr-4">Detector</th>
                 <th className="text-right pb-1 pr-4">AUROC ↑</th>
@@ -185,8 +185,8 @@ function OpenSetPanel({ data }) {
             <p className="text-xs text-amber-400">{fam.skipped}</p>
           ) : (
             <div className="max-h-[28rem] overflow-auto rounded-lg">
-              <table className="w-full text-[11px] text-slate-300">
-                <thead className="sticky top-0 z-[1] bg-[#181818]">
+              <table className="w-full text-xs text-slate-300">
+                <thead className="sticky top-0 z-[1] bg-white">
                   <tr className="border-b border-white/[0.08] text-slate-400">
                     <th className="text-left pb-1 pr-4">Detector</th>
                     <th className="text-right pb-1 pr-4">AUROC ↑</th>
@@ -205,7 +205,7 @@ function OpenSetPanel({ data }) {
                       <tr key={det} className="border-b border-white/[0.04] transition-colors hover:bg-white/[0.035]">
                         <td className="py-2 pr-4 font-mono text-blue-200">
                           {DETECTOR_LABELS[det]}
-                          {weak && <span className="ml-2 text-[11px] text-amber-300">⚠ weak</span>}
+                          {weak && <span className="ml-2 text-xs text-amber-300">⚠ weak</span>}
                         </td>
                         <MetricCell value={d.AUROC} className="pr-4 font-semibold" />
                         <MetricCell value={d.FPR_at_95pct_TPR} className="pr-4" />
@@ -327,8 +327,28 @@ export default function DataManagement({ role = 'viewer' }) {
     setIsUploading(true);
     setUploadStatus(null);
     try {
-      const res = await api.uploadLogs(file);
-      setUploadStatus({ success: true, message: res.message });
+      let result = await api.uploadLogs(file);
+      if (result.status === 'queued' && result.job_id) {
+        const uploadJobId = result.job_id;
+        setUploadStatus({ success: true, pending: true, message: `Upload queued · ${result.progress?.total_rows ?? 'Many'} rows` });
+        while (result.status === 'queued' || result.status === 'running') {
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+          result = await api.getUploadStatus(uploadJobId);
+          const progress = result.progress || {};
+          setUploadStatus({
+            success: result.status !== 'failed',
+            pending: result.status === 'queued' || result.status === 'running',
+            message: result.status === 'failed'
+              ? (result.error || 'Upload failed')
+              : result.status === 'completed'
+                ? (result.result?.message || 'Upload completed.')
+                : `Ingesting ${progress.rows_read ?? 0} of ${progress.total_rows ?? '—'} rows…`,
+          });
+        }
+        if (result.status === 'failed') throw new Error(result.error || 'Upload failed');
+      } else {
+        setUploadStatus({ success: true, message: result.message });
+      }
     } catch (err) {
       setUploadStatus({ success: false, message: err.message || 'Upload failed' });
     } finally {
@@ -353,24 +373,24 @@ export default function DataManagement({ role = 'viewer' }) {
   return (
     <div ref={pageRef} className="mx-auto max-w-[1600px] space-y-6">
       {/* Header */}
-      <div data-page-card className="rounded-2xl border border-white/[0.08] bg-gradient-to-br from-[#1F1F1F] via-[#1F1F1F] to-[#0d1527] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] flex flex-wrap items-center justify-between gap-4">
+      <div data-page-card className="soc-card flex flex-wrap items-center justify-between gap-4 rounded-[var(--r-card)] p-6">
         <div>
-          <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-blue-200/80">Platform · Data &amp; models</p>
-          <h3 className="flex items-center gap-2 font-display text-xl font-semibold tracking-tight text-slate-100">
-            <Database className="h-5 w-5 text-blue-300" /> Data Ingestion &amp; Model Governance
-          </h3>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-blue-200/80">Platform · Data &amp; models</p>
+          <h1 className="flex items-center gap-2 font-display text-3xl font-bold leading-tight tracking-tight text-[var(--ink)]">
+            <Database aria-hidden="true" className="h-5 w-5 text-[var(--cobalt)]" /> Data Ingestion &amp; Model Governance
+          </h1>
           <p className="text-xs text-slate-400 mt-1">
             Upload telemetry, run CICIDS2017 evaluation pipeline, inspect rigorous multi-class + open-set metrics
           </p>
         </div>
         <div className="flex max-w-full flex-wrap items-center gap-2">
-          <span className="rounded-full border border-emerald-300/15 bg-emerald-400/[0.07] px-3 py-1.5 text-[11px] font-semibold text-emerald-200">ALL 8 CSVs MOUNTED</span>
-          {(evalResults?.files || []).map((file) => <span key={file} className="max-w-full truncate rounded-lg border border-white/[0.08] bg-black/15 px-2.5 py-1.5 font-mono text-[11px] tabular-nums text-slate-300">{file}</span>)}
+          <span className="rounded-full border border-emerald-300/15 bg-emerald-400/[0.07] px-3 py-1.5 text-xs font-semibold text-emerald-200">ALL 8 CSVs MOUNTED</span>
+          {(evalResults?.files || []).map((file) => <span key={file} className="max-w-full truncate rounded-lg border border-white/[0.08] bg-[var(--chip)] px-2.5 py-1.5 font-mono text-xs tabular-nums text-slate-300">{file}</span>)}
         </div>
       </div>
 
       {/* CICIDS2017 Evaluation Runner */}
-      <div data-page-card className="rounded-2xl border border-blue-300/15 bg-[#1F1F1F] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
+      <div data-page-card className="rounded-2xl border border-blue-300/15 bg-white p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.035)]">
         <div className="flex flex-wrap items-center justify-between gap-4 mb-5">
           <div className="flex items-center gap-3">
             <div className="p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-400">
@@ -381,7 +401,7 @@ export default function DataManagement({ role = 'viewer' }) {
                 <h4 className="text-sm font-bold text-slate-100">
                   CICIDS2017 — Rigorous Multi-Class + Open-Set Evaluation
                 </h4>
-                <span className="rounded-full border border-emerald-300/15 bg-emerald-400/[0.07] px-2.5 py-1 font-mono text-[11px] font-semibold tabular-nums text-emerald-200">
+                <span className="rounded-full border border-emerald-300/15 bg-emerald-400/[0.07] px-2.5 py-1 font-mono text-xs font-semibold tabular-nums text-emerald-200">
                   ALL 8 CSVs MOUNTED
                 </span>
               </div>
@@ -422,10 +442,10 @@ export default function DataManagement({ role = 'viewer' }) {
         </div>}
 
         {!evalResults?.available ? (
-          <div className="p-6 rounded-xl bg-[#181818] border border-dashed border-[#313131] text-center">
+          <div className="p-6 rounded-xl bg-white border border-dashed border-[var(--line)] text-center">
             <BarChart2 className="w-8 h-8 text-slate-600 mx-auto mb-2" />
             <p className="text-xs text-slate-400">No evaluation results yet.</p>
-              <p className="text-[11px] text-slate-500 mt-1">
+              <p className="text-xs text-slate-500 mt-1">
               {isAdmin ? <>Click <strong>"Run Full Evaluation"</strong> above, or run:<br />
               <code className="font-mono text-blue-400">python backend/ml/run_cicids_eval.py</code>
               </> : 'Evaluation results are available to your role when runs have been saved.'}
@@ -436,7 +456,7 @@ export default function DataManagement({ role = 'viewer' }) {
             {/* Files */}
             <div className="flex flex-wrap gap-2">
               {evalResults.files?.map(f => (
-                <span key={f} className="font-mono text-[10px] px-2 py-1 rounded bg-[#181818] border border-[#313131] text-slate-400">
+                <span key={f} className="font-mono text-xs px-2 py-1 rounded bg-white border border-[var(--line)] text-slate-400">
                   {f}
                 </span>
               ))}
@@ -457,7 +477,7 @@ export default function DataManagement({ role = 'viewer' }) {
 
       {/* File Upload */}
       <div className="grid grid-cols-1 gap-6">
-        <div data-page-card className="rounded-2xl border border-white/[0.08] bg-[#1F1F1F] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+        <div data-page-card className="rounded-2xl border border-white/[0.08] bg-white p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
               <h4 className="text-sm font-bold text-slate-200">Held-out CICIDS replay</h4>
@@ -469,24 +489,24 @@ export default function DataManagement({ role = 'viewer' }) {
               {replayError && <p className="text-xs text-rose-300 mt-2">{replayError}</p>}
               {replayStatus?.error && <p className="text-xs text-rose-300 mt-2">{replayStatus.error}</p>}
             </div>
-            {isAdmin && <div className="flex flex-wrap items-end gap-2 rounded-xl border border-white/[0.06] bg-black/15 p-3">
-              <label className="text-[11px] text-slate-300">Rows<input type="number" min="1" value={replayN} onChange={(e) => setReplayN(e.target.value)} className="mt-1 block w-24 rounded-lg border border-white/10 bg-[#181818] px-2 py-2 font-mono text-xs tabular-nums text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400" /></label>
-              <label className="text-[11px] text-slate-300">Rows / sec<input type="number" min="0" value={replaySpeed} onChange={(e) => setReplaySpeed(e.target.value)} className="mt-1 block w-24 rounded-lg border border-white/10 bg-[#181818] px-2 py-2 font-mono text-xs tabular-nums text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400" /></label>
+            {isAdmin && <div className="flex flex-wrap items-end gap-2 rounded-xl border border-white/[0.06] bg-[var(--chip)] p-3">
+              <label className="text-xs text-slate-300">Rows<input type="number" min="1" value={replayN} onChange={(e) => setReplayN(e.target.value)} className="mt-1 block w-24 rounded-lg border border-white/10 bg-white px-2 py-2 font-mono text-xs tabular-nums text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400" /></label>
+              <label className="text-xs text-slate-300">Rows / sec<input type="number" min="0" value={replaySpeed} onChange={(e) => setReplaySpeed(e.target.value)} className="mt-1 block w-24 rounded-lg border border-white/10 bg-white px-2 py-2 font-mono text-xs tabular-nums text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400" /></label>
               <button type="button" onClick={startReplay} disabled={['queued', 'running', 'stopping'].includes(replayStatus?.status)} className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-blue-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300 disabled:opacity-40">Start replay</button>
               <button type="button" onClick={stopReplay} disabled={!['queued', 'running'].includes(replayStatus?.status)} className="rounded-xl border border-rose-300/20 bg-rose-500/10 px-4 py-2 text-xs font-semibold text-rose-200 transition hover:bg-rose-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-300 disabled:opacity-40">Stop replay</button>
             </div>}
           </div>
         </div>
-        <div data-page-card className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-amber-300/15 bg-[#1F1F1F] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
+        <div data-page-card className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-amber-300/15 bg-white p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.025)]">
           <div>
             <div className="flex items-center gap-2">
               <h4 className="text-sm font-bold text-slate-200">Synthetic correlation scenarios</h4>
-              <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[9px] font-bold tracking-wide text-amber-200">DEMO</span>
+              <span className="rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs font-bold tracking-wide text-amber-200">DEMO</span>
             </div>
             <p className="text-xs text-slate-500 mt-1">Loads labelled events only. Run correlation separately from Incident Management.</p>
             <div className="mt-2 flex flex-wrap gap-1.5" aria-label="Four built-in demo scenarios">
               {['multi_stage_takeover', 'brute_force_only', 'benign_admin', 'normal_employee_day'].map((scenario) => (
-                <span key={scenario} className="rounded-full border border-amber-500/20 bg-[#181818] px-2 py-1 text-[9px] text-amber-100">{scenario.replaceAll('_', ' ')}</span>
+                <span key={scenario} className="rounded-full border border-amber-500/20 bg-white px-2 py-1 text-xs text-amber-100">{scenario.replaceAll('_', ' ')}</span>
               ))}
             </div>
             {demoMessage && <p className="text-xs text-amber-200 mt-2">{demoMessage}</p>}
@@ -501,7 +521,7 @@ export default function DataManagement({ role = 'viewer' }) {
           </button>}
         </div>
         {/* Upload */}
-        <div data-page-card className="rounded-2xl border border-white/[0.08] bg-[#1F1F1F] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+        <div data-page-card className="rounded-2xl border border-white/[0.08] bg-white p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
           <div className="flex items-center gap-3 mb-4">
             <div className="p-2.5 rounded-xl bg-blue-500/10 border border-blue-500/20 text-blue-400">
               <Upload className="w-5 h-5" />
@@ -515,13 +535,13 @@ export default function DataManagement({ role = 'viewer' }) {
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
             onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFileUpload({ target: { files: e.dataTransfer.files } }); }}
-            className={`rounded-2xl border-2 border-dashed p-8 text-center transition-colors ${dragOver ? 'border-blue-300 bg-blue-400/[0.09]' : 'border-white/10 bg-black/10 hover:border-blue-300/40'}`}
+            className={`rounded-2xl border-2 border-dashed p-8 text-center transition-colors ${dragOver ? 'border-blue-300 bg-blue-400/[0.09]' : 'border-white/10 bg-[var(--chip)] hover:border-blue-300/40'}`}
           >
             <input type="file" id="file-upload" accept=".csv,.json" onChange={handleFileUpload} className="hidden" />
             <label htmlFor="file-upload" className="cursor-pointer flex flex-col items-center">
               <Upload className="w-8 h-8 text-slate-500 mb-2" />
               <span className="text-xs font-bold text-slate-200">Click to upload security logs</span>
-              <span className="text-[11px] text-slate-500 mt-1">.CSV or .JSON format</span>
+              <span className="text-xs text-slate-500 mt-1">.CSV or .JSON format</span>
             </label>
           </div> : <p className="text-xs text-slate-500">Telemetry upload is available to analysts and admins.</p>}
           {isUploading && (
@@ -535,7 +555,7 @@ export default function DataManagement({ role = 'viewer' }) {
                 ? 'bg-emerald-500/10 border border-emerald-500/30 text-emerald-300'
                 : 'bg-rose-500/10 border border-rose-500/30 text-rose-300'
             }`}>
-              {uploadStatus.success ? <CheckCircle2 className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+              {uploadStatus.pending ? <Loader2 className="w-4 h-4 animate-spin" /> : uploadStatus.success ? <CheckCircle2 className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
               <span>{uploadStatus.message}</span>
             </div>
           )}
@@ -544,17 +564,17 @@ export default function DataManagement({ role = 'viewer' }) {
       </div>
 
       {/* Model Weights Grid */}
-        <div data-page-card className="rounded-2xl border border-white/[0.08] bg-[#1F1F1F] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+        <div data-page-card className="rounded-2xl border border-white/[0.08] bg-white p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
         <h4 className="text-sm font-bold text-slate-200 mb-4">ML Model Weights &amp; Governance</h4>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {Object.entries(modelStatus?.models || {}).map(([key, m]) => (
-            <div key={key} className="p-4 rounded-xl bg-[#181818] border border-[#313131]">
+            <div key={key} className="p-4 rounded-xl bg-white border border-[var(--line)]">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs font-bold text-slate-300">{m.name}</span>
                 <span className={`w-2.5 h-2.5 rounded-full ${m.is_trained ? 'bg-emerald-400' : 'bg-rose-400'}`} />
               </div>
-              <p className="text-[11px] text-slate-500 font-mono mb-2">{m.file}</p>
-              <span className="text-[10px] font-semibold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded">
+              <p className="text-xs text-slate-500 font-mono mb-2">{m.file}</p>
+              <span className="text-xs font-semibold text-blue-400 bg-blue-500/10 border border-blue-500/20 px-2 py-0.5 rounded">
                 {m.target}
               </span>
             </div>

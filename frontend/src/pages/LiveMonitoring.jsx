@@ -39,12 +39,13 @@ function displayCell(value, fallback = '-') {
   return typeof value === 'object' ? JSON.stringify(value) : String(value);
 }
 
-export default function LiveMonitoring({ liveEvents, onInvestigateEvent }) {
+export default function LiveMonitoring({ liveEvents, onInvestigateEvent, wsConnected = false, wsReconnecting = false, lastLiveEventAt = null }) {
   const [initialEvents, setInitialEvents] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
+  const [historyUpdatedAt, setHistoryUpdatedAt] = useState(null);
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [copiedField, setCopiedField] = useState('');
   const [highlightedLiveIds, setHighlightedLiveIds] = useState(() => new Set());
@@ -112,6 +113,7 @@ export default function LiveMonitoring({ liveEvents, onInvestigateEvent }) {
       try {
         const events = await api.getEvents('', 100);
         setInitialEvents(events);
+        setHistoryUpdatedAt(Date.now());
         setLoadError(false);
       } catch (err) {
         console.error('Failed to load initial events:', err);
@@ -211,8 +213,12 @@ export default function LiveMonitoring({ liveEvents, onInvestigateEvent }) {
   return (
     <div ref={pageRef} className="mx-auto w-full max-w-[1600px] space-y-6">
       <header className="live-entrance px-1 pb-1">
-        <h1 className="font-[family-name:var(--soc-font-display)] text-[38px] font-light leading-tight tracking-tight text-slate-50">Live Feed</h1>
+        <h1 className="font-[family-name:var(--soc-font-display)] text-4xl font-light leading-tight tracking-tight text-slate-50">Live Feed</h1>
         <p className="mt-1 text-sm text-slate-400">Streaming security telemetry from connected layers</p>
+        <p className="mt-2 text-xs text-slate-400" role="status" aria-live="polite">
+          {wsConnected ? 'Live connection active' : wsReconnecting ? 'Connection interrupted · reconnecting' : 'Live connection disconnected'}
+          {' · '}{lastLiveEventAt ? `Last event ${new Date(lastLiveEventAt).toLocaleTimeString()}` : historyUpdatedAt ? `History loaded ${new Date(historyUpdatedAt).toLocaleTimeString()}` : 'Waiting for data'}
+        </p>
       </header>
 
       <Card className="live-entrance flex flex-wrap items-center justify-between gap-4 p-4 sm:p-5">
@@ -225,30 +231,30 @@ export default function LiveMonitoring({ liveEvents, onInvestigateEvent }) {
             placeholder="Search user, device, IP, type..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full rounded-xl border border-white/[0.09] bg-slate-950/45 py-2.5 pl-10 pr-20 text-[14px] text-slate-100 placeholder:text-slate-400 transition focus:border-blue-400/60 focus:outline-none focus:ring-2 focus:ring-blue-400/25"
+            className="w-full rounded-xl border border-white/[0.09] bg-slate-950/45 py-2.5 pl-10 pr-20 text-sm text-slate-100 placeholder:text-slate-400 transition focus:border-blue-400/60 focus:outline-none focus:ring-2 focus:ring-blue-400/25"
           />
           {searchQuery ? (
             <button type="button" aria-label="Clear search" onClick={() => setSearchQuery('')} className="absolute right-2 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg text-slate-400 transition hover:bg-white/[0.07] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400">
               <X aria-hidden="true" className="h-3.5 w-3.5" />
             </button>
           ) : (
-            <kbd aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded border border-white/10 bg-white/[0.04] px-1.5 py-0.5 font-mono text-[11px] text-slate-400">/</kbd>
+            <kbd aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded border border-white/10 bg-white/[0.04] px-1.5 py-0.5 font-mono text-xs text-slate-400">/</kbd>
           )}
         </div>
 
         <div className="flex w-full items-center gap-3 sm:w-auto sm:flex-1 sm:justify-end">
-          <div ref={filterControlRef} role="group" aria-label="Filter events by layer" className="relative flex min-w-0 flex-1 rounded-xl border border-white/[0.08] bg-slate-950/45 p-1 sm:flex-1">
-            <span aria-hidden="true" style={{ width: 'calc((100% - 0.5rem) / 5)', transform: `translateX(${selectedFilterIndex * 100}%)` }} className="pointer-events-none absolute bottom-1 left-1 top-1 rounded-lg border border-blue-300/20 bg-gradient-to-r from-blue-500 to-violet-500 shadow-[0_4px_18px_rgba(61,126,255,0.24)] transition-transform duration-200" />
+          <div ref={filterControlRef} role="group" aria-label="Filter events by layer" className="live-filter-control live-filter-glass relative flex min-w-0 flex-1 rounded-full p-1 sm:flex-1">
+            <span aria-hidden="true" style={{ width: 'calc((100% - 0.5rem) / 5)', transform: `translateX(${selectedFilterIndex * 100}%)` }} className="live-filter-indicator pointer-events-none absolute bottom-1 left-1 top-1 rounded-xl transition-transform duration-200" />
             {CATEGORIES.map((cat) => (
               <button
                 key={cat}
                 type="button"
                 aria-pressed={selectedCategory === cat}
                 onClick={() => setSelectedCategory(cat)}
-                className={`relative z-[1] inline-flex min-w-0 flex-1 items-center justify-center gap-1 rounded-lg px-1.5 py-2 text-[12px] font-normal transition-colors sm:px-2 sm:text-[14px] ${selectedCategory === cat ? 'text-white' : 'text-slate-300 hover:text-slate-100'}`}
+                className={`relative z-[1] inline-flex min-w-0 flex-1 items-center justify-center gap-1 rounded-lg px-1.5 py-2 text-xs font-normal transition-colors sm:px-2 sm:text-sm ${selectedCategory === cat ? 'text-white' : 'text-slate-300 hover:text-slate-100'}`}
               >
                 <span className="min-w-0 truncate">{cat.toUpperCase()}</span>
-                <span className={`shrink-0 font-mono text-[10px] tabular-nums sm:text-[11px] ${selectedCategory === cat ? 'text-white/90' : 'text-slate-500'}`}>{filterCounts[cat]}</span>
+                <span className={`shrink-0 font-mono text-xs tabular-nums sm:text-xs ${selectedCategory === cat ? 'text-white/90' : 'text-slate-500'}`}>{filterCounts[cat]}</span>
               </button>
             ))}
           </div>
@@ -264,7 +270,7 @@ export default function LiveMonitoring({ liveEvents, onInvestigateEvent }) {
             </span>
             <div>
               <h2 className="text-base font-medium text-slate-100">Continuous Security Telemetry Stream</h2>
-              <span className="mt-1 inline-flex items-center gap-1.5 text-[13px] font-normal text-emerald-200">
+              <span className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-[var(--normal-tint)] px-2 py-0.5 text-xs font-semibold text-[var(--normal)]">
                 <Activity aria-hidden="true" className="h-3 w-3" /> LIVE
               </span>
             </div>
@@ -276,8 +282,8 @@ export default function LiveMonitoring({ liveEvents, onInvestigateEvent }) {
 
         <div className="max-h-[min(70vh,52rem)] overflow-auto overscroll-contain">
           {loadError && allEvents.length > 0 && <p role="status" className="border-b border-amber-400/15 bg-amber-400/[0.045] px-5 py-2.5 text-xs text-amber-100 sm:px-6">Historical events could not be loaded. Live events will continue to appear here.</p>}
-          <table className="w-full min-w-[1180px] border-separate border-spacing-y-1.5 text-left text-[14px]">
-            <thead className="sticky top-0 z-20 bg-[var(--soc-panel)] text-[13px] font-normal text-slate-300 shadow-[0_1px_0_rgba(255,255,255,.06)]">
+          <table className="w-full min-w-[1180px] border-separate border-spacing-y-1.5 text-left text-sm">
+            <thead className="sticky top-0 z-20 bg-[var(--soc-panel)] text-xs font-normal text-slate-300 shadow-[0_1px_0_rgba(255,255,255,.06)]">
               <tr>
                 <th scope="col" className="px-4 py-3">Timestamp</th>
                 <th scope="col" className="px-4 py-3">User / Identity</th>
@@ -336,7 +342,6 @@ export default function LiveMonitoring({ liveEvents, onInvestigateEvent }) {
                       }
                     }}
                     className={`soc-table-row group cursor-pointer focus-visible:outline focus-visible:outline-2 focus-visible:outline-inset focus-visible:outline-blue-400 ${isRecentlyArrived ? 'live-row-arrival' : ''}`}
-                    style={isRecentlyArrived ? { '--live-row-highlight': failed ? 'rgba(224,32,43,.18)' : normalizedStatus === 'success' ? 'rgba(32,201,151,.18)' : 'rgba(79,103,255,.16)' } : undefined}
                   >
                     <td className="relative whitespace-nowrap px-4 py-3">
                       <span aria-hidden="true" className={`absolute inset-y-0 left-0 w-[3px] ${failed ? 'bg-rose-400/80' : normalizedStatus === 'success' ? 'bg-emerald-400/65' : 'bg-transparent'}`} />
@@ -370,7 +375,7 @@ export default function LiveMonitoring({ liveEvents, onInvestigateEvent }) {
                       <Badge tone={statusTone(status)} className="relative z-[1] px-2.5 py-1 text-sm font-normal">{String(status)}</Badge>
                     </td>
                     <td className="whitespace-nowrap px-2 py-2 text-right">
-                      <button type="button" onClick={(event) => { event.stopPropagation(); onInvestigateEvent?.(ev); }} className="rounded-lg border border-purple-400/25 bg-purple-400/[0.08] px-2.5 py-1.5 text-[11px] font-medium text-purple-200 transition hover:bg-purple-400/[0.16] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400" aria-label={`Investigate ${eventLabel} with AI`}>
+                      <button type="button" onClick={(event) => { event.stopPropagation(); onInvestigateEvent?.(ev); }} className="rounded-lg border border-purple-400/25 bg-purple-400/[0.08] px-2.5 py-1.5 text-xs font-medium text-purple-200 transition hover:bg-purple-400/[0.16] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-400" aria-label={`Investigate ${eventLabel} with AI`}>
                         Investigate with AI
                       </button>
                     </td>
@@ -387,9 +392,9 @@ export default function LiveMonitoring({ liveEvents, onInvestigateEvent }) {
           <div ref={drawerContentRef} className="flex max-h-full flex-col">
             <header className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-white/[0.08] bg-[var(--soc-panel)]/95 px-5 py-4 backdrop-blur-xl sm:px-6">
               <div className="min-w-0">
-                <p className="text-[13px] font-normal text-blue-200">Read-only event record</p>
+                <p className="text-xs font-normal text-blue-200">Read-only event record</p>
                 <h2 className="mt-1 break-all font-[family-name:var(--soc-font-display)] text-lg font-semibold text-slate-100">{selectedEvent.event_type || 'Event details'}</h2>
-                {selectedEvent.event_id && <p className="mt-1 break-all font-mono text-[11px] text-slate-400">{selectedEvent.event_id}</p>}
+                {selectedEvent.event_id && <p className="mt-1 break-all font-mono text-xs text-slate-400">{selectedEvent.event_id}</p>}
               </div>
               <button type="button" aria-label="Close event details" onClick={() => setSelectedEvent(null)} className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.03] text-slate-300 transition hover:bg-white/[0.08] hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400">
                 <X aria-hidden="true" className="h-4 w-4" />
@@ -401,8 +406,8 @@ export default function LiveMonitoring({ liveEvents, onInvestigateEvent }) {
                 return (
                   <div key={field} className="rounded-xl border border-white/[0.07] bg-slate-950/30 p-3.5">
                     <div className="mb-2 flex items-center justify-between gap-3">
-                      <span className="text-[13px] font-normal text-slate-400">{field.replace(/_/g, ' ')}</span>
-                      <button type="button" onClick={() => copyField(field, value)} aria-label={`${copied ? 'Copied' : 'Copy'} ${field}`} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] text-slate-400 transition hover:bg-white/[0.06] hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400">
+                      <span className="text-xs font-normal text-slate-400">{field.replace(/_/g, ' ')}</span>
+                      <button type="button" onClick={() => copyField(field, value)} aria-label={`${copied ? 'Copied' : 'Copy'} ${field}`} className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-slate-400 transition hover:bg-white/[0.06] hover:text-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400">
                         {copied ? <Check aria-hidden="true" className="h-3.5 w-3.5 text-emerald-300" /> : <Copy aria-hidden="true" className="h-3.5 w-3.5" />}
                         {copied ? 'Copied' : 'Copy'}
                       </button>

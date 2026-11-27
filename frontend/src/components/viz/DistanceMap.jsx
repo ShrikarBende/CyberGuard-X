@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { gsap } from 'gsap';
 import { api } from '../../services/api';
 import { createMotionScope, motion } from '../../lib/motion';
@@ -10,7 +10,7 @@ import Skeleton from '../ui/Skeleton';
 
 const VERDICTS = ['BENIGN', 'KNOWN_THREAT', 'UNKNOWN_CANDIDATE', 'UNKNOWN_NOVEL'];
 const MAX_DOTS = 300;
-const KNOWN_COLORS = ['#4d7cff', '#38bdf8', '#2dd4bf', '#818cf8', '#60a5fa', '#22d3ee', '#a5b4fc', '#0ea5e9'];
+const KNOWN_COLORS = ['#2F6FED', '#2535F0', '#7C3AED', '#0B7F4F', '#C98A0B'];
 const RING_COUNT = 6;
 const CENTER = { x: 380, y: 280 };
 const INNER_RADIUS = 78;
@@ -73,13 +73,49 @@ function formatValue(value, digits = 2) {
   return number == null ? 'Unavailable' : number.toFixed(digits);
 }
 
+const DistanceSvg = React.memo(function DistanceSvg({ bands, included, count, summaryText, onHover }) {
+  return <svg viewBox="0 0 760 560" role="img" aria-label={`Distance map of ${count} detections. ${summaryText}. Each point's angle only spreads detections in chronological order.`} className="block h-auto w-[min(26rem,90vw)] overflow-visible">
+    {bands.map((band) => <circle key={`ring-${band.index}`} cx={CENTER.x} cy={CENTER.y} r={band.radius} fill="none" stroke="#E3E6EE" strokeWidth="1" />)}
+    <circle cx={CENTER.x} cy={CENTER.y} r="70" fill="#FFFFFF" stroke="#E3E6EE" strokeWidth="1.5" />
+    {Array.from({ length: 72 }, (_, index) => {
+      const angle = (index / 72) * Math.PI * 2;
+      const inner = index % 3 === 0 ? 237 : 239;
+      const outer = 245;
+      return <line key={`tick-${index}`} x1={CENTER.x + Math.cos(angle) * inner} y1={CENTER.y + Math.sin(angle) * inner} x2={CENTER.x + Math.cos(angle) * outer} y2={CENTER.y + Math.sin(angle) * outer} stroke="rgba(160,160,210,0.20)" strokeWidth="1" />;
+    })}
+    {Array.from({ length: RING_COUNT }, (_, ring) => <g key={`ring-dots-${ring}`} data-distance-ring="true">
+      {included.filter((dot) => dot.ring === ring).map((dot) => <circle key={dot.row.detection_id} data-detection-class={dot.classKey} cx={dot.x} cy={dot.y} r={dot.size} fill={dot.color} fillOpacity="0.92" stroke="rgba(255,255,255,0.2)" strokeWidth="0.7" onMouseEnter={() => onHover(dot)} onMouseLeave={(event) => { if (!event.relatedTarget?.closest?.('[data-detection-class]')) onHover(null); }} />)}
+    </g>)}
+    <text x={CENTER.x} y={CENTER.y - 2} textAnchor="middle" fill="#12141C" fontSize="34" fontWeight="700" fontFamily="var(--soc-font-display)">{count}</text>
+    <text x={CENTER.x} y={CENTER.y + 21} textAnchor="middle" fill="#5B6072" fontSize="12" fontFamily="var(--soc-font-body)">Detections plotted</text>
+  </svg>;
+});
+
+const DistanceHoverMap = React.memo(function DistanceHoverMap({ bands, included, count, summaryText }) {
+  const [hovered, setHovered] = useState(null);
+  const handleHover = useCallback((dot) => {
+    setHovered((current) => current?.row.detection_id === dot?.row.detection_id ? current : dot);
+  }, []);
+  const tooltipLabel = hovered ? <dl className="grid grid-cols-[auto_auto] gap-x-3 gap-y-1 text-left text-xs">
+    <dt className="text-slate-400">Class</dt><dd>{hovered.row.predicted_class || 'Unavailable'}</dd>
+    <dt className="text-slate-400">Verdict</dt><dd>{hovered.row.verdict || 'Unavailable'}</dd>
+    <dt className="text-slate-400">Open-set distance</dt><dd className="font-mono tabular-nums">{formatValue(hovered.row.open_set_distance)}</dd>
+    <dt className="text-slate-400">Attack probability</dt><dd className="font-mono tabular-nums">{formatValue(hovered.row.attack_probability, 4)}</dd>
+    <dt className="text-slate-400">Time</dt><dd>{formatDate(hovered.row.created_at)}</dd>
+    <dt className="text-slate-400">Detection ID</dt><dd className="max-w-48 truncate font-mono">{String(hovered.row.detection_id || 'Unavailable')}</dd>
+  </dl> : <span className="text-xs text-slate-300">Hover a detection for its recorded fields.</span>;
+
+  return <GlassTooltip label={tooltipLabel}>
+    <DistanceSvg bands={bands} included={included} count={count} summaryText={summaryText} onHover={handleHover} />
+  </GlassTooltip>;
+});
+
 export default function DistanceMap() {
   const [detections, setDetections] = useState([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
   const [retry, setRetry] = useState(0);
   const [visibleClasses, setVisibleClasses] = useState(null);
-  const [hovered, setHovered] = useState(null);
   const rootRef = useRef(null);
   const entrancePlayed = useRef(false);
 
@@ -135,10 +171,10 @@ export default function DistanceMap() {
       const angle = -Math.PI / 2 + ((index + 0.5) / Math.max(1, members.length)) * Math.PI * 2;
       const radius = INNER_RADIUS + dot.normalized * (OUTER_RADIUS - INNER_RADIUS);
       const isKnown = dot.row.verdict === 'KNOWN_THREAT';
-      const color = dot.row.verdict === 'BENIGN' ? '#cbd5e1'
-        : dot.row.verdict === 'UNKNOWN_CANDIDATE' ? '#fbbf24'
-          : dot.row.verdict === 'UNKNOWN_NOVEL' ? '#c084fc'
-            : isKnown ? classColors.get(dot.row.predicted_class || 'Unknown class') : '#94a3b8';
+      const color = dot.row.verdict === 'BENIGN' ? '#0B7F4F'
+        : dot.row.verdict === 'UNKNOWN_CANDIDATE' ? '#C98A0B'
+          : dot.row.verdict === 'UNKNOWN_NOVEL' ? '#7C3AED'
+            : isKnown ? classColors.get(dot.row.predicted_class || 'Unknown class') : '#8A8FA3';
       const probability = finiteNumber(dot.row.attack_probability);
       const normalizedProbability = probability == null ? null : Math.max(0, Math.min(1, probability > 1 ? probability / 100 : probability));
       const item = {
@@ -178,73 +214,34 @@ export default function DistanceMap() {
 
   const legendKeys = plotData.legend.map((item) => item.key);
   const allVisible = visibleClasses == null || visibleClasses.size === legendKeys.length;
+  const included = useMemo(() => plotData.dots.filter((dot) => allVisible || visibleClasses?.has(dot.classKey)), [plotData.dots, allVisible, visibleClasses]);
   const toggleClass = (key) => setVisibleClasses((current) => {
     const next = new Set(current == null ? legendKeys : current);
     if (next.has(key)) next.delete(key); else next.add(key);
     return next.size === legendKeys.length ? null : next;
   });
-  const setDotDimming = (classKey) => {
-    const root = rootRef.current;
-    if (!root) return;
-    root.querySelectorAll('[data-detection-class]').forEach((node) => {
-      node.style.opacity = node.getAttribute('data-detection-class') === classKey ? '1' : '0.16';
-    });
-  };
-  const resetDotDimming = () => {
-    const root = rootRef.current;
-    if (!root) return;
-    root.querySelectorAll('[data-detection-class]').forEach((node) => { node.style.opacity = ''; });
-  };
-
   if (loading) return <div aria-busy="true" className="space-y-4 rounded-[22px] border border-white/[0.08] bg-[var(--soc-raised)] p-5"><Skeleton className="h-7 w-48" /><Skeleton className="h-[28rem] w-full" /><Skeleton className="h-10 w-full" /></div>;
   if (loadError) return <ErrorState title="Distance data could not be loaded" description="The detection distance query failed." onRetry={() => setRetry((value) => value + 1)} />;
   if (!plotData.dots.length) return <EmptyState title="No detection distances available" description="No returned detections include a usable open-set distance." className="bg-[var(--soc-raised)]" />;
 
-  const included = plotData.dots.filter((dot) => allVisible || visibleClasses?.has(dot.classKey));
   const summaryText = plotData.legend.map((item) => `${item.name}: ${item.count}`).join(', ');
-  const tooltipLabel = hovered ? <dl className="grid grid-cols-[auto_auto] gap-x-3 gap-y-1 text-left text-xs">
-    <dt className="text-slate-400">Class</dt><dd>{hovered.row.predicted_class || 'Unavailable'}</dd>
-    <dt className="text-slate-400">Verdict</dt><dd>{hovered.row.verdict || 'Unavailable'}</dd>
-    <dt className="text-slate-400">Open-set distance</dt><dd className="font-mono tabular-nums">{formatValue(hovered.row.open_set_distance)}</dd>
-    <dt className="text-slate-400">Attack probability</dt><dd className="font-mono tabular-nums">{formatValue(hovered.row.attack_probability, 4)}</dd>
-    <dt className="text-slate-400">Time</dt><dd>{formatDate(hovered.row.created_at)}</dd>
-    <dt className="text-slate-400">Detection ID</dt><dd className="max-w-48 truncate font-mono">{String(hovered.row.detection_id || 'Unavailable')}</dd>
-  </dl> : <span className="text-xs text-slate-300">Hover a detection for its recorded fields.</span>;
-
   return <div ref={rootRef} className="space-y-4">
     <Card className="overflow-visible p-4 sm:p-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div><h2 className="text-2xl font-light text-slate-100">Open-set distance map</h2><p className="mt-1 text-sm text-slate-300">Detections arranged by their recorded open-set distance.</p></div>
-        <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.06] to-white/[0.02] px-4 py-2 text-right"><div className="text-3xl font-light tabular-nums text-slate-50">{plotData.count}</div><div className="text-[13px] text-slate-300">Detections plotted</div></div>
+        <div className="rounded-2xl border border-white/10 bg-gradient-to-b from-white/[0.06] to-white/[0.02] px-4 py-2 text-right"><div className="text-3xl font-light tabular-nums text-slate-50">{plotData.count}</div><div className="text-xs text-slate-300">Detections plotted</div></div>
       </div>
       <div className="mt-3 flex flex-wrap gap-2" aria-label="Toggle distance map classes">
         {plotData.legend.map((item) => {
           const enabled = allVisible || visibleClasses?.has(item.key);
-          return <button key={item.key} type="button" aria-pressed={enabled} onClick={() => toggleClass(item.key)} className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[13px] transition-colors ${enabled ? 'border-white/15 bg-white/[0.05] text-slate-100' : 'border-white/[0.06] bg-transparent text-slate-400 opacity-60'}`}><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />{item.name}<span className="font-mono tabular-nums text-slate-300">{item.count}</span></button>;
+          return <button key={item.key} type="button" aria-pressed={enabled} onClick={() => toggleClass(item.key)} className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs transition-colors ${enabled ? 'border-white/15 bg-white/[0.05] text-slate-100' : 'border-white/[0.06] bg-transparent text-slate-400 opacity-60'}`}><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />{item.name}<span className="font-mono tabular-nums text-slate-300">{item.count}</span></button>;
         })}
       </div>
-      <div className="mt-4 rounded-[20px] border border-white/[0.07] bg-[radial-gradient(ellipse_at_top,rgba(50,45,145,0.16),transparent_68%),rgba(4,3,13,0.45)] p-2 sm:p-4">
-        <GlassTooltip label={tooltipLabel}>
-          <svg viewBox="0 0 760 560" role="img" aria-label={`Distance map of ${plotData.count} detections. ${summaryText}. Each point's angle only spreads detections in chronological order.`} className="block h-auto w-full overflow-visible">
-            <defs><radialGradient id="distance-map-center"><stop offset="0%" stopColor="#181818" /><stop offset="78%" stopColor="#131209" /><stop offset="100%" stopColor="#1F1F1F" /></radialGradient></defs>
-            {plotData.bands.map((band) => <circle key={`ring-${band.index}`} cx={CENTER.x} cy={CENTER.y} r={band.radius} fill="none" stroke="rgba(117,120,255,0.20)" strokeWidth="1" />)}
-            <circle cx={CENTER.x} cy={CENTER.y} r="70" fill="url(#distance-map-center)" stroke="rgba(75,91,255,0.55)" strokeWidth="1.5" />
-            {Array.from({ length: 72 }, (_, index) => {
-              const angle = (index / 72) * Math.PI * 2;
-              const inner = index % 3 === 0 ? 237 : 239;
-              const outer = 245;
-              return <line key={`tick-${index}`} x1={CENTER.x + Math.cos(angle) * inner} y1={CENTER.y + Math.sin(angle) * inner} x2={CENTER.x + Math.cos(angle) * outer} y2={CENTER.y + Math.sin(angle) * outer} stroke="rgba(160,160,210,0.20)" strokeWidth="1" />;
-            })}
-            {Array.from({ length: RING_COUNT }, (_, ring) => <g key={`ring-dots-${ring}`} data-distance-ring="true">
-              {included.filter((dot) => dot.ring === ring).map((dot) => <circle key={dot.row.detection_id} data-detection-class={dot.classKey} cx={dot.x} cy={dot.y} r={dot.size} fill={dot.color} fillOpacity="0.92" stroke="rgba(255,255,255,0.2)" strokeWidth="0.7" onMouseEnter={() => { setDotDimming(dot.classKey); setHovered(dot); }} onMouseLeave={() => { resetDotDimming(); setHovered(null); }} />)}
-            </g>)}
-            <text x={CENTER.x} y={CENTER.y - 2} textAnchor="middle" className="fill-slate-50" fontSize="34" fontWeight="300" fontFamily="var(--soc-font-display)">{plotData.count}</text>
-            <text x={CENTER.x} y={CENTER.y + 21} textAnchor="middle" className="fill-slate-300" fontSize="12" fontFamily="var(--soc-font-body)">Detections plotted</text>
-          </svg>
-        </GlassTooltip>
+      <div className="mt-4 rounded-[var(--r-inner)] border border-[var(--line)] bg-[var(--chip)] p-2 sm:p-4">
+        <DistanceHoverMap bands={plotData.bands} included={included} count={plotData.count} summaryText={summaryText} />
       </div>
-      <p className="mt-3 text-[13px] text-slate-300">Angle only spreads detections in chronological order; it carries no other meaning.</p>
-      {plotData.total > MAX_DOTS && <p className="mt-1 text-[13px] text-slate-300">Showing {MAX_DOTS} of {plotData.total}</p>}
+      <p className="mt-3 text-xs text-slate-300">Angle only spreads detections in chronological order; it carries no other meaning.</p>
+      {plotData.total > MAX_DOTS && <p className="mt-1 text-xs text-slate-300">Showing {MAX_DOTS} of {plotData.total}</p>}
       <div className="mt-4 flex flex-wrap gap-x-4 gap-y-2" aria-label="Open-set distance ring ranges">
         {plotData.bands.map((band) => <span key={`band-label-${band.index}`} className="inline-flex items-center gap-1.5 text-xs text-slate-300"><span className="inline-block h-px w-3 bg-indigo-300/50" />Ring {band.index + 1}: <span className="font-mono tabular-nums">{band.label}</span></span>)}
       </div>

@@ -1,239 +1,64 @@
-import React, { useId, useRef } from 'react';
-import { gsap } from 'gsap';
-import { useGSAP } from '@gsap/react';
-import { createMotionScope, motion } from '../../lib/motion';
+import React from 'react';
 import Badge from '../ui/Badge';
-import StatCard from '../ui/StatCard';
 
 const SEVERITY_ORDER = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'];
 const STATUS_ORDER = ['OPEN', 'NEEDS_REVIEW', 'INVESTIGATING', 'CONTAINED', 'RESOLVED', 'CONFIRMED', 'FALSE_POSITIVE'];
 
-function safeCount(value) {
-  if (value == null || value === '') return 0;
-  const number = Number(value);
-  return Number.isFinite(number) && number >= 0 ? number : 0;
-}
-
-function groupCount(rows, field, order) {
+function countRows(rows, field, order) {
   const counts = new Map();
   rows.forEach((row) => {
     const label = typeof row?.[field] === 'string' ? row[field].trim().toUpperCase() : '';
     if (label) counts.set(label, (counts.get(label) || 0) + 1);
   });
-  const labels = [...new Set([...order, ...Array.from(counts.keys()).filter((label) => !order.includes(label)).sort()])];
-  return labels.map((label) => ({ label, count: counts.get(label) || 0 }));
+  return [...new Set([...order, ...[...counts.keys()].filter((label) => !order.includes(label)).sort()])]
+    .map((label) => ({ label, count: counts.get(label) || 0 }));
 }
 
-function displayLabel(value) {
-  return String(value || '').toLowerCase().replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
+function CountList({ title, rows, available, loading, capReached, severity = false }) {
+  return <section className="min-w-0 rounded-[var(--r-inner)] bg-white p-5">
+    <h2 className="text-sm font-semibold text-[var(--ink)]">{title}</h2>
+    {capReached && <p className="mt-1 text-xs text-[var(--muted)]">Returned rows only · 50 row cap reached</p>}
+    {!available ? <p className="mt-4 text-sm text-[var(--muted)]">{loading ? 'Loading incident counts…' : 'Incident counts unavailable'}</p> : rows.length === 0 ? <p className="mt-4 text-sm text-[var(--muted)]">No incident rows returned</p> : <ul className="mt-3 divide-y divide-[var(--line)]">{rows.map(({ label, count }) => <li key={label} className="flex items-center justify-between gap-3 py-2.5 text-sm">
+      <span className="flex min-w-0 items-center gap-2"><span aria-hidden="true" className={`h-2 w-2 shrink-0 rounded-full ${severity && label === 'CRITICAL' ? 'bg-[var(--critical)]' : severity && label === 'HIGH' ? 'bg-[var(--high)]' : severity && label === 'MEDIUM' ? 'bg-[var(--medium)]' : severity ? 'bg-[var(--low)]' : 'bg-[var(--cobalt)]'}`} /><span className="truncate text-[var(--muted)]">{label.toLowerCase().replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())}</span></span>
+      <span className="soc-mono text-sm text-[var(--ink)]">{count}</span>
+    </li>)}</ul>}
+  </section>;
 }
 
-function OrbCount({ value }) {
-  const countRef = useRef(null);
-  const animated = useRef(false);
-  const count = safeCount(value);
-
-  useGSAP(() => {
-    const node = countRef.current;
-    if (!node) return undefined;
-    if (animated.current) {
-      node.textContent = String(count);
-      return undefined;
-    }
-
-    animated.current = true;
-    return createMotionScope(node, (reduced) => {
-      const targetNode = countRef.current;
-      if (!targetNode) return;
-      if (reduced) {
-        targetNode.textContent = String(count);
-        return;
-      }
-      const counter = { value: 0 };
-      gsap.fromTo(counter, { value: 0 }, {
-        value: count,
-        duration: motion.duration.entrance,
-        ease: motion.easeSoft,
-        onUpdate: () => {
-          if (countRef.current) countRef.current.textContent = Math.round(counter.value).toLocaleString();
-        },
-        onComplete: () => {
-          if (countRef.current) countRef.current.textContent = String(count);
-        },
-      });
-    });
-  }, { scope: countRef, dependencies: [count], revertOnUpdate: false });
-
-  return <text ref={countRef} x="600" y="394" textAnchor="middle" className="fill-slate-50" style={{ fontSize: 64, fontWeight: 300, fontVariantNumeric: 'tabular-nums' }}>{String(count)}</text>;
-}
-
-function Ribbon({ targetY, count, sideTotal, color, pathKey }) {
-  if (count <= 0) return null;
-  const share = sideTotal > 0 ? count / sideTotal : 0;
-  const width = 1.5 + share * 14;
-  return <path
-    data-flow-line="true"
-    data-flow-key={pathKey}
-    d={`M 775 382 C 824 382, 831 ${targetY}, 880 ${targetY}`}
-    fill="none"
-    stroke={color}
-    strokeWidth={width}
-    strokeLinecap="round"
-    opacity="0.58"
-  />;
-}
-
-function CountGroupCard({ x, y, width, title, rows, type, available, loading, capReached, glassId }) {
-  const rowStep = type === 'severity' ? 40 : 34;
-  const headerHeight = type === 'severity' ? 64 : 58;
-  const height = headerHeight + Math.max(rows.length, 1) * rowStep + 18;
-  const accent = type === 'severity' ? '#e94759' : '#438cff';
-  return <g data-flow-card="true">
-    <rect x={x} y={y} width={width} height={height} rx="22" fill={`url(#${glassId})`} stroke="rgba(255,255,255,.12)" />
-    <path d={`M ${x + 20} ${y + 1} H ${x + width - 20}`} stroke={accent} strokeOpacity=".55" strokeWidth="2" strokeLinecap="round" />
-    <text x={x + 22} y={y + 31} fill="#f3f3fa" fontSize="17" fontWeight="500">{title}</text>
-    {capReached && <text x={x + 22} y={y + 49} fill="#a3a3a3" fontSize="12">Returned rows only · 50 row cap reached</text>}
-    {!available && <text x={x + 22} y={y + headerHeight + 22} fill="#a3a3a3" fontSize="14">{loading ? 'Loading incident counts…' : 'Incident counts unavailable'}</text>}
-    {available && rows.length === 0 && <text x={x + 22} y={y + headerHeight + 22} fill="#a3a3a3" fontSize="14">No incident rows returned</text>}
-    {available && rows.map((row, index) => {
-      const baseline = y + headerHeight + 25 + index * rowStep;
-      const tone = type === 'severity' && row.label === 'CRITICAL' ? '#f1747e' : type === 'severity' && row.label === 'HIGH' ? '#ed8b46' : type === 'severity' && row.label === 'MEDIUM' ? '#e8b84c' : type === 'severity' ? '#8db8ff' : '#a3a3a3';
-      return <g key={`${type}-${row.label}`}>
-        <circle cx={x + 24} cy={baseline - 5} r="3.5" fill={tone} />
-        <text x={x + 38} y={baseline} fill="#c8c6da" fontSize="14">{displayLabel(row.label)}</text>
-        <text x={x + width - 22} y={baseline} textAnchor="end" fill="#f3f3fa" fontSize="16" fontWeight="500" style={{ fontVariantNumeric: 'tabular-nums' }}>{row.count}</text>
-      </g>;
-    })}
-  </g>;
-}
-
-export default function FlowOrb({ totalEvents, layers = [], incidents, incidentLoadError = false, extraKpis = [] }) {
-  const root = useRef(null);
-  const reactId = useId();
-  const id = `flow-${reactId.replace(/[^a-zA-Z0-9_-]/g, '')}`;
-  const total = safeCount(totalEvents);
-  const safeLayers = Array.isArray(layers) ? layers.map((layer) => ({
-    title: typeof layer?.title === 'string' ? layer.title : 'Layer',
-    value: safeCount(layer?.value),
-    suffix: typeof layer?.suffix === 'string' ? layer.suffix : 'Detections',
-  })) : [];
+export default function FlowOrb({ totalEvents, layers = [], incidents, incidentLoadError = false, extraKpis = [], onReviewIncidents, engineStatus = '—' }) {
+  const total = Number.isFinite(Number(totalEvents)) ? Number(totalEvents) : 0;
   const rows = Array.isArray(incidents) ? incidents.filter((incident) => incident && typeof incident === 'object' && !Array.isArray(incident)) : [];
   const available = Array.isArray(incidents) && !incidentLoadError;
-  const incidentLoading = incidents == null && !incidentLoadError;
+  const loading = incidents == null && !incidentLoadError;
   const capReached = available && rows.length >= 50;
-  const severities = groupCount(rows, 'severity', SEVERITY_ORDER);
-  const statuses = groupCount(rows, 'status', STATUS_ORDER);
-  const severityTotal = severities.reduce((sum, row) => sum + row.count, 0);
-  const statusTotal = statuses.reduce((sum, row) => sum + row.count, 0);
-  const tickAngles = Array.from({ length: 72 }, (_, index) => index * 5);
-  const severityTop = 112;
-  const statusTop = 408;
-  const severityRowStart = severityTop + 64 + 25;
-  const statusRowStart = statusTop + 58 + 25;
+  const severities = countRows(rows, 'severity', SEVERITY_ORDER);
+  const statuses = countRows(rows, 'status', STATUS_ORDER);
+  const highestRiskIncident = rows.slice().sort((first, second) => Number(second.overall_risk_score || 0) - Number(first.overall_risk_score || 0))[0];
+  const openCritical = rows.filter((row) => String(row.severity || '').toUpperCase() === 'CRITICAL' && !['RESOLVED', 'FALSE_POSITIVE'].includes(String(row.status || '').toUpperCase())).length;
 
-  const numberSummary = [
-    `Total events analyzed ${total}`,
-    ...safeLayers.map((layer) => `${layer.title} ${layer.value} ${layer.suffix}`),
-    ...extraKpis.map((item) => `${String(item?.label || 'Overview metric')} ${String(item?.value ?? '—')}`),
-    `Incidents by severity${capReached ? ', 50 row cap reached, total may be higher' : ''}: ${available ? (severities.map((row) => `${displayLabel(row.label)} ${row.count}`).join(', ') || 'none returned') : incidentLoading ? 'loading' : 'unavailable'}`,
-    `Incidents by status${capReached ? ', 50 row cap reached, total may be higher' : ''}: ${available ? (statuses.map((row) => `${displayLabel(row.label)} ${row.count}`).join(', ') || 'none returned') : incidentLoading ? 'loading' : 'unavailable'}`,
-  ].join('. ');
-
-  useGSAP(() => {
-    const scope = root.current;
-    if (!scope) return undefined;
-    return createMotionScope(scope, (reduced) => {
-      const lines = Array.from(scope.querySelectorAll('[data-flow-line="true"]'));
-      const cards = Array.from(scope.querySelectorAll('[data-flow-card="true"]'));
-      if (reduced) return;
-
-      lines.forEach((line) => {
-        if (!line || typeof line.getTotalLength !== 'function') return;
-        const length = line.getTotalLength();
-        if (!Number.isFinite(length) || length <= 0) return;
-        gsap.set(line, { strokeDasharray: `${length} ${length}` });
-        gsap.fromTo(line, { strokeDashoffset: length }, {
-          strokeDashoffset: 0,
-          duration: 0.68,
-          ease: motion.ease,
-          clearProps: 'strokeDasharray,strokeDashoffset',
-        });
-      });
-      if (cards.length) {
-        gsap.fromTo(cards, { autoAlpha: 0, y: 8 }, {
-          autoAlpha: 1,
-          y: 0,
-          duration: 0.42,
-          stagger: 0.07,
-          ease: motion.ease,
-          clearProps: 'opacity,visibility,transform',
-        });
-      }
-    });
-  }, { scope: root, revertOnUpdate: false });
-
-  const severityPathY = (index) => severityRowStart + index * 40 - 5;
-  const statusPathY = (index) => statusRowStart + index * 34 - 5;
-  const severityCountValue = available ? severities : [];
-  const statusCountValue = available ? statuses : [];
-
-  return <section ref={root} className="overview-entrance space-y-4" aria-label="Overview event flow">
-    <div className="soc-card overflow-x-auto rounded-[22px] p-2 sm:p-3">
-      <svg role="img" aria-label={numberSummary} viewBox="0 0 1240 760" className="block h-auto min-w-[760px] w-full" preserveAspectRatio="xMidYMid meet">
-        <defs>
-          <radialGradient id={`${id}-orb-fill`} cx="50%" cy="35%" r="70%">
-            <stop offset="0%" stopColor="#1F1F1F" />
-            <stop offset="72%" stopColor="#181818" />
-            <stop offset="100%" stopColor="#05040d" />
-          </radialGradient>
-          <linearGradient id={`${id}-ring`} x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#3050ff" />
-            <stop offset="52%" stopColor="#438cff" />
-            <stop offset="100%" stopColor="#8b1fd1" />
-          </linearGradient>
-          <linearGradient id={`${id}-flow-glass`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#181818" stopOpacity=".95" />
-            <stop offset="100%" stopColor="#181818" stopOpacity=".97" />
-          </linearGradient>
-          <filter id={`${id}-orb-glow`} x="-60%" y="-60%" width="220%" height="220%">
-            <feGaussianBlur stdDeviation="16" result="blur" />
-            <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
-          </filter>
-        </defs>
-        <text x="46" y="82" fill="#c7c4de" fontSize="14" fontWeight="400">Detection layers</text>
-        <text x="885" y="88" fill="#c7c4de" fontSize="13">Incident counts from returned records</text>
-
-        {safeLayers.slice(0, 3).map((layer, index) => {
-          const y = 290 + index * 92;
-          return <g key={`layer-${layer.title}`}>
-            <path data-flow-line="true" d={`M 370 ${y} C 394 ${y}, 405 382, 442 382`} fill="none" stroke="#3050ff" strokeWidth="1.8" strokeOpacity=".76" />
-            <circle cx="370" cy={y} r="5" fill="#438cff" stroke="#9ec4ff" strokeWidth="1" />
-            <text x="44" y={y - 7} fill="#f3f3fa" fontSize="16" fontWeight="400">{layer.title}</text>
-            <text x="44" y={y + 17} fill="#a3a3a3" fontSize="13">{layer.value.toLocaleString()} {layer.suffix}</text>
-          </g>;
-        })}
-
-        {severityCountValue.map((row, index) => <Ribbon key={`severity-ribbon-${row.label}`} targetY={severityPathY(index)} count={row.count} sideTotal={severityTotal} color={row.label === 'CRITICAL' ? '#e94759' : '#d45a66'} pathKey={`severity-${row.label}`} />)}
-        {statusCountValue.map((row, index) => <Ribbon key={`status-ribbon-${row.label}`} targetY={statusPathY(index)} count={row.count} sideTotal={statusTotal} color="#3050ff" pathKey={`status-${row.label}`} />)}
-
-        <g aria-hidden="true">
-          <circle cx="600" cy="382" r="198" fill="#3050ff" opacity=".055" filter={`url(#${id}-orb-glow)`} />
-          <circle cx="600" cy="382" r="188" fill="none" stroke="rgba(155,157,255,.13)" strokeWidth="1" />
-          {tickAngles.map((angle) => <line key={`tick-${angle}`} x1="0" y1="-190" x2="0" y2="-198" transform={`translate(600 382) rotate(${angle})`} stroke="rgba(196,194,255,.48)" strokeWidth="1" />)}
-          <circle cx="600" cy="382" r="168" fill="none" stroke={`url(#${id}-ring)`} strokeWidth="5" opacity=".92" />
-          <circle cx="600" cy="382" r="153" fill={`url(#${id}-orb-fill)`} stroke="rgba(143,165,255,.3)" strokeWidth="1" />
-          <circle cx="600" cy="382" r="138" fill="none" stroke="rgba(255,255,255,.08)" strokeWidth="1" />
-        </g>
-        <OrbCount value={total} />
-        <text x="600" y="428" textAnchor="middle" fill="#c9c6df" fontSize="15">Total Events Analyzed</text>
-
-        <CountGroupCard x={880} y={severityTop} width={350} title="Incidents by severity" rows={available ? severities : []} type="severity" available={available} loading={incidentLoading} capReached={capReached} glassId={`${id}-flow-glass`} />
-        <CountGroupCard x={880} y={statusTop} width={350} title="Incidents by status" rows={available ? statuses : []} type="status" available={available} loading={incidentLoading} capReached={capReached} glassId={`${id}-flow-glass`} />
-      </svg>
+  return <section className="overview-entrance space-y-3" aria-label="Overview event flow">
+    <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1.2fr_1fr]">
+      <section className="overview-hero flex min-h-44 flex-col items-start justify-between gap-5 rounded-[var(--r-card)] bg-[var(--cobalt)] p-6 text-white sm:p-7">
+        <div><p className="text-xs font-medium text-white/75">Security posture</p><h2 className="mt-3 max-w-xl font-display text-3xl font-bold leading-tight tracking-tight text-white sm:text-4xl">{openCritical ? `${openCritical} critical incident${openCritical === 1 ? '' : 's'} are open right now.` : 'No critical incidents open.'}</h2></div>
+        <div className="flex w-full flex-wrap items-center justify-between gap-3"><p className="text-sm text-white/80">{available ? `${rows.length}${capReached ? '+' : ''} incident records returned` : loading ? 'Loading incident counts…' : 'Incident counts unavailable'}</p><button type="button" onClick={onReviewIncidents} className="rounded-full bg-white px-4 py-2 text-sm font-semibold text-[var(--cobalt)] transition hover:bg-white/85">Review incidents <span aria-hidden="true">→</span></button></div>
+      </section>
+      <section className="flex min-h-44 flex-col justify-between rounded-[var(--r-card)] bg-white p-6 shadow-[var(--shadow-card)]">
+        <span className="text-sm text-[var(--muted)]">Events analysed</span><span className="font-display text-7xl font-bold leading-none tracking-[-.05em] text-[var(--ink)] sm:text-8xl">{total.toLocaleString()}</span>
+      </section>
     </div>
-
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-      {extraKpis.map((kpi) => <StatCard key={kpi.label} label={kpi.label} value={kpi.value} formatValue={(value) => String(value ?? '—')} detail={kpi.tag ? <Badge tone="novel" className="shrink-0">{kpi.tag}</Badge> : null} className="overview-entrance min-h-28 p-4" />)}
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+      <CountList title="Incidents by severity" rows={available ? severities : []} available={available} loading={loading} capReached={capReached} severity />
+      <section className="min-w-0 rounded-[var(--r-inner)] bg-white p-5">
+        <h2 className="text-sm font-semibold text-[var(--ink)]">Highest risk</h2>
+        {highestRiskIncident ? <><p className="mt-3 font-display text-4xl font-bold tracking-tight text-[var(--critical)]">{Number.isFinite(Number(highestRiskIncident.overall_risk_score)) ? `${Number(highestRiskIncident.overall_risk_score).toFixed(1)}%` : '—'}</p><p className="mt-2 truncate text-sm font-semibold text-[var(--ink)]" title={highestRiskIncident.title}>{highestRiskIncident.title || 'Incident title unavailable'}</p><p className="mt-1 truncate font-mono text-xs text-[var(--muted)]">{highestRiskIncident.source_ip || highestRiskIncident.evidence?.source_ip || highestRiskIncident.device_id || '—'}</p></> : <p className="mt-3 text-sm text-[var(--muted)]">{loading ? 'Loading incident scores…' : 'No incident scores available'}</p>}
+        {available && statuses.length > 0 && <div className="mt-4 border-t border-[var(--line)] pt-3"><p className="mb-2 text-xs text-[var(--muted)]">Incidents by status</p><div className="flex flex-wrap gap-1.5">{statuses.filter((row) => row.count > 0).map((row) => <Badge key={row.label} tone="neutral">{row.label.replaceAll('_', ' ')} · {row.count}</Badge>)}</div></div>}
+      </section>
+      <section className="rounded-[var(--r-inner)] bg-white p-5">
+        <h2 className="text-sm font-semibold text-[var(--ink)]">Detection layers</h2>
+        <ul className="mt-3 divide-y divide-[var(--line)]">{layers.slice(0, 3).map((layer) => <li key={layer.title} className="flex items-center justify-between gap-3 py-2.5 text-sm"><span className="min-w-0"><span className="block truncate text-[var(--muted)]">{layer.title}</span><span className="text-xs text-[var(--subtle)]">{layer.suffix}</span></span><span className="soc-mono text-sm text-[var(--ink)]">{Number.isFinite(Number(layer.value)) ? Number(layer.value).toLocaleString() : '—'}</span></li>)}</ul>
+        <div className="mt-3 flex items-center justify-between gap-3 border-t border-[var(--line)] pt-3 text-xs"><span className="text-[var(--muted)]">Engine status</span><span className="soc-mono text-[var(--ink)]">{engineStatus || '—'}</span></div>
+        {extraKpis.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{extraKpis.map((kpi) => <Badge key={kpi.label} tone={kpi.tag ? 'novel' : 'neutral'}>{kpi.label}: {kpi.value}{kpi.tag ? ` · ${kpi.tag}` : ''}</Badge>)}</div>}
+      </section>
     </div>
   </section>;
 }

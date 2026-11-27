@@ -9,6 +9,8 @@ const Explainability = lazy(() => import('./pages/Explainability'));
 const AIAssistant = lazy(() => import('./pages/AIAssistant'));
 const DataManagement = lazy(() => import('./pages/DataManagement'));
 const Evaluation = lazy(() => import('./pages/Evaluation'));
+const AgentRuns = lazy(() => import('./pages/AgentRuns'));
+const ApprovalsQueue = lazy(() => import('./pages/ApprovalsQueue'));
 import { api } from './services/api';
 import LoginScreen from './components/LoginScreen';
 import { gsap } from 'gsap';
@@ -16,8 +18,22 @@ import { useGSAP } from '@gsap/react';
 import { createMotionScope, motion } from './lib/motion';
 import Modal from './components/ui/Modal';
 import ErrorBoundary from './components/ErrorBoundary';
+import { X } from './lib/icons';
+import { reconnectDelay } from './lib/reconnect';
 
-const VALID_PAGES = ['overview', 'live', 'incidents', 'threats', 'explain', 'assistant', 'data', 'evaluation'];
+const VALID_PAGES = ['overview', 'live', 'incidents', 'threats', 'explain', 'assistant', 'data', 'evaluation', 'agent', 'approvals'];
+const PAGE_TITLES = {
+  overview: 'Executive Overview Dashboard',
+  live: 'Live Security Telemetry Stream',
+  threats: 'Threat Intelligence & Open-Set Analysis',
+  incidents: 'Incident Management & Correlation',
+  explain: 'SHAP Explainability & Risk Scoring',
+  assistant: 'Grounded AI Security Assistant (RAG)',
+  data: 'Data Governance & Model Training',
+  evaluation: 'CICIDS Evaluation Summary',
+  agent: 'Agent Investigation Run',
+  approvals: 'Human Action Approvals',
+};
 
 function getInitialPage() {
   try {
@@ -32,13 +48,20 @@ function getInitialPage() {
 export default function App() {
   const [activePage, setActivePage] = useState(getInitialPage);
   const [selectedIncidentIdForAssistant, setSelectedIncidentIdForAssistant] = useState(null);
+  const [selectedAgentRunId, setSelectedAgentRunId] = useState(null);
   const [assistantInitialPrompt, setAssistantInitialPrompt] = useState("");
   const [liveEvents, setLiveEvents] = useState([]);
   const [unreadLiveEvents, setUnreadLiveEvents] = useState(0);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [wsConnected, setWsConnected] = useState(false);
+  const [wsReconnecting, setWsReconnecting] = useState(false);
+  const [lastLiveEventAt, setLastLiveEventAt] = useState(null);
   const [hasSyntheticDemo, setHasSyntheticDemo] = useState(false);
+  const [syntheticDemoNoticeDismissed, setSyntheticDemoNoticeDismissed] = useState(() => {
+    try { return window.sessionStorage.getItem('cyberguardx_synthetic_demo_notice_dismissed') === 'true'; }
+    catch { return false; }
+  });
   const [authToken, setAuthToken] = useState(() => window.sessionStorage.getItem('cyberguardx_access_token'));
   const [analyst, setAnalyst] = useState(() => {
     try { return JSON.parse(window.sessionStorage.getItem('cyberguardx_analyst') || 'null'); }
@@ -111,12 +134,6 @@ export default function App() {
         setShortcutsOpen(true);
         return;
       }
-      if (event.key === '[') {
-        event.preventDefault();
-        clearGPrefix();
-        window.dispatchEvent(new Event('cyberguardx-toggle-sidebar'));
-        return;
-      }
       if (gPrefixActive.current) {
         clearGPrefix();
         const page = pagesByShortcut[event.key.toLowerCase()];
@@ -163,7 +180,7 @@ export default function App() {
     const page = pageRef.current;
     return createMotionScope(page, (reduced) => {
       if (!pageRef.current) return;
-      gsap.fromTo(page, { autoAlpha: 0, y: reduced ? 0 : 12 }, { autoAlpha: 1, y: 0, duration: reduced ? 0.18 : 0.25, ease: motion.ease, clearProps: 'opacity,transform,visibility' });
+      gsap.fromTo(page, { opacity: 0.9 }, { opacity: 1, duration: reduced ? 0.14 : 0.18, ease: motion.ease, clearProps: 'opacity' });
     });
   }, { scope: pageRef, dependencies: [activePage, authToken], revertOnUpdate: true });
 
@@ -238,24 +255,43 @@ export default function App() {
     }
     let reconnectTimeout = null;
     let isMounted = true;
+    let retryAttempt = 0;
+
+    function scheduleReconnect() {
+      if (!isMounted) return;
+      setWsReconnecting(true);
+      const delay = reconnectDelay(retryAttempt);
+      retryAttempt += 1;
+      reconnectTimeout = setTimeout(connect, delay);
+    }
 
     function connect() {
+      if (isMounted) setWsReconnecting(true);
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.host;
-      const wsUrl = `${protocol}//${host}/ws/live-events?token=${encodeURIComponent(authToken)}`;
+      const wsUrl = `${protocol}//${host}/ws/live-events`;
 
       try {
         const ws = new WebSocket(wsUrl);
         wsRef.current = ws;
 
         ws.onopen = () => {
-          if (isMounted) setWsConnected(true);
+          // Browser WebSocket APIs cannot set Authorization headers. Send the
+          // bearer credential as the first frame so it never enters URL logs.
+          ws.send(JSON.stringify({ type: 'AUTH', token: authToken }));
         };
 
         ws.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
-            if (data.type === 'SECURITY_EVENT') {
+            if (data.type === 'AUTHENTICATED') {
+              if (isMounted) {
+                retryAttempt = 0;
+                setWsConnected(true);
+                setWsReconnecting(false);
+              }
+            } else if (data.type === 'SECURITY_EVENT') {
+              if (isMounted) setLastLiveEventAt(Date.now());
               setLiveEvents((prev) => [data, ...prev.slice(0, 150)]);
             }
           } catch (e) {
@@ -269,7 +305,7 @@ export default function App() {
             if (event.code === 4401) {
               window.dispatchEvent(new Event('analyst-session-expired'));
             } else {
-              reconnectTimeout = setTimeout(connect, 3000);
+              scheduleReconnect();
             }
           }
         };
@@ -279,7 +315,7 @@ export default function App() {
         };
       } catch (err) {
         console.error('WS Connection error:', err);
-        reconnectTimeout = setTimeout(connect, 4000);
+        scheduleReconnect();
       }
     }
 
@@ -295,6 +331,12 @@ export default function App() {
   const handleSelectIncidentForAssistant = (incId) => {
     setSelectedIncidentIdForAssistant(incId);
     setActivePage('assistant');
+  };
+
+  const handleRunAgentInvestigation = async (incidentId) => {
+    const result = await api.startAgentInvestigation(incidentId);
+    setSelectedAgentRunId(result.run_id);
+    setActivePage('agent');
   };
 
   const handleInvestigateEvent = (event) => {
@@ -315,16 +357,9 @@ export default function App() {
     setActivePage('assistant');
   };
 
-  const pageTitles = {
-    overview: 'Executive Overview Dashboard',
-    live: 'Live Security Telemetry Stream',
-    threats: 'Threat Intelligence & Open-Set Analysis',
-    incidents: 'Incident Management & Correlation',
-    explain: 'SHAP Explainability & Risk Scoring',
-    assistant: 'Grounded AI Security Assistant (RAG)',
-    data: 'Data Governance & Model Training',
-    evaluation: 'CICIDS Evaluation Summary',
-  };
+  useEffect(() => {
+    document.title = `${PAGE_TITLES[activePage] || 'Security Operations'} · CyberGuard X`;
+  }, [activePage]);
 
   if (!authToken) {
     return (
@@ -333,39 +368,51 @@ export default function App() {
   }
 
   return (
-    <div ref={shellRef} className="flex h-[100dvh] w-screen overflow-hidden bg-soc-bg text-soc-text">
+    <div ref={shellRef} className="min-h-[100dvh] w-full p-3 text-[var(--ink)] sm:p-5">
+      <div className="mx-auto grid min-h-[calc(100dvh-24px)] w-full max-w-[1560px] grid-cols-[auto_minmax(0,1fr)] gap-3 sm:min-h-[calc(100dvh-40px)] sm:gap-5">
       <a href="#main-content" className="sr-only z-[100] rounded-md bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-950 focus:not-sr-only focus:fixed focus:left-4 focus:top-4">Skip to main content</a>
       {/* Sidebar Navigation */}
-      <div className="shell-sidebar flex"><Sidebar activePage={activePage} setActivePage={setActivePage} role={analyst?.role} liveEventsCount={unreadLiveEvents} wsConnected={wsConnected} analyst={analyst} onLogout={handleLogout} /></div>
+      <div className="shell-sidebar sticky top-5 z-20 flex h-[calc(100dvh-40px)]"><Sidebar activePage={activePage} setActivePage={setActivePage} role={analyst?.role} liveEventsCount={unreadLiveEvents} wsConnected={wsConnected} analyst={analyst} onLogout={handleLogout} /></div>
 
       {/* Main Content Area */}
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        <div className="shell-header"><Header pageTitle={pageTitles[activePage] || 'SOC Dashboard'} wsConnected={wsConnected} analyst={analyst} onLogout={handleLogout} liveEvents={liveEvents} role={analyst?.role} setActivePage={setActivePage} commandPaletteOpen={commandPaletteOpen} setCommandPaletteOpen={setCommandPaletteOpen} /></div>
+      <div className="flex min-w-0 flex-col gap-3 sm:gap-4">
+        <div className="shell-header flex justify-end"><Header pageTitle={PAGE_TITLES[activePage] || 'SOC Dashboard'} wsConnected={wsConnected} analyst={analyst} onLogout={handleLogout} liveEvents={liveEvents} role={analyst?.role} setActivePage={setActivePage} commandPaletteOpen={commandPaletteOpen} setCommandPaletteOpen={setCommandPaletteOpen} /></div>
 
         {forbiddenMessage && (
-          <div role="alert" className="mx-8 mt-4 flex items-center justify-between rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-2 text-[13px] text-rose-200">
+          <div role="alert" className="soc-notice soc-notice--error flex items-center justify-between gap-3 rounded-xl px-4 py-2 text-xs">
             <span>403 — {forbiddenMessage}</span>
             <button onClick={() => setForbiddenMessage('')} aria-label="Dismiss permission message">Dismiss</button>
           </div>
         )}
-        {hasSyntheticDemo && (
-          <div role="status" className="mx-8 mt-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-2 text-[13px] font-medium text-amber-200">
-            Synthetic demo data — synthetic_demo events are present in this workspace.
+        {hasSyntheticDemo && !syntheticDemoNoticeDismissed && (
+          <div role="status" className="soc-notice soc-notice--demo flex items-center justify-between gap-3 rounded-xl px-4 py-2 text-xs font-medium">
+            <span>Synthetic demo data — synthetic_demo events are present in this workspace.</span>
+            <button
+              type="button"
+              onClick={() => {
+                setSyntheticDemoNoticeDismissed(true);
+                try { window.sessionStorage.setItem('cyberguardx_synthetic_demo_notice_dismissed', 'true'); } catch {}
+              }}
+              aria-label="Dismiss synthetic demo data notice"
+              title="Dismiss notice"
+              className="shrink-0 rounded-md p-1 text-[var(--medium)] transition-colors hover:bg-white/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--cobalt)]"
+            >
+              <X aria-hidden="true" className="h-4 w-4" />
+            </button>
           </div>
         )}
-
         <main ref={mainScrollRef} id="main-content" className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4 lg:p-5">
-          <div className="soc-workspace min-h-full p-4 sm:p-6 lg:p-8">
+          <div className="soc-workspace min-h-full">
           <ErrorBoundary resetKey={activePage}>
           <Suspense fallback={<div className="p-8 text-center text-slate-400">Loading page…</div>}>
           <div ref={pageRef} key={activePage}>
           {activePage === 'overview' && (
-            <Overview onSelectIncident={handleSelectIncidentForAssistant} />
+            <Overview onSelectIncident={handleSelectIncidentForAssistant} onNavigateToIncidents={() => setActivePage('incidents')} />
           )}
-          {activePage === 'live' && <LiveMonitoring liveEvents={liveEvents} onInvestigateEvent={handleInvestigateEvent} />}
+          {activePage === 'live' && <LiveMonitoring liveEvents={liveEvents} onInvestigateEvent={handleInvestigateEvent} wsConnected={wsConnected} wsReconnecting={wsReconnecting} lastLiveEventAt={lastLiveEventAt} />}
           {activePage === 'threats' && <ThreatIntelligence />}
           {activePage === 'incidents' && (
-            <IncidentManagement onSelectIncidentForAssistant={analyst?.role !== 'viewer' ? handleSelectIncidentForAssistant : null} role={analyst?.role} />
+            <IncidentManagement onSelectIncidentForAssistant={analyst?.role !== 'viewer' ? handleSelectIncidentForAssistant : null} onRunAgentInvestigation={analyst?.role !== 'viewer' ? handleRunAgentInvestigation : null} role={analyst?.role} />
           )}
           {activePage === 'explain' && <Explainability />}
           {activePage === 'assistant' && (
@@ -373,24 +420,26 @@ export default function App() {
           )}
           {activePage === 'data' && <DataManagement role={analyst?.role} />}
           {activePage === 'evaluation' && <Evaluation />}
+          {activePage === 'agent' && <AgentRuns initialRunId={selectedAgentRunId} />}
+          {activePage === 'approvals' && <ApprovalsQueue analyst={analyst} />}
           </div>
           </Suspense>
           </ErrorBoundary>
           </div>
         </main>
       </div>
+      </div>
       <Modal open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} title="Keyboard shortcuts" className="p-5 sm:p-6">
         <div className="flex items-start justify-between gap-4">
-          <div><p className="text-[13px] text-blue-200">Keyboard shortcuts</p><h2 className="mt-1 font-display text-lg font-semibold text-slate-100">Navigate CyberGuard X</h2></div>
-          <button type="button" onClick={() => setShortcutsOpen(false)} aria-label="Close keyboard shortcuts" className="rounded-lg border border-white/10 px-2 py-1 font-mono text-[10px] text-slate-400 hover:text-white">Esc</button>
+          <div><p className="text-xs text-blue-200">Keyboard shortcuts</p><h2 className="mt-1 font-display text-lg font-semibold text-slate-100">Navigate CyberGuard X</h2></div>
+          <button type="button" onClick={() => setShortcutsOpen(false)} aria-label="Close keyboard shortcuts" className="rounded-lg border border-white/10 px-2 py-1 font-mono text-xs text-slate-400 hover:text-white">Esc</button>
         </div>
         <dl className="mt-5 divide-y divide-white/[0.06]">
-          <div className="flex items-center justify-between gap-4 py-3"><dt className="text-xs text-slate-300">Open command palette</dt><dd><kbd className="rounded-md border border-white/10 px-2 py-1 font-mono text-[10px] text-slate-200">Ctrl / ⌘ + K</kbd></dd></div>
-          <div className="flex items-center justify-between gap-4 py-3"><dt className="text-xs text-slate-300">Open this help</dt><dd><kbd className="rounded-md border border-white/10 px-2 py-1 font-mono text-[10px] text-slate-200">?</kbd></dd></div>
-          <div className="flex items-center justify-between gap-4 py-3"><dt className="text-xs text-slate-300">Toggle sidebar</dt><dd><kbd className="rounded-md border border-white/10 px-2 py-1 font-mono text-[10px] text-slate-200">[</kbd></dd></div>
+          <div className="flex items-center justify-between gap-4 py-3"><dt className="text-xs text-slate-300">Open command palette</dt><dd><kbd className="rounded-md border border-white/10 px-2 py-1 font-mono text-xs text-slate-200">Ctrl / ⌘ + K</kbd></dd></div>
+          <div className="flex items-center justify-between gap-4 py-3"><dt className="text-xs text-slate-300">Open this help</dt><dd><kbd className="rounded-md border border-white/10 px-2 py-1 font-mono text-xs text-slate-200">?</kbd></dd></div>
           <div className="py-3"><dt className="mb-2 text-xs text-slate-300">Go to a page</dt><dd className="flex flex-wrap gap-2">{[
             ['o', 'Overview'], ['l', 'Live Feed'], ['i', 'Incidents'], ['t', 'Threats'], ['e', 'Explainability'], ...(analyst?.role === 'viewer' ? [] : [['a', 'AI Assistant']]), ['d', 'Data & Models'], ['v', 'Evaluation'],
-          ].map(([key, label]) => <span key={key} className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.07] bg-white/[0.025] px-2 py-1"><kbd className="font-mono text-[10px] text-blue-200">g {key}</kbd><span className="text-[13px] text-slate-400">{label}</span></span>)}</dd></div>
+          ].map(([key, label]) => <span key={key} className="inline-flex items-center gap-1.5 rounded-lg border border-white/[0.07] bg-white/[0.025] px-2 py-1"><kbd className="font-mono text-xs text-blue-200">g {key}</kbd><span className="text-xs text-slate-400">{label}</span></span>)}</dd></div>
         </dl>
       </Modal>
     </div>

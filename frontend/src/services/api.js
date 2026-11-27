@@ -111,6 +111,30 @@ export const api = {
   getExplainability: (id) => fetchJson(`/explainability/${id}`),
   investigateIncident: (id, topK = 6) => fetchJson(`/incidents/${id}/investigate?top_k=${topK}`, { method: 'POST' }),
 
+  // Opt-in, human-reviewed agent investigations
+  getAgentConfig: () => fetchJson('/agent/config'),
+  startAgentInvestigation: (incidentId) => fetchJson(`/incidents/${incidentId}/agent-investigate`, { method: 'POST' }),
+  getAgentRuns: (incidentId = '', limit = 50) => {
+    const q = new URLSearchParams();
+    if (incidentId) q.set('incident_id', incidentId);
+    q.set('limit', limit);
+    return fetchJson(`/agent/runs?${q.toString()}`);
+  },
+  getAgentRun: (runId) => fetchJson(`/agent/runs/${encodeURIComponent(runId)}`),
+  cancelAgentRun: (runId) => fetchJson(`/agent/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' }),
+  getAgentProposals: (status = 'pending', incidentId = '') => {
+    const q = new URLSearchParams();
+    if (status) q.set('status', status);
+    if (incidentId) q.set('incident_id', incidentId);
+    return fetchJson(`/agent/proposals?${q.toString()}`);
+  },
+  approveAgentProposal: (proposalId, note = '') => fetchJson(`/agent/proposals/${encodeURIComponent(proposalId)}/approve`, {
+    method: 'POST', body: JSON.stringify({ note }),
+  }),
+  rejectAgentProposal: (proposalId, note = '') => fetchJson(`/agent/proposals/${encodeURIComponent(proposalId)}/reject`, {
+    method: 'POST', body: JSON.stringify({ note }),
+  }),
+
   // 6. RAG Chat Assistant
   ragChat: (query, incidentId = null) =>
     fetchJson('/rag/chat', {
@@ -148,6 +172,7 @@ export const api = {
     }
     return await res.json();
   },
+  getUploadStatus: (jobId) => fetchJson(`/upload/status/${encodeURIComponent(jobId)}`),
   analyzeEvent: (eventData) =>
     fetchJson('/analyze', {
       method: 'POST',

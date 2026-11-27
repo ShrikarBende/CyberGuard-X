@@ -4,6 +4,7 @@ import { api } from '../services/api';
 import { gsap } from 'gsap';
 import { useGSAP } from '@gsap/react';
 import { createMotionScope, motion } from '../lib/motion';
+import AssistantAnswer from '../components/AssistantAnswer';
 
 export default function AIAssistant({ initialIncidentId, initialPrompt = '' }) {
   const [incidents, setIncidents] = useState([]);
@@ -38,9 +39,7 @@ export default function AIAssistant({ initialIncidentId, initialPrompt = '' }) {
       try {
         const data = await api.getIncidents();
         setIncidents(data);
-        if (data.length > 0 && !selectedIncidentId) {
-          setSelectedIncidentId(data[0].incident_id);
-        }
+        if (data.length > 0) setSelectedIncidentId((current) => current || data[0].incident_id);
       } catch (err) {
         console.error(err);
         setIncidentLoadError(err.message || 'Could not load incidents.');
@@ -93,15 +92,15 @@ export default function AIAssistant({ initialIncidentId, initialPrompt = '' }) {
   ];
 
   return (
-    <div ref={chatRef} className="flex flex-col h-[calc(100vh-190px)] min-h-[520px] bg-[#1F1F1F] border border-[#313131] rounded-2xl overflow-hidden">
+    <div ref={chatRef} className="flex flex-col h-[calc(100vh-190px)] min-h-[520px] bg-white border border-[var(--line)] rounded-2xl overflow-hidden">
       {/* Top Incident Context Bar */}
-      <div className="p-4 border-b border-[#313131] bg-[#181818] flex flex-wrap items-center justify-between gap-4">
+      <div className="p-4 border-b border-[var(--line)] bg-white flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <div className="w-8 h-8 rounded-xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-400">
             <Bot className="w-5 h-5" />
           </div>
           <div>
-            <h3 className="text-sm font-bold text-slate-100">Grounded SOC Investigation Assistant</h3>
+            <h1 className="font-display text-3xl font-bold leading-tight tracking-tight text-[var(--ink)]">Grounded AI Security Assistant (RAG)</h1>
             <p className="text-xs text-slate-400">FAISS Vector Search & Evidence Citations (Read-Only Guardrail)</p>
           </div>
         </div>
@@ -111,7 +110,7 @@ export default function AIAssistant({ initialIncidentId, initialPrompt = '' }) {
           <select
             value={selectedIncidentId}
             onChange={(e) => setSelectedIncidentId(e.target.value)}
-            className="bg-[#1F1F1F] border border-[#313131] text-xs font-semibold text-slate-200 rounded-xl px-3 py-1.5 focus:outline-none focus:border-purple-500"
+            className="bg-white border border-[var(--line)] text-xs font-semibold text-slate-200 rounded-xl px-3 py-1.5 focus:outline-none focus:border-purple-500"
           >
             <option value="">General Threat Intelligence</option>
             {incidents.map((inc) => (
@@ -150,7 +149,7 @@ export default function AIAssistant({ initialIncidentId, initialPrompt = '' }) {
             >
               <div
                 className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-xs font-bold ${
-                  isUser ? 'bg-blue-600 text-white' : 'bg-purple-600 text-white'
+                  isUser ? 'soc-chat-avatar-user' : 'soc-chat-avatar-bot'
                 }`}
               >
                 {isUser ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
@@ -159,28 +158,28 @@ export default function AIAssistant({ initialIncidentId, initialPrompt = '' }) {
               <div
                 className={`p-4 rounded-2xl text-xs space-y-3 leading-relaxed ${
                   isUser
-                    ? 'bg-blue-600 text-white rounded-tr-none'
-                    : 'bg-[#181818] border border-[#313131] text-slate-200 rounded-tl-none shadow-md'
+                    ? 'soc-chat-user rounded-tr-none'
+                    : 'soc-chat-assistant rounded-tl-none'
                 }`}
               >
-                <div className="whitespace-pre-wrap">{msg.text}</div>
+                {isUser ? <div className="whitespace-pre-wrap break-words">{msg.text}</div> : <AssistantAnswer text={msg.text} />}
 
                 {!isUser && msg.mode && (
-                  <span className="inline-flex rounded-full border border-purple-500/30 bg-purple-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-purple-300">
+                  <span className="inline-flex rounded-full border border-purple-500/30 bg-purple-500/10 px-2 py-0.5 text-xs uppercase tracking-wide text-purple-300">
                     {msg.mode}
                   </span>
                 )}
 
                 {/* Retrieved sources */}
                 {!isUser && msg.sources && msg.sources.length > 0 && (
-                  <div className="pt-2 border-t border-[#313131] flex flex-wrap gap-2">
-                    <span className="text-[10px] font-bold text-slate-400 flex items-center gap-1 uppercase">
+                  <div className="pt-2 border-t border-[var(--line)] flex flex-wrap gap-2">
+                    <span className="text-xs font-bold text-slate-400 flex items-center gap-1 uppercase">
                       <BookOpen className="w-3 h-3 text-purple-400" /> Retrieved Sources:
                     </span>
                     {msg.sources.map((source, cIdx) => (
                       <span
                         key={cIdx}
-                        className="rounded-lg border border-purple-400/20 bg-purple-400/[0.06] px-2.5 py-1 text-[10px] font-mono text-purple-200"
+                        className="rounded-lg border border-purple-400/20 bg-purple-400/[0.06] px-2.5 py-1 text-xs font-mono text-purple-200"
                       >
                         {source.chunk_id}: {source.title} · {Number(source.score).toFixed(3)}
                       </span>
@@ -189,9 +188,9 @@ export default function AIAssistant({ initialIncidentId, initialPrompt = '' }) {
                 )}
 
                 {!isUser && msg.evidenceUsed?.length > 0 && (
-                  <details className="pt-2 border-t border-[#313131]">
-                    <summary className="cursor-pointer text-[10px] font-bold uppercase text-slate-400">Stored evidence used</summary>
-                    <pre className="mt-2 whitespace-pre-wrap break-all text-[10px] text-slate-400">{JSON.stringify(msg.evidenceUsed, null, 2)}</pre>
+                  <details className="pt-2 border-t border-[var(--line)]">
+                    <summary className="cursor-pointer text-xs font-bold uppercase text-slate-400">Stored evidence used</summary>
+                    <pre className="mt-2 whitespace-pre-wrap break-all text-xs text-slate-400">{JSON.stringify(msg.evidenceUsed, null, 2)}</pre>
                   </details>
                 )}
               </div>
@@ -199,8 +198,9 @@ export default function AIAssistant({ initialIncidentId, initialPrompt = '' }) {
           );
         })}
         {loading && (
-          <div className="flex items-center gap-2 text-slate-400 text-xs italic">
-            <Loader2 className="w-4 h-4 animate-spin text-purple-400" />
+          <div className="flex items-center gap-2 text-[var(--muted)] text-xs">
+            <span aria-hidden="true" className="typing-dots inline-flex items-center gap-1"><i /><i /><i /></span>
+            <Loader2 className="w-4 h-4 animate-spin text-[var(--cobalt)]" />
             Analyzing incident evidence and retrieving ATT&CK techniques...
           </div>
         )}
@@ -209,14 +209,14 @@ export default function AIAssistant({ initialIncidentId, initialPrompt = '' }) {
       )}
 
       {/* Quick Prompts Bar */}
-      <div className="px-6 py-2 bg-[#181818] border-t border-[#313131] flex items-center gap-2 overflow-x-auto no-scrollbar">
-        <span className="text-[10px] text-slate-500 font-bold uppercase shrink-0">Prompts:</span>
+      <div className="px-6 py-2 bg-white border-t border-[var(--line)] flex items-center gap-2 overflow-x-auto no-scrollbar">
+        <span className="text-xs text-slate-500 font-bold uppercase shrink-0">Prompts:</span>
         {quickPrompts.map((p, idx) => (
           <button
             key={idx}
             onClick={() => handleSend(p)}
             disabled={!selectedIncidentId || loading}
-            className="px-2.5 py-1 rounded-lg bg-[#1F1F1F] hover:bg-[#313131] border border-[#313131] text-[11px] text-slate-300 whitespace-nowrap transition-colors"
+            className="px-2.5 py-1 rounded-lg bg-white hover:bg-[var(--line)] border border-[var(--line)] text-xs text-slate-300 whitespace-nowrap transition-colors"
           >
             {p}
           </button>
@@ -224,19 +224,19 @@ export default function AIAssistant({ initialIncidentId, initialPrompt = '' }) {
       </div>
 
       {/* Input Form */}
-      <form onSubmit={(e) => { e.preventDefault(); handleSend(); }} className="p-4 bg-[#181818] border-t border-[#313131] flex gap-3">
+      <form onSubmit={(e) => { e.preventDefault(); handleSend(); }} className="p-4 bg-white border-t border-[var(--line)] flex gap-3">
         <input
           type="text"
           aria-label="Ask about detected anomalies, attack classification, or containment"
           placeholder="Ask about detected anomalies, attack classification, or containment..."
           value={inputQuery}
           onChange={(e) => setInputQuery(e.target.value)}
-          className="flex-1 bg-[#1F1F1F] border border-[#313131] text-slate-200 text-xs rounded-xl px-4 py-3 focus:outline-none focus:border-purple-500"
+          className="flex-1 bg-white border border-[var(--line)] text-slate-200 text-xs rounded-xl px-4 py-3 focus:outline-none focus:border-purple-500"
         />
         <button
           type="submit"
           disabled={loading || !inputQuery.trim() || !selectedIncidentId}
-          className="px-5 py-3 rounded-xl bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white text-xs font-semibold transition-all flex items-center gap-2 shadow-lg shadow-purple-600/20"
+          className="soc-chat-send px-5 py-3 rounded-full disabled:opacity-50 text-white text-xs font-semibold transition-all flex items-center gap-2"
         >
           <Send className="w-4 h-4" /> Send
         </button>
