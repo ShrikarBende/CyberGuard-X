@@ -934,6 +934,65 @@ def get_model_status():
     return get_models_status()
 
 
+@router.post("/models/drift")
+def run_drift_check(
+    request: dict,
+    current_user: AnalystAccount = Depends(require_roles("analyst", "admin")),
+):
+    """
+    Evaluate feature-level PSI/KS drift and prediction-distribution shift.
+
+    Request body:
+        {
+            "reference_features": [[...], ...],   # 2-D list, shape (n_ref, n_features)
+            "current_features":   [[...], ...],   # 2-D list, shape (n_cur, n_features)
+            "feature_names":      ["f0", ...],    # optional
+            "reference_predictions": [...],        # optional 1-D list of floats
+            "current_predictions":   [...],        # optional 1-D list of floats
+            "psi_threshold":          0.25,        # optional override
+            "ks_threshold":           0.15,        # optional override
+            "prediction_psi_threshold": 0.25       # optional override
+        }
+
+    Returns the full drift evaluation dict produced by ml.models.drift.evaluate_drift.
+    """
+    import numpy as np
+    from ml.models.drift import evaluate_drift
+
+    try:
+        ref_x = np.asarray(request.get("reference_features", []), dtype=np.float64)
+        cur_x = np.asarray(request.get("current_features", []), dtype=np.float64)
+    except (ValueError, TypeError) as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid feature arrays: {exc}") from exc
+
+    if ref_x.ndim != 2 or cur_x.ndim != 2:
+        raise HTTPException(
+            status_code=400,
+            detail="reference_features and current_features must be 2-D arrays (list of rows).",
+        )
+    if ref_x.size == 0 or cur_x.size == 0:
+        raise HTTPException(status_code=400, detail="Feature arrays must not be empty.")
+
+    ref_preds = request.get("reference_predictions")
+    cur_preds = request.get("current_predictions")
+
+    try:
+        result = evaluate_drift(
+            ref_x,
+            cur_x,
+            feature_names=request.get("feature_names"),
+            reference_predictions=ref_preds,
+            current_predictions=cur_preds,
+            psi_threshold=request.get("psi_threshold"),
+            ks_threshold=request.get("ks_threshold"),
+            prediction_psi_threshold=request.get("prediction_psi_threshold"),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return result
+
+
 # -------------------------------------------------------------------
 # 8. Log Ingestion & Upload (/api/upload, /api/analyze)
 # -------------------------------------------------------------------
