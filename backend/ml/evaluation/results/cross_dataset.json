@@ -1,0 +1,361 @@
+{
+  "protocol": "cross-dataset, train CICIDS2017 test CSE-CIC-IDS2018 (and reverse)",
+  "seed": 42,
+  "directions": {
+    "CICIDS2017_to_CSE-CIC-IDS2018": {
+      "macro_f1": 0.08537530967418447,
+      "accuracy": 0.18219294039359213,
+      "per_family": {
+        "BENIGN": {
+          "precision": 0.2060735546041507,
+          "recall": 0.9928266666666666,
+          "f1": 0.34130500049273843,
+          "support": 150000
+        },
+        "Bot": {
+          "precision": 0.03117505995203837,
+          "recall": 4.542420970610536e-05,
+          "f1": 9.07162396025233e-05,
+          "support": 286191
+        },
+        "BruteForce": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 380943
+        },
+        "WebAttack": {
+          "precision": 5.296329643557015e-05,
+          "recall": 0.013812154696132596,
+          "f1": 0.00010552196439688922,
+          "support": 362
+        }
+      },
+      "classes": [
+        "BENIGN",
+        "Bot",
+        "BruteForce",
+        "WebAttack"
+      ],
+      "features": [
+        "Flow Duration",
+        "Total Fwd Packets",
+        "Total Backward Packets",
+        "Total Length of Fwd Packets",
+        "Total Length of Bwd Packets",
+        "Fwd Packet Length Max",
+        "Fwd Packet Length Min",
+        "Fwd Packet Length Mean",
+        "Fwd Packet Length Std",
+        "Bwd Packet Length Max",
+        "Bwd Packet Length Min",
+        "Bwd Packet Length Mean",
+        "Bwd Packet Length Std",
+        "Flow Bytes/s",
+        "Flow Packets/s",
+        "Flow IAT Mean",
+        "Flow IAT Std",
+        "Flow IAT Max",
+        "Flow IAT Min",
+        "Fwd IAT Total",
+        "Fwd IAT Mean",
+        "Fwd IAT Std",
+        "Fwd IAT Max",
+        "Fwd IAT Min",
+        "Bwd IAT Total",
+        "Bwd IAT Mean",
+        "Bwd IAT Std",
+        "Bwd IAT Max",
+        "Bwd IAT Min",
+        "Fwd PSH Flags",
+        "Bwd PSH Flags",
+        "Fwd URG Flags",
+        "Bwd URG Flags",
+        "Fwd Header Length",
+        "Bwd Header Length",
+        "Fwd Packets/s",
+        "Bwd Packets/s",
+        "Min Packet Length",
+        "Max Packet Length",
+        "Packet Length Mean",
+        "Packet Length Std",
+        "Packet Length Variance",
+        "FIN Flag Count",
+        "SYN Flag Count",
+        "RST Flag Count",
+        "PSH Flag Count",
+        "ACK Flag Count",
+        "URG Flag Count",
+        "CWE Flag Count",
+        "ECE Flag Count",
+        "Down/Up Ratio",
+        "Average Packet Size",
+        "Avg Fwd Segment Size",
+        "Avg Bwd Segment Size",
+        "Fwd Avg Bytes/Bulk",
+        "Fwd Avg Packets/Bulk",
+        "Fwd Avg Bulk Rate",
+        "Bwd Avg Bytes/Bulk",
+        "Bwd Avg Packets/Bulk",
+        "Bwd Avg Bulk Rate",
+        "Subflow Fwd Packets",
+        "Subflow Fwd Bytes",
+        "Subflow Bwd Packets",
+        "Subflow Bwd Bytes",
+        "Init_Win_bytes_forward",
+        "Init_Win_bytes_backward",
+        "min_seg_size_forward",
+        "Active Mean",
+        "Active Std",
+        "Active Max",
+        "Active Min",
+        "Idle Mean",
+        "Idle Std",
+        "Idle Max",
+        "Idle Min",
+        "iat_cv",
+        "fwd_bwd_byte_ratio",
+        "is_well_known_port",
+        "is_registered_port",
+        "is_ephemeral_port"
+      ],
+      "excluded": {
+        "train_rows": 100000,
+        "test_rows": 0,
+        "train_labels": [
+          "DosDDoS",
+          "PortScan"
+        ],
+        "test_labels": []
+      },
+      "train_rows": 63241,
+      "test_rows": 817496
+    },
+    "CSE-CIC-IDS2018_to_CICIDS2017": {
+      "macro_f1": 0.2571008570815823,
+      "accuracy": 0.7829572587403741,
+      "per_family": {
+        "BENIGN": {
+          "precision": 0.7931612903225806,
+          "recall": 0.98352,
+          "f1": 0.8781428571428571,
+          "support": 50000
+        },
+        "Bot": {
+          "precision": 0.44029850746268656,
+          "recall": 0.060574948665297744,
+          "f1": 0.10649819494584838,
+          "support": 1948
+        },
+        "BruteForce": {
+          "precision": 0.2326315789473684,
+          "recall": 0.024153005464480876,
+          "f1": 0.04376237623762376,
+          "support": 9150
+        },
+        "WebAttack": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 2143
+        }
+      },
+      "classes": [
+        "BENIGN",
+        "Bot",
+        "BruteForce",
+        "WebAttack"
+      ],
+      "features": [
+        "Flow Duration",
+        "Total Fwd Packets",
+        "Total Backward Packets",
+        "Total Length of Fwd Packets",
+        "Total Length of Bwd Packets",
+        "Fwd Packet Length Max",
+        "Fwd Packet Length Min",
+        "Fwd Packet Length Mean",
+        "Fwd Packet Length Std",
+        "Bwd Packet Length Max",
+        "Bwd Packet Length Min",
+        "Bwd Packet Length Mean",
+        "Bwd Packet Length Std",
+        "Flow Bytes/s",
+        "Flow Packets/s",
+        "Flow IAT Mean",
+        "Flow IAT Std",
+        "Flow IAT Max",
+        "Flow IAT Min",
+        "Fwd IAT Total",
+        "Fwd IAT Mean",
+        "Fwd IAT Std",
+        "Fwd IAT Max",
+        "Fwd IAT Min",
+        "Bwd IAT Total",
+        "Bwd IAT Mean",
+        "Bwd IAT Std",
+        "Bwd IAT Max",
+        "Bwd IAT Min",
+        "Fwd PSH Flags",
+        "Bwd PSH Flags",
+        "Fwd URG Flags",
+        "Bwd URG Flags",
+        "Fwd Header Length",
+        "Bwd Header Length",
+        "Fwd Packets/s",
+        "Bwd Packets/s",
+        "Min Packet Length",
+        "Max Packet Length",
+        "Packet Length Mean",
+        "Packet Length Std",
+        "Packet Length Variance",
+        "FIN Flag Count",
+        "SYN Flag Count",
+        "RST Flag Count",
+        "PSH Flag Count",
+        "ACK Flag Count",
+        "URG Flag Count",
+        "CWE Flag Count",
+        "ECE Flag Count",
+        "Down/Up Ratio",
+        "Average Packet Size",
+        "Avg Fwd Segment Size",
+        "Avg Bwd Segment Size",
+        "Fwd Avg Bytes/Bulk",
+        "Fwd Avg Packets/Bulk",
+        "Fwd Avg Bulk Rate",
+        "Bwd Avg Bytes/Bulk",
+        "Bwd Avg Packets/Bulk",
+        "Bwd Avg Bulk Rate",
+        "Subflow Fwd Packets",
+        "Subflow Fwd Bytes",
+        "Subflow Bwd Packets",
+        "Subflow Bwd Bytes",
+        "Init_Win_bytes_forward",
+        "Init_Win_bytes_backward",
+        "min_seg_size_forward",
+        "Active Mean",
+        "Active Std",
+        "Active Max",
+        "Active Min",
+        "Idle Mean",
+        "Idle Std",
+        "Idle Max",
+        "Idle Min",
+        "iat_cv",
+        "fwd_bwd_byte_ratio",
+        "is_well_known_port",
+        "is_registered_port",
+        "is_ephemeral_port"
+      ],
+      "excluded": {
+        "train_rows": 0,
+        "test_rows": 100000,
+        "train_labels": [],
+        "test_labels": [
+          "DosDDoS",
+          "PortScan"
+        ]
+      },
+      "train_rows": 817496,
+      "test_rows": 63241
+    }
+  },
+  "cse_ingestion": {
+    "sampling": {
+      "method": "retain every non-BENIGN row; deterministic reservoir-sample BENIGN rows to the per-capture cap",
+      "max_benign_rows_per_capture": 50000,
+      "seed": 42,
+      "feature_dtype": "float32"
+    },
+    "totals": {
+      "source_rows": 3145725,
+      "dropped_nonfinite_rows": 13484,
+      "cleaned_rows": 3132241,
+      "attack_rows_retained": 667496,
+      "benign_rows_cleaned": 2464745,
+      "benign_rows_retained": 150000,
+      "benign_rows_sampled_out": 2314745,
+      "retained_rows": 817496
+    },
+    "captures": [
+      {
+        "capture_file": "Friday-02-03-2018_TrafficForML_CICFlowMeter.csv",
+        "capture_day": "2018-03-02",
+        "source_rows": 1048575,
+        "dropped_nonfinite_rows": 4050,
+        "cleaned_rows": 1044525,
+        "attack_rows_retained": 286191,
+        "benign_rows_cleaned": 758334,
+        "benign_rows_retained": 50000,
+        "benign_rows_sampled_out": 708334,
+        "retained_rows": 336191,
+        "max_benign_rows_per_capture": 50000,
+        "sampling_seed": 1522348406,
+        "label_counts_before_sampling": {
+          "Bot": 286191,
+          "BENIGN": 758334
+        }
+      },
+      {
+        "capture_file": "Thursday-22-02-2018_TrafficForML_CICFlowMeter.csv",
+        "capture_day": "2018-02-22",
+        "source_rows": 1048575,
+        "dropped_nonfinite_rows": 5610,
+        "cleaned_rows": 1042965,
+        "attack_rows_retained": 362,
+        "benign_rows_cleaned": 1042603,
+        "benign_rows_retained": 50000,
+        "benign_rows_sampled_out": 992603,
+        "retained_rows": 50362,
+        "max_benign_rows_per_capture": 50000,
+        "sampling_seed": 4193246815,
+        "label_counts_before_sampling": {
+          "BENIGN": 1042603,
+          "WebAttack": 362
+        }
+      },
+      {
+        "capture_file": "Wednesday-14-02-2018_TrafficForML_CICFlowMeter.csv",
+        "capture_day": "2018-02-14",
+        "source_rows": 1048575,
+        "dropped_nonfinite_rows": 3824,
+        "cleaned_rows": 1044751,
+        "attack_rows_retained": 380943,
+        "benign_rows_cleaned": 663808,
+        "benign_rows_retained": 50000,
+        "benign_rows_sampled_out": 613808,
+        "retained_rows": 430943,
+        "max_benign_rows_per_capture": 50000,
+        "sampling_seed": 3202168319,
+        "label_counts_before_sampling": {
+          "BruteForce": 380943,
+          "BENIGN": 663808
+        }
+      }
+    ]
+  },
+  "cicids_ingestion": {
+    "method": "deterministic feature-hash priority sample, stratified by Label",
+    "seed": 42,
+    "max_rows_per_label": 50000,
+    "source_rows": 2496702,
+    "source_label_counts": {
+      "BENIGN": 2071726,
+      "BruteForce": 9150,
+      "DosDDoS": 321605,
+      "WebAttack": 2143,
+      "Bot": 1948,
+      "PortScan": 90130
+    },
+    "retained_label_counts": {
+      "BENIGN": 50000,
+      "DosDDoS": 50000,
+      "PortScan": 50000,
+      "BruteForce": 9150,
+      "WebAttack": 2143,
+      "Bot": 1948
+    },
+    "retained_rows": 163241
+  }
+}
