@@ -43,6 +43,7 @@ def test_online_backup_is_consistent_during_wal_writes(tmp_path: Path):
             db.execute("PRAGMA busy_timeout=10000")
             for value in range(100):
                 db.execute("INSERT INTO records VALUES (?)", (value,))
+                db.commit()
                 if value == 5:
                     started.set()
 
