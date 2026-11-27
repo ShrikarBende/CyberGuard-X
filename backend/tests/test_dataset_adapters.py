@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 import numpy as np
@@ -65,6 +66,7 @@ def test_cse_adapter_rejects_bad_numeric_features(tmp_path):
 
 
 def test_cse_adapter_drops_nonfinite_rate_rows_and_logs_exact_count(tmp_path, caplog):
+    caplog.set_level(logging.INFO)
     path = tmp_path / "Wednesday-14-02-2018.csv"
     _fixture_capture(path, ["BENIGN", "Bot", "BENIGN", "Bot", "BENIGN", "Bot", "BENIGN"])
     frame = pd.read_csv(path)
