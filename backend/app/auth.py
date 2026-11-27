@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import hmac
+import ipaddress
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -32,6 +33,43 @@ _LOGIN_IP_ATTEMPTS: dict[str, deque[float]] = {}
 _LOGIN_IP_ATTEMPTS_LOCK = threading.Lock()
 LOGIN_IP_LIMIT = 25
 LOGIN_IP_WINDOW_SECONDS = 60
+
+
+def resolve_client_ip(request: Request) -> str | None:
+    """Resolve an IP from the transport peer and explicitly trusted proxies only."""
+    socket_peer = request.scope.get("client")
+    if not isinstance(socket_peer, (tuple, list)) or not socket_peer:
+        return None
+    peer_host = socket_peer[0]
+    if not isinstance(peer_host, str):
+        return None
+    try:
+        peer_ip = ipaddress.ip_address(peer_host)
+    except (TypeError, ValueError):
+        return None
+
+    trusted_peer = False
+    for cidr in settings.TRUSTED_PROXY_CIDRS:
+        try:
+            if peer_ip in ipaddress.ip_network(cidr, strict=False):
+                trusted_peer = True
+                break
+        except (TypeError, ValueError):
+            # Settings validation rejects bad entries; fail closed if mutated at runtime.
+            continue
+    if not trusted_peer:
+        return str(peer_ip)
+
+    forwarded_values = request.headers.getlist("x-forwarded-for")
+    if len(forwarded_values) != 1:
+        return str(peer_ip)
+    forwarded = forwarded_values[0].strip()
+    if not forwarded or "," in forwarded:
+        return str(peer_ip)
+    try:
+        return str(ipaddress.ip_address(forwarded))
+    except ValueError:
+        return str(peer_ip)
 
 
 def login_ip_is_limited(client_ip: str | None) -> bool:

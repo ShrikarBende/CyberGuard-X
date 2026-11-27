@@ -44,7 +44,59 @@ def _as_datetime(value):
 def correlate_events(events, window_minutes: int | None = None) -> dict:
     """Evaluate rules, link shared entities within the window, and form incidents."""
     window = timedelta(minutes=window_minutes or settings.CORRELATION_WINDOW_MINUTES)
-    indicators = evaluate_indicators(events)
+    event_rows = list(events)
+    indicators = evaluate_indicators(event_rows)
+    event_by_id = {str(getattr(row, "event_id", None) or (row.get("event_id") if isinstance(row, dict) else "")): row
+                   for row in event_rows}
+    model_indicators = [item for item in indicators if item["name"] == "model_flagged_flow"]
+    rule_event_ids = {str(event_id) for item in indicators if item["name"] != "model_flagged_flow"
+                      for event_id in item.get("event_ids", [])}
+    suppressed_ids: set[str] = set()
+    for item in model_indicators:
+        event_id = str((item.get("event_ids") or [""])[0])
+        event = event_by_id.get(event_id)
+        detection = (event.get("detection_result") if isinstance(event, dict) else getattr(event, "detection_result", None)) if event else None
+        if not detection:
+            continue
+        get = (lambda key, default=None: detection.get(key, default)) if isinstance(detection, dict) else (lambda key, default=None: getattr(detection, key, default))
+        layer = str(get("layer", "network")).lower()
+        details = get("details", {}) or {}
+        verdict = str(get("verdict", ""))
+        if verdict == "UNKNOWN_NOVEL" or details.get("decision_outcome") == "UNKNOWN_NOVEL":
+            continue
+        confidence = get("attack_probability")
+        if confidence is None:
+            confidence = get("probability")
+        if confidence is None:
+            confidence = get("score")
+        confidence = float(confidence or 0.0)
+        user_detail = details.get("user_sequence") or {}
+        endpoint_score = float(details.get("s_endpoint", details.get("endpoint_score", 0.0)) or 0.0)
+        user_score = float(details.get("s_user", user_detail.get("s_user", 0.0)) or 0.0)
+        graph_detail = details.get("network_graph") or {}
+        graph_score = float(details.get("s_network_graph", graph_detail.get("s_network_graph", 0.0)) or 0.0)
+        host_context = details.get("host_window") or {}
+        host_burst = (float(host_context.get("win_unique_dst_ports_60s", host_context.get("distinct_dst_ports_1m", 0.0)) or 0.0) >= 10 or
+                      float(host_context.get("suspicious_flows_60s", 0.0) or 0.0) >= 5)
+        source_ip = str(getattr(event, "source_ip", None) or (event.get("source_ip") if isinstance(event, dict) else ""))
+        suspicious_flow_count = 0
+        for related in event_rows:
+            related_ip = str(getattr(related, "source_ip", None) or (related.get("source_ip") if isinstance(related, dict) else ""))
+            if related_ip != source_ip:
+                continue
+            related_detection = (related.get("detection_result") if isinstance(related, dict) else getattr(related, "detection_result", None))
+            if related_detection:
+                related_get = (lambda key, default=None: related_detection.get(key, default)) if isinstance(related_detection, dict) else (lambda key, default=None: getattr(related_detection, key, default))
+                if related_get("verdict") in {"KNOWN_THREAT", "UNKNOWN_NOVEL"}:
+                    suspicious_flow_count += 1
+        corroborated = (event_id in rule_event_ids or endpoint_score >= 0.95 or user_score >= 0.5 or
+                        graph_score >= 0.5 or host_burst or suspicious_flow_count >= 5)
+        if layer == "network" and 0.50 <= confidence < 0.85 and not corroborated:
+            suppressed_ids.add(event_id)
+            item["suppressed"] = True
+    active_indicators = [item for item in indicators
+                         if not (item["name"] == "model_flagged_flow" and
+                                 str((item.get("event_ids") or [""])[0]) in suppressed_ids)]
     parent = list(range(len(indicators)))
 
     def find(index):
@@ -58,16 +110,16 @@ def correlate_events(events, window_minutes: int | None = None) -> dict:
         if root_left != root_right:
             parent[root_right] = root_left
 
-    for left in range(len(indicators)):
-        left_keys = _entity_keys(indicators[left])
-        for right in range(left + 1, len(indicators)):
-            if indicators[right]["timestamp"] - indicators[left]["timestamp"] > window:
+    for left in range(len(active_indicators)):
+        left_keys = _entity_keys(active_indicators[left])
+        for right in range(left + 1, len(active_indicators)):
+            if active_indicators[right]["timestamp"] - active_indicators[left]["timestamp"] > window:
                 break
-            if left_keys & _entity_keys(indicators[right]):
+            if left_keys & _entity_keys(active_indicators[right]):
                 union(left, right)
 
     components: dict[int, list[dict]] = defaultdict(list)
-    for index, indicator in enumerate(indicators):
+    for index, indicator in enumerate(active_indicators):
         components[find(index)].append(indicator)
 
     incident_groups = []
@@ -87,6 +139,10 @@ def correlate_events(events, window_minutes: int | None = None) -> dict:
         serialized["incident_candidate"] = (
             indicator["name"], tuple(indicator["event_ids"])
         ) in incident_indicator_ids
+        if str((indicator.get("event_ids") or [""])[0]) in suppressed_ids:
+            serialized["suppressed"] = True
+            serialized["alert_status"] = "NOISE_SUPPRESSED"
+            serialized["incident_candidate"] = False
         alerts.append(serialized)
 
     candidates = []
@@ -109,7 +165,13 @@ def correlate_events(events, window_minutes: int | None = None) -> dict:
             "description": NOT_CONFIRMED,
             "status": "open",
         })
-    return {"alerts": alerts, "incidents": candidates, "window_minutes": window.total_seconds() / 60}
+    raw_alert_count = len(alerts)
+    result = {"alerts": alerts, "incidents": candidates, "window_minutes": window.total_seconds() / 60}
+    if raw_alert_count:
+        result.update({"suppressed_low_confidence_alerts": len(suppressed_ids),
+                       "total_raw_alerts": raw_alert_count,
+                       "alert_suppression_ratio": len(suppressed_ids) / raw_alert_count})
+    return result
 
 
 MITRE_RULES = {
@@ -287,5 +349,8 @@ def run_correlation(db: Session, window_minutes: int | None = None) -> dict:
         "alerts": result["alerts"],
         "incidents": persisted,
         "window_minutes": result["window_minutes"],
+        "suppressed_low_confidence_alerts": result.get("suppressed_low_confidence_alerts", 0),
+        "total_raw_alerts": result.get("total_raw_alerts", len(result["alerts"])),
+        "alert_suppression_ratio": result.get("alert_suppression_ratio", 0.0),
         "message": NOT_CONFIRMED,
     }

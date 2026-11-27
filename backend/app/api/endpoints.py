@@ -22,13 +22,14 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from sqlalchemy import desc, func
+from sqlalchemy import desc, func, or_
 import threading
 
 _EVALUATION_JOBS = {}
 _EVALUATION_JOBS_LOCK = threading.Lock()
 _UPLOAD_JOBS = {}
 _UPLOAD_JOBS_LOCK = threading.Lock()
+_UPLOAD_CAPACITY = threading.BoundedSemaphore(2)
 _REPLAY_JOB = {"status": "idle", "job_id": None, "processed": 0, "total": 0, "error": None}
 _REPLAY_STOP = threading.Event()
 _REPLAY_LOCK = threading.Lock()
@@ -397,6 +398,8 @@ def get_alerts(
 ):
     """Retrieve detection alerts."""
     query = db.query(DetectionResult)
+    alert_status = DetectionResult.details["alert_status"].as_string()
+    query = query.filter(or_(alert_status.is_(None), alert_status != "NOISE_SUPPRESSED"))
     if verdict:
         query = query.filter(DetectionResult.verdict == verdict)
     else:
@@ -489,6 +492,8 @@ def update_incident_status(
     )
     if status in {"CONFIRMED", "FALSE_POSITIVE"}:
         feedback = _incident_feedback_sample(db, inc, status)
+        if status == "CONFIRMED" and inc.threat_classification == "UNKNOWN_NOVEL":
+            feedback["novel_adaptation"] = _adapt_verified_novel(feedback)
         record_analyst_activity(db, analyst.username, "analyst_feedback", "incident", incident_id,
                                 {"label": status, "source": "status_update", **feedback})
     db.commit()
@@ -528,6 +533,26 @@ def _incident_feedback_sample(db: Session, incident: Incident, label: str) -> di
             "risk_score_before_feedback": incident.overall_risk_score}
 
 
+def _adapt_verified_novel(feedback: dict[str, Any]) -> dict[str, Any]:
+    """Add a confirmed novel flow embedding to the bounded in-process reference buffer."""
+    features = feedback.get("flow_features")
+    if not features:
+        return {"accepted": False, "reason": "no_stored_flow_features"}
+    import numpy as np
+    from app.detection.engine import adapt_from_analyst_feedback
+    if isinstance(features, dict):
+        try:
+            vector = np.asarray([float(value) for value in features.values()], dtype=np.float64)
+        except (TypeError, ValueError):
+            return {"accepted": False, "reason": "invalid_stored_flow_features"}
+    else:
+        try:
+            vector = np.asarray(features, dtype=np.float64)
+        except (TypeError, ValueError):
+            return {"accepted": False, "reason": "invalid_stored_flow_features"}
+    return adapt_from_analyst_feedback(vector, "CONFIRMED_NOVEL")
+
+
 @router.post("/incidents/{incident_id}/notes", response_model=InvestigationNoteResponse)
 def add_incident_note(
     incident_id: str,
@@ -551,6 +576,8 @@ def add_incident_note(
     db.add(note)
     if note_in.feedback_label:
         feedback = _incident_feedback_sample(db, inc, note_in.feedback_label)
+        if note_in.feedback_label == "CONFIRMED" and inc.threat_classification == "UNKNOWN_NOVEL":
+            feedback["novel_adaptation"] = _adapt_verified_novel(feedback)
         feedback["analyst_note"] = note_in.content[:2000]
         feedback["note_id"] = note.note_id
         record_analyst_activity(db, analyst.username, "analyst_feedback", "incident", incident_id,
@@ -913,13 +940,21 @@ async def upload_log_file(
     from app.ingestion.parser import count_upload_rows, process_uploaded_log_file
     if not file.filename or not file.filename.lower().endswith((".csv", ".json")):
         raise HTTPException(status_code=400, detail="Only .csv and .json uploads are accepted.")
+    if not _UPLOAD_CAPACITY.acquire(blocking=False):
+        raise HTTPException(status_code=429, detail="Upload capacity is busy. Try again shortly.")
     limit = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
-    contents = await file.read(limit + 1)
+    try:
+        contents = await file.read(limit + 1)
+    except Exception:
+        _UPLOAD_CAPACITY.release()
+        raise
     if len(contents) > limit:
+        _UPLOAD_CAPACITY.release()
         raise HTTPException(status_code=413, detail=f"Upload exceeds the {settings.MAX_UPLOAD_SIZE_MB} MB limit.")
     try:
         row_count = count_upload_rows(file.filename, contents)
     except ValueError as exc:
+        _UPLOAD_CAPACITY.release()
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if row_count > 5000:
         job_id = uuid.uuid4().hex
@@ -944,6 +979,8 @@ async def upload_log_file(
                     logger.exception("Background upload job %s failed", job_id)
                     with _UPLOAD_JOBS_LOCK:
                         _UPLOAD_JOBS[job_id].update(status="failed", error=str(exc))
+                finally:
+                    _UPLOAD_CAPACITY.release()
 
         threading.Thread(target=run_upload, name=f"upload-{job_id[:8]}", daemon=True).start()
         return {"status": "queued", "job_id": job_id, "progress": {"rows_read": 0, "total_rows": row_count}}
@@ -953,6 +990,8 @@ async def upload_log_file(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FileNotFoundError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    finally:
+        _UPLOAD_CAPACITY.release()
 
 
 @router.get("/upload/status/{job_id}")

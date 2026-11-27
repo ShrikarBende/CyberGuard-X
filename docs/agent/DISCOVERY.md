@@ -97,8 +97,8 @@ in `backend/saved_models/`. API tests that import the app do not run lifespan th
 ASGITransport fixture.
 
 `.github/workflows/` contains a full-stack CI workflow: backend tests run on Ubuntu/Python 3.11
-with PostgreSQL 16, Alembic upgrade, and `python -m pytest backend/tests -v`; frontend CI runs
-`npm ci` and `npm run build` on Node 20. `docker-compose.yml` runs PostgreSQL and the backend and
+with SQLite, Alembic upgrade, and `python -m pytest backend/tests -v`; frontend CI runs
+`npm ci` and `npm run build` on Node 20. `docker-compose.yml` runs the backend and frontend and
 sets `LLM_PROVIDER=template_fallback`.
 
 ### Frontend integration surface

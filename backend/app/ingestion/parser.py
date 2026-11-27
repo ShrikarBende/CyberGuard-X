@@ -330,7 +330,7 @@ def process_uploaded_log_file(
         if is_cicids_flow and event_rows:
             from app.detection.engine import persist_scored_batch, score_batch
 
-            predictions = score_batch(pd.DataFrame(flow_rows, columns=feature_names), bundle)
+            predictions = score_batch(pd.DataFrame(flow_rows, columns=feature_names), bundle, events=event_rows)
             detection_counts = persist_scored_batch(event_rows, predictions, bundle, db)
         else:
             detection_counts = {"not_scored": len(event_rows)} if event_rows else {}

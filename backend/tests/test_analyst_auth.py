@@ -24,6 +24,7 @@ from app.auth import (
     hash_password,
     password_hash_needs_upgrade,
     require_roles,
+    resolve_client_ip,
     verify_password,
 )
 from app import auth as auth_module
@@ -86,13 +87,89 @@ def test_legacy_pbkdf2_hash_verifies_and_upgrades_on_login(db):
     assert account.password_hash != legacy_hash
 
 
-def _request():
+def _request(client=("127.0.0.1", 50000), headers=()):
     return Request({
         "type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1",
         "method": "POST", "scheme": "http", "path": "/api/auth/login",
-        "raw_path": b"/api/auth/login", "query_string": b"", "headers": [],
-        "server": ("testserver", 80), "client": ("127.0.0.1", 50000),
+        "raw_path": b"/api/auth/login", "query_string": b"",
+        "headers": [(key.lower().encode(), value.encode()) for key, value in headers],
+        "server": ("testserver", 80), "client": client,
     })
+
+
+@pytest.mark.parametrize(("cidrs", "client", "headers", "expected"), [
+    ([], ("127.0.0.1", 50000), [("X-Forwarded-For", "198.51.100.8")], "127.0.0.1"),
+    (["192.0.2.0/24"], ("198.51.100.9", 50000), [("X-Forwarded-For", "198.51.100.8")], "198.51.100.9"),
+    (["192.0.2.0/24"], ("192.0.2.7", 50000), [("X-Forwarded-For", "198.51.100.8")], "198.51.100.8"),
+    (["192.0.2.0/24"], ("192.0.2.7", 50000), [], "192.0.2.7"),
+    (["192.0.2.0/24"], ("192.0.2.7", 50000), [("X-Forwarded-For", "not-an-ip")], "192.0.2.7"),
+    (["192.0.2.0/24"], ("192.0.2.7", 50000), [("X-Forwarded-For", "198.51.100.8, 203.0.113.5")], "192.0.2.7"),
+    (["192.0.2.0/24"], ("192.0.2.7", 50000), [("X-Forwarded-For", "198.51.100.8"), ("X-Forwarded-For", "203.0.113.5")], "192.0.2.7"),
+    (["192.0.2.0/24"], None, [("X-Forwarded-For", "198.51.100.8")], None),
+    (["192.0.2.0/24"], ("not-an-ip", 50000), [("X-Forwarded-For", "198.51.100.8")], None),
+    (["192.0.2.0/24"], ("192.0.2.7", 50000), [("X-Real-IP", "198.51.100.8")], "192.0.2.7"),
+    (["2001:db8::/32"], ("2001:db8::7", 50000), [("X-Forwarded-For", "2001:db8:1::9")], "2001:db8:1::9"),
+])
+def test_resolve_client_ip_trust_rules(monkeypatch, cidrs, client, headers, expected):
+    monkeypatch.setattr(auth_module.settings, "TRUSTED_PROXY_CIDRS", cidrs)
+    assert resolve_client_ip(_request(client=client, headers=headers)) == expected
+
+
+def test_login_uses_resolved_ip_for_rate_limit_and_audit(db, monkeypatch):
+    peer = "192.0.2.7"
+    client_ip = "198.51.100.8"
+    monkeypatch.setattr(auth_module.settings, "TRUSTED_PROXY_CIDRS", ["192.0.2.0/24"])
+    request = _request(client=(peer, 50000), headers=[("X-Forwarded-For", client_ip)])
+    with pytest.raises(HTTPException) as error:
+        login(LoginRequest(username=" Missing-User ", password="bad"), request, db)
+    assert error.value.status_code == 401
+    assert ("missing-user", client_ip) in auth_module._LOGIN_FAILURES
+    failed_audit = db.query(AnalystActivity).filter_by(action_type="login_failed").one()
+    assert failed_audit.details == {"client_ip": client_ip}
+
+
+def test_login_ip_limit_is_scoped_to_resolved_forwarded_client_ip(db, monkeypatch):
+    proxy_peer = "192.0.2.7"
+    first_client_ip = "198.51.100.8"
+    other_client_ip = "203.0.113.9"
+    monkeypatch.setattr(auth_module.settings, "TRUSTED_PROXY_CIDRS", ["192.0.2.0/24"])
+    monkeypatch.setattr(auth_module, "_LOGIN_IP_ATTEMPTS", {})
+    monkeypatch.setattr(auth_module, "_LOGIN_FAILURES", {})
+
+    def attempt(client_ip, username):
+        request = _request(
+            client=(proxy_peer, 50000),
+            headers=[("X-Forwarded-For", client_ip)],
+        )
+        with pytest.raises(HTTPException) as error:
+            login(LoginRequest(username=username, password="bad"), request, db)
+        return error.value
+
+    for index in range(auth_module.LOGIN_IP_LIMIT):
+        normalized_username = f"throttle-user-{index}"
+        error = attempt(first_client_ip, f" {normalized_username.upper()} ")
+        assert error.status_code == 401
+        assert (normalized_username, first_client_ip) in auth_module._LOGIN_FAILURES
+
+    assert attempt(first_client_ip, "next-user").status_code == 429
+    # The second resolved client has an independent 25-per-60-second bucket.
+    assert attempt(other_client_ip, "different-user").status_code == 401
+
+    failed_audits = db.query(AnalystActivity).filter_by(action_type="login_failed").all()
+    assert len(failed_audits) == auth_module.LOGIN_IP_LIMIT + 1
+    assert sum(row.details == {"client_ip": first_client_ip} for row in failed_audits) == auth_module.LOGIN_IP_LIMIT
+    assert sum(row.details == {"client_ip": other_client_ip} for row in failed_audits) == 1
+    assert db.query(AnalystActivity).filter_by(action_type="login_rate_limited").count() == 0
+
+
+def test_login_ip_limit_remains_25_per_60_seconds():
+    auth_module._LOGIN_IP_ATTEMPTS.clear()
+    for _ in range(auth_module.LOGIN_IP_LIMIT):
+        assert not auth_module.login_ip_is_limited("203.0.113.20")
+    assert auth_module.LOGIN_IP_LIMIT == 25
+    assert auth_module.LOGIN_IP_WINDOW_SECONDS == 60
+    assert auth_module.login_ip_is_limited("203.0.113.20")
+    auth_module._LOGIN_IP_ATTEMPTS.clear()
 
 
 def test_login_issues_signed_token_and_audits_success_and_failure(db):
@@ -220,8 +297,14 @@ def test_incident_status_and_note_actions_are_audited(db):
     assert note.author == "casey"
 
 
-def test_websocket_closes_unauthenticated_connections_with_4401():
+def test_websocket_closes_unauthenticated_connections_with_4401(monkeypatch):
     from app.api.ws import websocket_live_events_endpoint
+    import app.api.ws as ws_module
+
+    async def immediate_wait(awaitable, timeout):
+        return await awaitable
+
+    monkeypatch.setattr(ws_module.asyncio, "wait_for", immediate_wait)
 
     class FakeWebSocket:
         query_params = {}
@@ -232,6 +315,9 @@ def test_websocket_closes_unauthenticated_connections_with_4401():
 
         async def accept(self):
             self.accepted = True
+
+        async def receive_text(self):
+            return "{}"
 
         async def close(self, code, reason):
             self.close_args = (code, reason)

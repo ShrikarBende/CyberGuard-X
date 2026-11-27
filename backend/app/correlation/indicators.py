@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable
+import ipaddress
 
 from app.core.config import settings
 
@@ -58,6 +59,7 @@ def evaluate_indicators(events: Iterable[Any]) -> list[dict]:
     indicators: list[dict] = []
     burst_groups: dict[tuple, list[Any]] = defaultdict(list)
     successful_logins: dict[str, list[Any]] = defaultdict(list)
+    stuffing_groups: dict[str, list[Any]] = defaultdict(list)
 
     for event in rows:
         category = str(_get(event, "event_category", "")).lower()
@@ -67,6 +69,7 @@ def evaluate_indicators(events: Iterable[Any]) -> list[dict]:
             if status in {"failure", "failed", "denied", "blocked"}:
                 key = (_get(event, "user_id"), _get(event, "device_id"), _get(event, "source_ip"))
                 burst_groups[key].append(event)
+                stuffing_groups[str(_get(event, "source_ip") or "")].append(event)
             elif status in {"success", "succeeded", "ok"}:
                 successful_logins[str(_get(event, "user_id"))].append(event)
 
@@ -94,6 +97,24 @@ def evaluate_indicators(events: Iterable[Any]) -> list[dict]:
                     ))
                     # One alert for the first qualifying rolling window is enough.
                     break
+
+    # A shared external source failing against many distinct identities is a stuffing signal.
+    for source_ip, failures in stuffing_groups.items():
+        left = 0
+        for right, event in enumerate(failures):
+            while left < right and _timestamp(event) - _timestamp(failures[left]) > timedelta(minutes=10):
+                left += 1
+            window = failures[left:right + 1]
+            distinct_users = {str(_get(row, "user_id")) for row in window}
+            if len(distinct_users) < 10:
+                continue
+            indicators.append(_record("credential_stuffing_burst",
+                "Failed authentication attempts from one source target at least ten distinct users within ten minutes.", event,
+                ["event_type", "status", "user_id", "source_ip", "timestamp"],
+                event_ids=[_id(row) for row in window],
+                evidence={"distinct_users": len(distinct_users), "source_ip": source_ip,
+                          "users": sorted(distinct_users)}, layer="user"))
+            break
 
     business_start = settings.BUSINESS_HOURS_START
     business_end = settings.BUSINESS_HOURS_END
@@ -145,12 +166,48 @@ def evaluate_indicators(events: Iterable[Any]) -> list[dict]:
 
         process_name = str(_get(event, "process_name", "")).replace("/", "\\").rsplit("\\", 1)[-1].lower()
         command_line = str(_get(event, "command_line", "")).lower()
+        if category == "auth" and event_type == "login_success":
+            prior = [row for row in successful_logins[str(_get(event, "user_id"))]
+                     if _timestamp(row) < timestamp and _get(row, "source_ip") != _get(event, "source_ip")]
+            for previous_login in prior:
+                try:
+                    close_subnet = ipaddress.ip_address(_get(previous_login, "source_ip")) in ipaddress.ip_network(
+                        f"{_get(event, 'source_ip')}/{24 if ':' not in str(_get(event, 'source_ip')) else 64}", strict=False)
+                except (ValueError, TypeError):
+                    close_subnet = False
+                elapsed = (timestamp - _timestamp(previous_login)).total_seconds()
+                if 0 <= elapsed <= 30 * 60 and not close_subnet:
+                    indicators.append(_record("impossible_travel",
+                        "Same user authenticated from IPs in different /24 (IPv4) or /64 (IPv6) subnets within 30 minutes.",
+                        event, ["user_id", "source_ip", "timestamp"],
+                        event_ids=[_id(previous_login), _id(event)],
+                        evidence={"previous_source_ip": _get(previous_login, "source_ip"),
+                                  "source_ip": _get(event, "source_ip"), "elapsed_seconds": elapsed}, layer="user"))
+                break
         if process_name == "powershell.exe" and any(token in command_line for token in (" -enc ", " -encodedcommand ", " -encodedcommand=")):
             indicators.append(_record(
                 "encoded_powershell",
                 "Process is powershell.exe and command line contains -enc or -encodedcommand.",
                 event, ["process_name", "command_line", "user_id", "device_id"], layer="endpoint",
             ))
+        if process_name in {"certutil.exe", "mshta.exe", "bitsadmin.exe"} and any(
+            token in command_line for token in ("http://", "https://", "-urlcache", "-url", "http", "transfer")
+        ):
+            indicators.append(_record("lolbin_execution", "Known LOLBin invoked with remote-fetch indicators.", event,
+                ["process_name", "command_line", "user_id", "device_id"], layer="endpoint"))
+
+        if process_name == "vssadmin.exe" and "delete" in command_line and "shadow" in command_line:
+            indicators.append(_record("ransomware_burst", "vssadmin shadow-copy deletion command observed.", event,
+                ["process_name", "command_line", "user_id", "device_id"], layer="endpoint"))
+        if event_type in {"file_modify", "file_write", "file_create"} and str(_get(event, "file_path", "")).lower().endswith(".locked"):
+            indicators.append(_record("ransomware_burst", "File activity created or modified a .locked file.", event,
+                ["event_type", "file_path", "user_id", "device_id"], layer="endpoint"))
+
+        payload_length = _get(event, "payload_length")
+        query_name = str(_get(event, "query_name", ""))
+        if category == "network" and event_type == "dns_query" and (int(payload_length or len(query_name)) >= 90):
+            indicators.append(_record("dns_tunneling", "DNS query payload/name is at least 90 characters.", event,
+                ["event_type", "query_name", "payload_length", "record_type"], layer="network"))
 
         destination_port = _get(event, "destination_port")
         if category == "network" and destination_port is not None and int(destination_port) in rare_ports:
@@ -185,8 +242,28 @@ def evaluate_indicators(events: Iterable[Any]) -> list[dict]:
                 layer=str(_get(detection, "layer", "network")) if detection else str(_get(event, "model_layer", "network")),
             ))
 
+    file_activity: dict[str, list[Any]] = defaultdict(list)
+    for event in rows:
+        event_type = str(_get(event, "event_type", "")).lower()
+        if str(_get(event, "event_category", "")).lower() == "endpoint" and event_type in {
+            "file_modify", "file_write", "file_create"
+        }:
+            file_activity[str(_get(event, "device_id") or "")].append(event)
+    for device_id, modifications in file_activity.items():
+        left = 0
+        for right, event in enumerate(modifications):
+            while left < right and _timestamp(event) - _timestamp(modifications[left]) > timedelta(minutes=5):
+                left += 1
+            window = modifications[left:right + 1]
+            if len(window) >= 10:
+                indicators.append(_record("ransomware_burst",
+                    "At least ten file writes/modifications occurred on one device within five minutes.", event,
+                    ["event_type", "device_id", "timestamp"], event_ids=[_id(row) for row in window],
+                    evidence={"device_id": device_id, "modification_count": len(window),
+                              "event_ids": [_id(row) for row in window]}, layer="endpoint"))
+                break
+
     # External-destination evidence is explicit and shared with MITRE gating.
-    import ipaddress
     for indicator in indicators:
         if indicator["name"] == "large_transfer":
             destination = indicator["evidence"].get("destination_ip")

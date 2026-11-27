@@ -49,6 +49,7 @@ from sklearn.metrics import average_precision_score, f1_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.decomposition import PCA
+from sklearn.utils.class_weight import compute_class_weight
 from ml.preprocessing.cicids_pipeline import apply_log1p_columns, fit_log1p_columns
 from ml.open_set import calibrated_union_score, compute_centroid_statistics, nearest_centroid_distance, temperature_scaled_energy
 from ml.evaluation.provenance import working_tree_is_dirty
@@ -441,6 +442,45 @@ def threshold_from_known_validation(scores: np.ndarray, known_mask: np.ndarray,
     return float(np.percentile(scores, percentile))
 
 
+def adaptive_family_thresholds(scores: np.ndarray, predicted_classes: np.ndarray,
+                              percentile: float = 95.0, binary_labels: np.ndarray | None = None,
+                              objective: str = "youden") -> dict:
+    """Calibrate per-class cutoffs from validation data.
+
+    Without a separate labeled novelty calibration set, use a known-only quantile
+    that controls per-class false rejects. If such a set is explicitly supplied,
+    maximize Youden's J (or geometric mean) within each predicted class.
+    """
+    scores = np.asarray(scores, dtype=np.float64)
+    predicted_classes = np.asarray(predicted_classes)
+    if len(scores) != len(predicted_classes) or not len(scores):
+        raise ValueError("Adaptive calibration requires aligned, non-empty known validation scores/classes")
+    if binary_labels is not None and len(binary_labels) != len(scores):
+        raise ValueError("binary_labels must align to calibration scores")
+    def select(values, labels=None):
+        if labels is None or len(np.unique(labels)) < 2:
+            return float(np.percentile(values, percentile))
+        from sklearn.metrics import roc_curve
+        fpr, tpr, thresholds = roc_curve(labels, values, drop_intermediate=False)
+        if objective == "youden":
+            utility = tpr - fpr
+        elif objective in {"geometric_mean", "gmean"}:
+            utility = np.sqrt(tpr * (1.0 - fpr))
+        else:
+            raise ValueError("objective must be 'youden' or 'geometric_mean'")
+        selected = float(thresholds[int(np.argmax(utility))])
+        return selected if np.isfinite(selected) else float(np.max(values) + np.finfo(np.float64).eps)
+    fallback = select(scores, binary_labels)
+    thresholds = {}
+    for label in np.unique(predicted_classes):
+        mask = predicted_classes == label
+        local_labels = np.asarray(binary_labels)[mask] if binary_labels is not None else None
+        thresholds[str(label)] = select(scores[mask], local_labels)
+    return {"by_predicted_class": thresholds, "fallback": fallback,
+            "percentile": float(percentile), "objective": objective if binary_labels is not None else "known-class quantile",
+            "calibration_data": "labeled calibration set" if binary_labels is not None else "known validation only"}
+
+
 def known_fold_frames(train_df, val_df, held_out_family: str, label_col: str = "Label"):
     """Return known-only training and validation rows for one held-out family."""
     train = train_df.loc[train_df[label_col] != held_out_family]
@@ -532,11 +572,18 @@ def evaluate_one_family(
     n_classes = len(local_le.classes_)
 
     # ── (a) LightGBM max-probability confidence ───────────────────────────
+    base_weights = compute_class_weight(class_weight="balanced", classes=np.unique(y_tr), y=y_tr)
+    sample_weights_by_class = {int(label): float(weight) for label, weight in zip(np.unique(y_tr), base_weights)}
+    class_multipliers = {"Bot": 2.5, "WebAttack": 1.5}
+    for index, class_name in enumerate(local_le.classes_):
+        if index in sample_weights_by_class:
+            sample_weights_by_class[index] *= class_multipliers.get(str(class_name), 1.0)
+    train_sample_weights = np.asarray([sample_weights_by_class[int(label)] for label in y_tr], dtype=np.float64)
     lgbm = lgb.LGBMClassifier(
         n_estimators=int(pipeline.get("classifier_estimators", 300)), learning_rate=0.05, num_leaves=63,
-        class_weight="balanced", random_state=seed, n_jobs=-1, verbosity=-1,
+        class_weight=None, random_state=seed, n_jobs=-1, verbosity=-1,
     )
-    lgbm.fit(X_tr, y_tr, eval_set=[(X_vl, y_vl_clean)],
+    lgbm.fit(X_tr, y_tr, sample_weight=train_sample_weights, eval_set=[(X_vl, y_vl_clean)],
              callbacks=[lgb.early_stopping(30, verbose=False), lgb.log_evaluation(-1)])
 
     # Anomaly score: 1 - max_probability (high = more anomalous)
@@ -545,6 +592,7 @@ def evaluate_one_family(
     logits_vl = np.asarray(lgbm.predict(X_vl, raw_score=True), dtype=np.float64)
     logits_all = np.asarray(lgbm.predict(X_test_all, raw_score=True), dtype=np.float64)
     predicted_all = lgbm.predict(X_test_all)
+    predicted_val = lgbm.predict(X_vl)
     known_correct = predicted_all[:len(X_te_k)] == y_test_known
     known_macro_f1 = float(f1_score(y_test_known, predicted_all[:len(X_te_k)], average="macro", zero_division=0))
     score_conf_vl  = 1.0 - prob_vl.max(axis=1)
@@ -749,8 +797,22 @@ def evaluate_one_family(
         else:
             auroc = float(roc_auc_score(test_labels, scores))
         fpr95 = fpr_at_tpr(scores, test_labels, tpr_target=0.95)
+        adaptive_threshold = None
+        if pipeline.get("adaptive_family_calibration", False) and name != "union_conf_mahalanobis":
+            adaptive_threshold = adaptive_family_thresholds(detector_validation[name],
+                                                              predicted_val,
+                                                              float(pipeline.get("adaptive_calibration_percentile", THRESHOLD_PERCENTILE)))
+            class_thresholds = adaptive_threshold["by_predicted_class"]
+            row_thresholds = np.asarray([class_thresholds.get(str(label), adaptive_threshold["fallback"])
+                                         for label in predicted_all], dtype=np.float64)
+        else:
+            row_thresholds = None
         if name == "union_conf_mahalanobis":
             flags = detector_flags[name]
+            unk_rej = float(flags[test_labels == 1].mean())
+            knw_rej = float(flags[test_labels == 0].mean())
+        elif row_thresholds is not None:
+            flags = np.asarray(scores) > row_thresholds
             unk_rej = float(flags[test_labels == 1].mean())
             knw_rej = float(flags[test_labels == 0].mean())
         else:
@@ -761,8 +823,11 @@ def evaluate_one_family(
         oscr_x, oscr_y, oscr_auc = oscr_curve(known_correct, scores[len(X_te_k):], scores[:len(X_te_k)])
         curve_indexes = np.unique(np.linspace(0, len(oscr_x) - 1, min(201, len(oscr_x)), dtype=int))
         auprc = float(average_precision_score(test_labels, scores))
+        bootstrap_scores, bootstrap_threshold = scores, thresh
+        if row_thresholds is not None:
+            bootstrap_scores, bootstrap_threshold = scores - row_thresholds, 0.0
         bootstrap = bootstrap_metric_intervals(
-            scores, test_labels, thresh,
+            bootstrap_scores, test_labels, bootstrap_threshold,
             seed + zlib.crc32(f"{held_out_family}:{name}".encode("utf-8")) % (2**31),
             n_resamples=pipeline.get("bootstrap_resamples", 1000),
         )
@@ -776,6 +841,7 @@ def evaluate_one_family(
         detector_results[name] = {
             "AUROC":                   round(auroc, 6),
             "FPR_at_95pct_TPR":       round(fpr95, 6),
+            "fpr95": round(fpr95, 6),
             "unknown_rejection_rate": round(unk_rej, 6),
             "known_false_reject_rate": round(knw_rej, 6),
             "benign_false_positive_rate": None if benign_fpr is None else round(benign_fpr, 6),
@@ -787,7 +853,8 @@ def evaluate_one_family(
                            "known_ccr": oscr_y[curve_indexes].tolist(),
                            "points_sampled": int(len(curve_indexes)),
                            "points_total": int(len(oscr_x))},
-            "threshold_value": union_thresholds if name == "union_conf_mahalanobis" else round(thresh, 6),
+            "threshold_value": (union_thresholds if name == "union_conf_mahalanobis" else
+                                adaptive_threshold if adaptive_threshold is not None else round(thresh, 6)),
             "threshold_percentile": 97.5 if name == "union_conf_mahalanobis" else THRESHOLD_PERCENTILE,
             "benign_fpr_operating_points": benign_fpr_operating_points(
                 scores, test_labels,
@@ -961,8 +1028,9 @@ def run_open_set_evaluation(pipeline: dict) -> dict:
         "per_family_tables": family_metric_tables,
         "macro_average":     macro_avg,
         "open_set_summary": {
-            detector: {metric: macro_avg[detector].get(metric) for metric in
-                       ("oscr_auc", "unknown_recall", "known_macro_f1", "auprc")}
+            detector: ({metric: macro_avg[detector].get(metric) for metric in
+                        ("oscr_auc", "unknown_recall", "known_macro_f1", "auprc")}
+                       | {"fpr95": macro_avg[detector].get("FPR_at_95pct_TPR")})
             for detector in detector_names if detector in macro_avg
         },
         "bootstrap": {"method": "stratified bootstrap resampling of known and unknown test rows",
@@ -974,6 +1042,23 @@ def run_open_set_evaluation(pipeline: dict) -> dict:
     out_path = RESULTS_DIR / f"open_set_{run_id}.json"
     results["results_path"] = str(out_path)
     _write_json_atomic(out_path, results)
+    # Standalone machine-readable OSCR summary for the fused detector, or the
+    # configured primary detector in bounded profiles that only run confidence.
+    summary_detector = ("union_conf_mahalanobis" if "union_conf_mahalanobis" in detector_names
+                        else detector_names[0] if detector_names else None)
+    oscr_rows = [row.get("detectors", {}).get(summary_detector, {})
+                 for row in family_results if summary_detector and row.get("detectors", {}).get(summary_detector)]
+    if oscr_rows:
+        summary = {
+            "detector": summary_detector,
+            "oscr_auc": round(float(np.mean([row["oscr_auc"] for row in oscr_rows])), 6),
+            "fpr95": round(float(np.mean([row["FPR_at_95pct_TPR"] for row in oscr_rows])), 6),
+            "unknown_recall": round(float(np.mean([row["unknown_recall"] for row in oscr_rows])), 6),
+            "oscr_curve_points": [{"family": family_results[index].get("family"), **row.get("oscr_curve", {})}
+                                  for index, row in enumerate([r.get("detectors", {}).get(summary_detector, {})
+                                                               for r in family_results]) if row],
+        }
+        _write_json_atomic(RESULTS_DIR / "oscr_evaluation_summary.json", summary)
     _write_json_atomic(partial_path, {**results, "status": "done"})
     markdown_path = RESULTS_DIR / f"open_set_{run_id}.md"
     report_lines = [f"# Open-set evaluation: {run_id}", "", "| Detector | OSCR AUC | Unknown recall | Known macro F1 | AUPRC |",

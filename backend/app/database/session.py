@@ -9,9 +9,11 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 from app.core.config import BACKEND_DIR, settings
 
 def resolve_database_url(database_url: str):
-    """Resolve relative SQLite database paths from the backend directory."""
+    """Resolve relative SQLite paths and reject unsupported database engines."""
     url = make_url(database_url)
-    if url.get_backend_name() == "sqlite" and url.database not in (None, "", ":memory:"):
+    if url.get_backend_name() != "sqlite":
+        raise ValueError("Only SQLite database URLs are supported")
+    if url.database not in (None, "", ":memory:"):
         path = Path(url.database).expanduser()
         if not path.is_absolute():
             path = BACKEND_DIR / path
@@ -22,22 +24,17 @@ def resolve_database_url(database_url: str):
 
 
 database_url = resolve_database_url(settings.DATABASE_URL)
-connect_args = {}
-if database_url.get_backend_name() == "sqlite":
-    connect_args["check_same_thread"] = False
-
 engine = create_engine(
     database_url,
-    connect_args=connect_args,
+    connect_args={"check_same_thread": False},
     pool_pre_ping=True
 )
-if database_url.get_backend_name() == "sqlite":
-    @event.listens_for(engine, "connect")
-    def _enable_sqlite_pragmas(connection, _record):
-        cursor = connection.cursor()
-        cursor.execute("PRAGMA foreign_keys=ON")
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.close()
+@event.listens_for(engine, "connect")
+def _enable_sqlite_pragmas(connection, _record):
+    cursor = connection.cursor()
+    cursor.execute("PRAGMA foreign_keys=ON")
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.close()
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()

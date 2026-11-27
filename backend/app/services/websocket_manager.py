@@ -14,6 +14,10 @@ class WebSocketManager:
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
+        self.register(websocket)
+
+    def register(self, websocket: WebSocket):
+        """Track a socket whose handshake was already accepted by its route."""
         self.active_connections.append(websocket)
         logger.info(f"WebSocket client connected. Total active: {len(self.active_connections)}")
 

@@ -54,7 +54,7 @@
 
 - Reproduced that a replayed incident from 2024 returned no matching rows because the query window was based on the current time.
 - Related-event queries now span `first_detected_at - window` through `last_updated_at + window`. Naive SQLite datetimes are treated as UTC; aware datetimes are converted to UTC before comparison.
-- Verification: `python -m pytest backend/tests/agent/test_tool_quality.py -q` — 4 passed. The same normalization path is used for SQLite and PostgreSQL; no PostgreSQL service is configured here for a live integration run.
+- Verification: `python -m pytest backend/tests/agent/test_tool_quality.py -q` — 4 passed. Naive SQLite datetimes are treated as UTC; aware datetimes are converted to UTC before comparison.
 
 ## F9 — preserve visible evidence during truncation
 

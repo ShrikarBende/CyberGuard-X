@@ -150,12 +150,14 @@ Backend, from the repository root:
 ```powershell
 python -m pip install -r backend/requirements.txt
 cd backend
-uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --no-proxy-headers
 ```
+
+Uvicorn access logs show the immediate proxy peer address; the application applies its configured trusted-proxy policy separately for login attribution.
 
 The API health URL is [http://127.0.0.1:8000/api/health](http://127.0.0.1:8000/api/health). API docs are at `/docs`; live events use `ws://127.0.0.1:8000/ws/live-events`.
 
-SQLite is the default for local development and CI (`DATABASE_URL=sqlite:///./cyberguardx.db`). PostgreSQL is supported through SQLAlchemy with `postgresql+psycopg2://...`; the Compose deployment starts PostgreSQL with a healthcheck and waits for it before starting the backend. Run `alembic upgrade head` from `backend/` to apply schema migrations.
+SQLite is the only supported database for local development, CI, and the demonstration Compose deployment. Direct backend runs use `DATABASE_URL=sqlite:///./cyberguardx.db`; Compose sets `sqlite:////app/data/cyberguardx.db` in a dedicated persistent named volume. Run `alembic upgrade head` from `backend/` to apply schema migrations.
 
 ## Analyst accounts and permissions
 
@@ -183,7 +185,7 @@ It writes a stratified 3,000-row sample to `backend/datasets/replay/replay_sampl
 
 ## Docker deployment
 
-Copy `.env.example` to `.env`, then set non-empty `SECRET_KEY` and `POSTGRES_PASSWORD` values. The example shows a URL-safe hex generator for both. Compose stops with a clear error if either value is missing.
+Copy `.env.example` to `.env`, then set a non-empty `SECRET_KEY`. The example shows a URL-safe hex generator. For first startup on an empty database, either set both `ADMIN_USERNAME` and `ADMIN_PASSWORD` for one-time administrator bootstrap or create the administrator separately after startup. Compose stops with a clear error if `SECRET_KEY` is missing.
 
 ```powershell
 docker compose up --build
@@ -191,7 +193,9 @@ docker compose up --build
 
 The frontend container serves the UI and proxies `/api` and `/ws` to the backend. Its backend health check uses `/api/health`. Open [http://localhost:3000](http://localhost:3000).
 
-Compose uses the PostgreSQL service and persistent `pgdata` volume. Set `DATABASE_URL` to a SQLite URL instead when running the backend directly for local development or CI.
+Compose uses the persistent Docker volume `cyberguardx_demo_sqlite_data`, mounted at `/app/data`; the backend database path is fixed to `/app/data/cyberguardx.db` and cannot be overridden by `DATABASE_URL` from `.env`. A new empty volume produces a fresh database, and application startup applies Alembic migrations automatically. The preserved source database and recovery copy must never be mounted here; when retaining a volume across restarts, back up the runtime database together with its SQLite WAL/SHM sidecars while writers are quiesced. Do not use `docker compose down -v` when preserving demo data.
+
+The frontend serves the UI and proxies `/api` and `/ws` to the backend. The backend is bound to localhost on port 8000; the frontend is published on port 3000. The backend container is configured for one Uvicorn worker: upload, retrain, evaluation, replay, WebSocket, login-throttle, and agent coordination state is process-local. Running multiple workers or replicas is unsupported until these registries and broadcasts use shared coordination. SQLite serializes writes, so concurrent write-heavy demo jobs can contend; agent runs are persisted and interrupted `running` jobs are marked failed after restart, while other background-job status registries are lost on restart.
 
 ## Results
 

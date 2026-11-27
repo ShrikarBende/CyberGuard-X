@@ -4,17 +4,19 @@ from __future__ import annotations
 import logging
 import hashlib
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
 import joblib
 import numpy as np
-from sqlalchemy import func
+import pandas as pd
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.detection.risk import compute_fused_risk
+from app.correlation.indicators import evaluate_indicators
 from app.models.entities import (
     DetectionResult,
     Incident,
@@ -25,7 +27,12 @@ from app.models.entities import (
 )
 from app.schemas.schemas import SecurityEventCreate
 from app.services.websocket_manager import ws_manager
-from ml.preprocessing.cicids_pipeline import apply_log1p_columns
+from ml.preprocessing.cicids_pipeline import (
+    HostWindowAggregator,
+    add_protocol_invariant_features,
+    add_service_port_buckets,
+    apply_log1p_columns,
+)
 from ml.open_set import (calibrated_open_set_score, calibrated_union_score, decide_open_set,
                          nearest_centroid_distance, temperature_scaled_energy)
 from ml.endpoint_branch import extract_endpoint_features, predict_endpoint
@@ -44,6 +51,105 @@ USER_BUNDLE_PATH = _SAVED_MODELS_DIR / "user_tft.bundle.pkl"
 NETWORK_GAT_BUNDLE_PATH = _SAVED_MODELS_DIR / "network_gat.bundle.pkl"
 _USER_BUNDLE_CACHE: Optional[Dict[str, Any]] = None
 _NETWORK_GAT_BUNDLE_CACHE: Optional[Dict[str, Any]] = None
+_LIVE_HOST_WINDOWS = HostWindowAggregator(max_events_per_source=2048, max_sources=4096)
+_VERIFIED_NOVEL_BUFFER: list[np.ndarray] = []
+
+
+def adapt_from_analyst_feedback(event_features: np.ndarray, analyst_verdict: str) -> dict[str, Any]:
+    """Keep analyst-confirmed novel embeddings as an opt-in runtime reference cluster.
+
+    This does not alter the trained bundles or existing decision thresholds. Matching
+    subsequent embeddings can query ``verified_novel_distance`` for analyst review.
+    """
+    vector = np.asarray(event_features, dtype=np.float64).reshape(-1)
+    if analyst_verdict != "CONFIRMED_NOVEL" or not vector.size or not np.isfinite(vector).all():
+        return {"accepted": False, "buffer_size": len(_VERIFIED_NOVEL_BUFFER)}
+    _VERIFIED_NOVEL_BUFFER.append(vector.copy())
+    return {"accepted": True, "buffer_size": len(_VERIFIED_NOVEL_BUFFER)}
+
+
+def verified_novel_distance(event_features: np.ndarray) -> float | None:
+    """Euclidean distance to the centroid of compatible verified novel samples."""
+    vector = np.asarray(event_features, dtype=np.float64).reshape(-1)
+    compatible = [row for row in _VERIFIED_NOVEL_BUFFER if row.shape == vector.shape]
+    if not compatible:
+        return None
+    centroid = np.mean(compatible, axis=0)
+    return float(np.linalg.norm(vector - centroid))
+
+
+def _should_suppress_borderline_flow_alert(event: SecurityEvent, prediction: dict,
+                                          risk_result: dict, db: Session,
+                                          host_context: dict | None = None) -> bool:
+    """Avoid standalone incidents for uncorroborated borderline network predictions."""
+    if prediction.get("verdict") == "UNKNOWN_NOVEL" or prediction.get("decision_outcome") == "UNKNOWN_NOVEL":
+        return False
+    if prediction.get("verdict") != "KNOWN_THREAT":
+        return False
+    inputs = risk_result.get("inputs", {})
+    confidence = float(inputs.get("s_network_flow") or prediction.get("attack_probability") or
+                       prediction.get("probability") or 0.0)
+    if not 0.50 <= confidence < 0.85:
+        return False
+    context = host_context or {}
+    if (float(context.get("win_unique_dst_ports_60s", 0.0) or 0.0) >= 10 or
+            float(context.get("suspicious_flows_60s", 0.0) or 0.0) >= 5):
+        return False
+    if (float(inputs.get("s_endpoint", 0.0) or 0.0) >= 0.95 or
+            float(inputs.get("s_user", 0.0) or 0.0) >= 0.5 or
+            float(inputs.get("s_network_graph", 0.0) or 0.0) >= 0.5):
+        return False
+    cutoff = event.timestamp - timedelta(minutes=60)
+    match = [SecurityEvent.timestamp >= cutoff]
+    entities = []
+    if event.user_id:
+        entities.append(SecurityEvent.user_id == event.user_id)
+    if event.device_id:
+        entities.append(SecurityEvent.device_id == event.device_id)
+    if event.source_ip:
+        entities.append(SecurityEvent.source_ip == event.source_ip)
+    if not entities:
+        return False
+    rows = (db.query(SecurityEvent).filter(*match, or_(*entities))
+            .order_by(SecurityEvent.timestamp.asc()).all())
+    suspicious_flows = 0
+    for row in rows:
+        if not event.source_ip or row.source_ip != event.source_ip:
+            continue
+        detection = row.detection_result
+        if detection and detection.verdict in {"KNOWN_THREAT", "UNKNOWN_NOVEL"}:
+            if float(detection.attack_probability or detection.probability or 0.0) >= 0.50:
+                suspicious_flows += 1
+    if suspicious_flows >= 5:
+        return False
+    related_ids = {row.event_id for row in rows}
+    if any(item["name"] != "model_flagged_flow" and related_ids.intersection(item.get("event_ids", []))
+           for item in evaluate_indicators(rows)):
+        return False
+    for row in rows:
+        detection = row.detection_result
+        if detection is None:
+            continue
+        details = detection.details or {}
+        user_data = details.get("user_sequence") or {}
+        graph_data = details.get("network_graph") or {}
+        if (float(details.get("s_endpoint", 0.0) or 0.0) >= 0.95 or
+            float(details.get("s_network_graph", graph_data.get("s_network_graph", 0.0)) or 0.0) >= 0.5 or float(
+            details.get("s_user", user_data.get("s_user", 0.0)) or 0.0
+        ) >= 0.5):
+            return False
+    return True
+
+
+def _update_live_host_context(event: SecurityEvent, flow_row: dict | None = None) -> dict[str, float]:
+    payload = event.raw_payload if isinstance(event.raw_payload, dict) else {}
+    payload_features = payload.get("cicids_features", {}) if isinstance(payload.get("cicids_features"), dict) else {}
+    extra_features = {**payload_features, **(flow_row or {})}
+    row = {**payload, **extra_features,
+           "source_ip": event.source_ip, "destination_ip": event.destination_ip,
+           "destination_port": event.destination_port, "timestamp": event.timestamp,
+           "bytes_transferred": event.bytes_transferred if event.bytes_transferred else None}
+    return _LIVE_HOST_WINDOWS.update(row)
 
 
 def load_endpoint_bundle() -> Optional[Dict[str, Any]]:
@@ -378,12 +484,23 @@ def predict_flow(flow: Dict[str, Any], bundle: Dict[str, Any]) -> Dict[str, Any]
     }
 
 
-def score_batch(frame, bundle: Dict[str, Any]) -> list[Dict[str, Any]]:
+def score_batch(frame, bundle: Dict[str, Any], events: list[SecurityEvent] | None = None) -> list[Dict[str, Any]]:
     """Score CICIDS flows together while preserving ``predict_flow`` semantics."""
     feature_names = list(bundle["feature_names"])
     class_names = list(bundle["class_names"])
     if "BENIGN" not in class_names:
         raise ValueError("Configured CICIDS model bundle must include the BENIGN class.")
+    frame = frame.copy()
+    add_protocol_invariant_features(frame)
+    fallback_ports = ([event.destination_port for event in events]
+                      if events is not None and len(events) == len(frame) else None)
+    add_service_port_buckets(frame, fallback_ports)
+    host_contexts: list[dict[str, float]] = [{} for _ in range(len(frame))]
+    if events is not None and len(events) == len(frame):
+        for index in sorted(range(len(events)), key=lambda i: events[i].timestamp):
+            host_contexts[index] = _update_live_host_context(events[index], frame.iloc[index].to_dict())
+        for name in set(feature_names).intersection(host_contexts[0] if host_contexts else {}):
+            frame[name] = [context.get(name, 0.0) for context in host_contexts]
     missing = [name for name in feature_names if name not in frame.columns]
     if missing:
         raise ValueError(f"CICIDS2017 flow features missing: {', '.join(missing[:5])}")
@@ -458,6 +575,7 @@ def score_batch(frame, bundle: Dict[str, Any]) -> list[Dict[str, Any]]:
                                 "branch_anomaly_score": anomaly_value,
                                 "energy_anomaly_score": energy_value}
         results.append({
+            "host_window": host_contexts[row_index],
             "class_names": class_names,
             "probabilities": row_probabilities,
             "probability_by_class": {
@@ -480,6 +598,9 @@ def persist_scored_batch(events: list[SecurityEvent], predictions: list[Dict[str
     detection_rows = []
     counts: Dict[str, int] = {}
     grouped_incident_ids = {}
+    host_context_by_event = {}
+    for event, prediction in zip(events, predictions):
+        host_context_by_event[event.event_id] = prediction.get("host_window") or _update_live_host_context(event)
     for event, prediction in zip(events, predictions):
         verdict = prediction["verdict"]
         counts[verdict] = counts.get(verdict, 0) + 1
@@ -515,6 +636,7 @@ def persist_scored_batch(events: list[SecurityEvent], predictions: list[Dict[str
                 "risk_breakdown": risk_result["breakdown"],
                 "risk_fusion": {key: risk_result[key] for key in ("probability", "severity", "contributions", "inputs", "model_version", "calibrated")},
                 "s_network_flow": attack_probability,
+                "host_window": host_context_by_event.get(event.event_id, {}),
                 "open_set_score": prediction.get("open_set_score"),
                 "centroid_distance": prediction.get("centroid_distance"),
                 "open_set_label": prediction.get("open_set_label"),
@@ -530,6 +652,15 @@ def persist_scored_batch(events: list[SecurityEvent], predictions: list[Dict[str
         grouped = grouped_incident_ids.get(event.event_id)
         if grouped:
             prediction, risk_result, attack_probability = grouped
+            if _should_suppress_borderline_flow_alert(event, prediction, risk_result, db,
+                                                       host_context_by_event.get(event.event_id)):
+                detection = db.query(DetectionResult).filter(DetectionResult.event_id == event.event_id).first()
+                if detection:
+                    details = dict(detection.details or {})
+                    details["alert_status"] = "NOISE_SUPPRESSED"
+                    details["suppression_reason"] = "Borderline network-only confidence without rule, endpoint, or user corroboration."
+                    detection.details = details
+                continue
             _upsert_grouped_flow_incident(event, prediction, bundle, risk_result, attack_probability, db)
     return counts
 
@@ -557,7 +688,9 @@ async def process_single_event(event_in: SecurityEventCreate, db: Session) -> Di
         user_id=event_in.user_id,
         device_id=event_in.device_id,
         source_ip=event_in.source_ip,
+        source_port=event_in.source_port,
         destination_ip=event_in.destination_ip,
+        destination_port=event_in.destination_port,
         event_category=event_in.event_category,
         event_type=event_in.event_type,
         status=event_in.status,
@@ -570,6 +703,8 @@ async def process_single_event(event_in: SecurityEventCreate, db: Session) -> Di
         dataset=event_in.dataset,
     )
     db.add(db_event)
+    host_context = (_update_live_host_context(db_event)
+                    if event_in.event_category == "network" else {})
 
     if event_in.event_category == "endpoint":
         bundle = load_endpoint_bundle()
@@ -664,6 +799,11 @@ async def process_single_event(event_in: SecurityEventCreate, db: Session) -> Di
         return await _save_and_broadcast_unscored(
             event_in, db, db_event, event_id, "CICIDS2017 flow features are required"
         )
+    flow_frame = pd.DataFrame([flow])
+    add_protocol_invariant_features(flow_frame)
+    add_service_port_buckets(flow_frame, [event_in.destination_port])
+    flow = flow_frame.iloc[0].to_dict()
+    flow.update(host_context)
 
     bundle = load_model_bundle()
     if bundle is None:
@@ -733,6 +873,7 @@ async def process_single_event(event_in: SecurityEventCreate, db: Session) -> Di
         "s_user": fusion_inputs["s_user"],
         "s_endpoint": fusion_inputs["s_endpoint"],
         "s_network_graph": fusion_inputs["s_network_graph"],
+        "host_window": host_context,
         "s_open_set_distance": fusion_inputs["s_open_set_distance"],
         "open_set_score": prediction.get("open_set_score"),
         "centroid_distance": prediction.get("centroid_distance"),
@@ -763,7 +904,12 @@ async def process_single_event(event_in: SecurityEventCreate, db: Session) -> Di
         "DosDDoS": ("Impact", "T1498"),
     }.get(predicted_class)
     incident_id = None
-    if verdict in {"KNOWN_THREAT", "UNKNOWN_CANDIDATE", "UNKNOWN_NOVEL"}:
+    suppressed = _should_suppress_borderline_flow_alert(db_event, prediction, risk_result, db, host_context)
+    if suppressed:
+        details["alert_status"] = "NOISE_SUPPRESSED"
+        details["suppression_reason"] = "Borderline network-only confidence without rule, endpoint, or user corroboration."
+        detection.details = dict(details)
+    if verdict in {"KNOWN_THREAT", "UNKNOWN_CANDIDATE", "UNKNOWN_NOVEL"} and not suppressed:
         incident_id = _upsert_grouped_flow_incident(
             db_event, prediction, bundle, risk_result, attack_probability, db
         )

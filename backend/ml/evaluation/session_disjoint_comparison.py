@@ -29,7 +29,8 @@ def run_comparison(seeds: tuple[int, ...] = (42, 43), sample: float = .5) -> dic
     all_families = None
     for mode in ("stratified_random", "session_disjoint"):
         for seed in seeds:
-            pipeline = build_full_pipeline(seed=seed, sample=sample, log1p=True, split_mode=mode)
+            pipeline = build_full_pipeline(seed=seed, sample=sample, log1p=True, split_mode=mode,
+                                           sanitize_session_features=(mode == "session_disjoint"))
             pipeline.update({"train_row_cap_per_fold": 60_000, "bootstrap_resamples": 200,
                              "classifier_estimators": 80,
                              "detectors": ["confidence"],
