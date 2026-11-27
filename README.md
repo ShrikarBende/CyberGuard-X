@@ -304,6 +304,20 @@ Generated from completed JSON files in `backend/ml/evaluation/results/`. Means a
 
 <!-- GENERATED RESULTS: END -->
 
+## Project status and limitations
+
+> [!IMPORTANT]
+> **Detection is not production-validated.** This repository is a research and engineering prototype; do not treat its scores or verdicts as production-grade threat detection.
+
+- **Single dataset:** Evaluated on CICIDS2017 only (a 2017 testbed with known labelling limitations).
+- **One capture day per attack family:** Within the CICIDS2017 development split (Tuesday–Friday; Monday is reserved untouched), each target attack family appears on a single capture day (`n=1`).
+- **Proxy labels on secondary branches:** The endpoint (DAE + Isolation Forest), user sequence (TFT), host communication graph (GAT), and risk-fusion branches rely on unsupervised, weakly supervised, or synthetic proxy labels rather than independently captured attack/benign pairs.
+- **Further reading:**
+  - [docs/AUDIT.md](docs/AUDIT.md) — system & model audit
+  - [docs/RESULTS.md](docs/RESULTS.md) — saved benchmark results, label provenance, and ablations
+  - [docs/PHASE2_EVALUATION_PROTOCOL.md](docs/PHASE2_EVALUATION_PROTOCOL.md) — evaluation splits and protocol rules
+  - [docs/MODEL_ARTIFACT_SECURITY.md](docs/MODEL_ARTIFACT_SECURITY.md) — artifact signing, key rotation, and safe-format roadmap
+
 ## Known evaluation limitations
 
 - **One capture day per target attack family (`n=1`).** In the frozen CICIDS2017 development scope (Tuesday–Friday; Monday is the reserved untouched holdout), each of the four target families appears on only one capture day (`BruteForce` on Tuesday, `WebAttack` on Thursday, `Bot` and `PortScan` on Friday). Consequently, per-family generalization for Bot, WebAttack, BruteForce, and PortScan cannot be reliably measured on this dataset; results at `n=1` held-out capture day or session are **indicative only**.
