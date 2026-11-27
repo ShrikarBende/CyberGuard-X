@@ -11,6 +11,7 @@ Status: **adapter and collection planning implemented; external-data evaluation 
 - Once the processed files are placed, run `python -m ml.evaluation.cross_dataset --mode cse-capture-day --output backend/ml/evaluation/results/cse_capture_day.json` from `backend`; run both transfer directions with `python -m ml.evaluation.cross_dataset --mode cross-dataset --output backend/ml/evaluation/results/cross_dataset.json`. These commands train the existing LightGBM classifier and write result JSON; they were not run here.
 - The CSE adapter maps abbreviated fields to CICIDS2017 canonical names, but shared names do not prove CICFlowMeter formula, unit, timeout, or version equivalence. Treat feature equivalence as **candidate mapping only** until headers and extraction provenance from the actual files are inspected. Host-window features are added only when usable source IP and timestamp data exist.
 - The optional UNSW adapter reads supplied `UNSW-NB15_[1-4].csv` files if present and maps the supplied binary label to `BENIGN`/`Attack`; it is not used by the CSE evaluation command and does not claim attack-family equivalence.
+- Endpoint capture steps and label rules are documented in [`ENDPOINT_DATA_COLLECTION.md`](ENDPOINT_DATA_COLLECTION.md). `backend/ml/endpoint_dataset.py` validates already windowed CSV/JSONL rows with explicit labels and capture IDs; it does not assign labels to raw Sysmon records. No labeled endpoint data was created.
 
 ---
 

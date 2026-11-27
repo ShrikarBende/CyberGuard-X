@@ -24,10 +24,10 @@ This procedure creates a provenance-backed local dataset for endpoint evaluation
 
 Use exactly the nine numeric feature fields from `ml.endpoint_branch.FEATURE_NAMES`, plus an explicit `label` (`benign`/`attack` or `0`/`1`) and `capture_id`. JSONL may place the nine values inside a `features` object. The loader validates required fields, finite non-negative values, labels, and capture IDs; it does not derive labels or parse raw Sysmon event logs.
 
-Example schema (illustrative format only; it is not collected or labeled endpoint data):
+The required JSONL shape is shown below with placeholders only; it is not a sample event or labeled record:
 
 ```json
-{"features":{"process_creation_rate":0,"parent_child_anomaly_rate":0,"privilege_escalation_flags":0,"registry_write_count":0,"file_write_count":0,"network_connection_count":0,"cpu_percent":0,"memory_percent":0,"failed_process_count":0},"label":"benign","capture_id":"<operator-assigned-capture-id>"}
+{"features":"<nine measured feature values>","label":"<manifest-derived benign or attack>","capture_id":"<operator-assigned-capture-id>"}
 ```
 
 Validate a placed file without fitting a model:
