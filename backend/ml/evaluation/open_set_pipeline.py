@@ -490,6 +490,74 @@ def known_fold_frames(train_df, val_df, held_out_family: str, label_col: str = "
     return train, validation
 
 
+def binary_operating_metrics(scores: np.ndarray, labels: np.ndarray, threshold: float,
+                             benign_mask: np.ndarray, seed: int,
+                             n_resamples: int = 2000) -> dict:
+    """Binary unknown-rejection metrics and stratified row-bootstrap intervals."""
+    labels = np.asarray(labels, dtype=np.int8)
+    flags = np.asarray(scores, dtype=np.float64) > float(threshold)
+    benign_mask = np.asarray(benign_mask, dtype=bool)
+    if len(flags) != len(labels) or len(benign_mask) != len(labels):
+        raise ValueError("Operating metric arrays must be aligned")
+    positive = labels == 1
+    negative = labels == 0
+    benign = negative & benign_mask
+    n_positive, n_negative, n_benign = int(positive.sum()), int(negative.sum()), int(benign.sum())
+    tp = int(np.count_nonzero(flags & positive))
+    fp = int(np.count_nonzero(flags & negative))
+    benign_fp = int(np.count_nonzero(flags & benign))
+    recall = tp / n_positive if n_positive else None
+    fpr = fp / n_negative if n_negative else None
+    benign_fpr = benign_fp / n_benign if n_benign else None
+    precision = tp / (tp + fp) if tp + fp else 0.0
+    f1 = (2 * precision * recall / (precision + recall)
+          if recall is not None and precision + recall else 0.0 if recall is not None else None)
+
+    rng = np.random.default_rng(seed)
+    if n_resamples < 1:
+        raise ValueError("n_resamples must be positive")
+    recall_hat = recall if recall is not None else 0.0
+    fpr_hat = fpr if fpr is not None else 0.0
+    benign_fpr_hat = benign_fpr if benign_fpr is not None else 0.0
+    sampled_tp = rng.binomial(n_positive, recall_hat, size=n_resamples)
+    sampled_fp = rng.binomial(n_negative, fpr_hat, size=n_resamples)
+    sampled_benign_fp = rng.binomial(n_benign, benign_fpr_hat, size=n_resamples)
+    sampled_precision = np.divide(sampled_tp, sampled_tp + sampled_fp,
+                                   out=np.zeros(n_resamples, dtype=np.float64),
+                                   where=(sampled_tp + sampled_fp) > 0)
+    sampled_recall = sampled_tp / n_positive if n_positive else np.full(n_resamples, np.nan)
+    sampled_fpr = sampled_fp / n_negative if n_negative else np.full(n_resamples, np.nan)
+    sampled_benign_fpr = (sampled_benign_fp / n_benign if n_benign
+                          else np.full(n_resamples, np.nan))
+    sampled_f1 = np.divide(2 * sampled_precision * sampled_recall,
+                           sampled_precision + sampled_recall,
+                           out=np.zeros(n_resamples, dtype=np.float64),
+                           where=np.isfinite(sampled_recall) & ((sampled_precision + sampled_recall) > 0))
+
+    def ci(values: np.ndarray):
+        valid = values[np.isfinite(values)]
+        return ([round(float(value), 6) for value in np.quantile(valid, [0.025, 0.975])]
+                if len(valid) else [None, None])
+
+    return {
+        "precision": None if precision is None else round(float(precision), 6),
+        "recall": None if recall is None else round(float(recall), 6),
+        "f1": None if f1 is None else round(float(f1), 6),
+        "fpr": None if fpr is None else round(float(fpr), 6),
+        "benign_replay_false_alert_rate": None if benign_fpr is None else round(float(benign_fpr), 6),
+        "support": {"unknown_positive": n_positive, "known_negative": n_negative,
+                    "benign_replay": n_benign, "true_positive": tp,
+                    "false_positive": fp, "benign_false_alerts": benign_fp},
+        "bootstrap_95CI": {
+            "precision": ci(sampled_precision), "recall": ci(sampled_recall),
+            "f1": ci(sampled_f1), "fpr": ci(sampled_fpr),
+            "benign_replay_false_alert_rate": ci(sampled_benign_fpr),
+        },
+        "bootstrap_method": "stratified nonparametric row bootstrap of binary decisions; known, unknown, and benign supports fixed",
+        "bootstrap_resamples": n_resamples,
+    }
+
+
 # ─── Single family evaluation ─────────────────────────────────────────────────
 
 def evaluate_one_family(
@@ -536,6 +604,14 @@ def evaluate_one_family(
     # ── Re-encode labels for this run (excludes held-out family) ──────────
     local_le = LabelEncoder()
     y_tr = local_le.fit_transform(tr[label_col].values)
+    excluded_test_labels = test_known.loc[
+        ~test_known[label_col].isin(local_le.classes_), label_col
+    ].value_counts().to_dict()
+    test_known = test_known.loc[test_known[label_col].isin(local_le.classes_)]
+    if test_known.empty:
+        return {"family": held_out_family,
+                "skipped": "No test rows from classes represented in training",
+                "excluded_test_labels": {str(key): int(value) for key, value in excluded_test_labels.items()}}
     # Map val and test using same encoder; unknown gets -1
     def _safe_encode(labels):
         mapping = {c: i for i, c in enumerate(local_le.classes_)}
@@ -599,7 +675,10 @@ def evaluate_one_family(
     score_conf_all = 1.0 - prob_all.max(axis=1)
 
     # Threshold: 95th percentile of KNOWN VAL scores (no unknown data used)
-    thresh_conf = threshold_from_known_validation(score_conf_vl, np.ones(len(score_conf_vl), dtype=bool))
+    threshold_percentile = float(pipeline.get("baseline_threshold_percentile", THRESHOLD_PERCENTILE))
+    thresh_conf = threshold_from_known_validation(
+        score_conf_vl, np.ones(len(score_conf_vl), dtype=bool), percentile=threshold_percentile
+    )
     # ASSERTION: val set has zero unknown-family samples
     assert (vl[label_col] == held_out_family).sum() == 0, \
         f"LEAKAGE: held-out family {held_out_family} present in val during threshold selection"
@@ -838,7 +917,7 @@ def evaluate_one_family(
                 n_resamples=pipeline.get("bootstrap_resamples", 1000),
             )
             bootstrap["unknown_rejection_rate_95CI"] = rejection_bootstrap["unknown_rejection_rate_95CI"]
-        detector_results[name] = {
+        detector_result = {
             "AUROC":                   round(auroc, 6),
             "FPR_at_95pct_TPR":       round(fpr95, 6),
             "fpr95": round(fpr95, 6),
@@ -855,7 +934,7 @@ def evaluate_one_family(
                            "points_total": int(len(oscr_x))},
             "threshold_value": (union_thresholds if name == "union_conf_mahalanobis" else
                                 adaptive_threshold if adaptive_threshold is not None else round(thresh, 6)),
-            "threshold_percentile": 97.5 if name == "union_conf_mahalanobis" else THRESHOLD_PERCENTILE,
+            "threshold_percentile": 97.5 if name == "union_conf_mahalanobis" else threshold_percentile,
             "benign_fpr_operating_points": benign_fpr_operating_points(
                 scores, test_labels,
                 seed=seed + zlib.crc32(f"{held_out_family}:{name}:operating-points".encode("utf-8")) % (2**31),
@@ -863,6 +942,17 @@ def evaluate_one_family(
             ),
             **bootstrap,
         }
+        if pipeline.get("include_binary_operating_metrics"):
+            aligned_benign = np.concatenate([
+                test_known[label_col].astype(str).to_numpy() == "BENIGN",
+                np.zeros(len(test_unknown), dtype=bool),
+            ])
+            detector_result["operating_metrics"] = binary_operating_metrics(
+                scores, test_labels, thresh, aligned_benign,
+                seed + zlib.crc32(f"{held_out_family}:{name}:binary-metrics".encode("utf-8")) % (2**31),
+                n_resamples=int(pipeline.get("metric_bootstrap_resamples", 2000)),
+            )
+        detector_results[name] = detector_result
         elapsed = time.perf_counter() - progress_state["started"] if progress_state else time.perf_counter() - family_started
         if progress_state:
             progress_state["completed"] += 1
@@ -883,6 +973,9 @@ def evaluate_one_family(
         "row_counts": {"train": int(len(tr)), "validation": int(len(vl_clean)),
                        "test_known": int(len(X_te_k)), "test_unknown": int(len(X_te_u))},
         "known_classes_in_run": local_le.classes_.tolist(),
+        "excluded_test_rows_without_training_class": {
+            str(key): int(value) for key, value in excluded_test_labels.items()
+        },
         "detectors":       detector_results,
     }
 
