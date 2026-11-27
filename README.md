@@ -153,6 +153,8 @@ cd backend
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload --no-proxy-headers
 ```
 
+Model artifact verification is enabled by default (`ALLOW_UNSIGNED_MODELS=false`). On a fresh clone, the bundles in `backend/saved_models/` are unsigned, so startup refuses to load them with a missing-manifest error unless you either generate an `ARTIFACT_HMAC_KEY` (`python -c "import secrets; print(secrets.token_hex(32))"`) and run `python scripts/sign_existing_models.py`, or set `ALLOW_UNSIGNED_MODELS=true` for local development only (logs a warning on every load). See [docs/MODEL_ARTIFACT_SECURITY.md](docs/MODEL_ARTIFACT_SECURITY.md).
+
 Uvicorn access logs show the immediate proxy peer address; the application applies its configured trusted-proxy policy separately for login attribution.
 
 The API health URL is [http://127.0.0.1:8000/api/health](http://127.0.0.1:8000/api/health). API docs are at `/docs`; live events use `ws://127.0.0.1:8000/ws/live-events`.
@@ -185,7 +187,7 @@ It writes a stratified 3,000-row sample to `backend/datasets/replay/replay_sampl
 
 ## Docker deployment
 
-Copy `.env.example` to `.env`, then set a non-empty `SECRET_KEY`. The example includes a URL-safe hex generator. For first startup on an empty database, either set both `ADMIN_USERNAME` and `ADMIN_PASSWORD` for one-time administrator bootstrap or create the administrator separately after startup. Compose stops with a clear error if `SECRET_KEY` is missing.
+Copy `.env.example` to `.env`, then set a non-empty `SECRET_KEY`. The example includes a URL-safe hex generator. Also either set `ARTIFACT_HMAC_KEY` and run `python scripts/sign_existing_models.py` against `backend/saved_models/` before starting, or set `ALLOW_UNSIGNED_MODELS=true` in `.env` for local demonstration only; otherwise backend startup stops with a missing-manifest error. For first startup on an empty database, either set both `ADMIN_USERNAME` and `ADMIN_PASSWORD` for one-time administrator bootstrap or create the administrator separately after startup. Compose stops with a clear error if `SECRET_KEY` is missing.
 
 ```powershell
 docker compose up --build

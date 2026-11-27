@@ -17,6 +17,8 @@ services:
       SECRET_KEY: "${SECRET_KEY:?Set SECRET_KEY in .env before starting Docker Compose}"
       ADMIN_USERNAME: "${ADMIN_USERNAME:-}"
       ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
+      ARTIFACT_HMAC_KEY: "${ARTIFACT_HMAC_KEY:-}"
+      ALLOW_UNSIGNED_MODELS: "${ALLOW_UNSIGNED_MODELS:-false}"
       LLM_PROVIDER: template_fallback
       TRUSTED_PROXY_CIDRS: '${TRUSTED_PROXY_CIDRS:-[]}'
     volumes:
