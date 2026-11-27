@@ -249,22 +249,22 @@ Bootstrap: paired over 4 held-out capture-day units, 10,000 resamples. Mean and 
 
 ### Per held-out day results
 
-| Held-out day | Precision | Recall | F1 | AUPRC | FPR | Test rows | Attack rows | Families present |
-|---|---:|---:|---:|---:|---:|---:|---:|---|
-| Tuesday | 0.0758 | 0.2526 | 0.1166 | 0.0744 | 0.0715 | 63,487 | 1441 | BruteForce |
-| Wednesday | 0.6389 | 0.2443 | 0.3535 | 0.7035 | 0.0633 | 91,285 | 28704 | DosDDoS |
-| Thursday | 0.0338 | 0.9939 | 0.0655 | 0.0296 | 0.1498 | 62,084 | 326 | WebAttack |
-| Friday | 0.8844 | 0.6134 | 0.7244 | 0.8574 | 0.0447 | 92,567 | 33144 | Bot, PortScan, DosDDoS |
+| Held-out day | Precision | Recall | F1 | AUPRC | FPR | Benign rows | Attack rows | Test rows | Families present |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| Tuesday | 0.0758 | 0.2526 | 0.1166 | 0.0744 | 0.0715 | 62,046 | 1,441 | 63,487 | BruteForce |
+| Wednesday | 0.6389 | 0.2443 | 0.3535 | 0.7035 | 0.0633 | 62,581 | 28,704 | 91,285 | DosDDoS |
+| Thursday | 0.0338 | 0.9939 | 0.0655 | 0.0296 | 0.1498 | 61,758 | 326 | 62,084 | WebAttack |
+| Friday | 0.8844 | 0.6134 | 0.7244 | 0.8574 | 0.0447 | 59,423 | 33,144 | 92,567 | Bot, PortScan, DosDDoS |
 
 ### Per-family recall (descriptive only, n=1 capture day unit per family)
 
-**descriptive only, n=1 capture day unit per family; not used for any accept/reject decision** These counts are observations, not evaluations of model capability. With n=1 held-out day per family, per-family generalization cannot be reliably estimated.
+**descriptive only, n=1 capture day unit per family; not used for any accept/reject decision** Per-family recall without per-day FPR is uninterpretable on its own; each row pairs the family's recall with that held-out day's overall binary FPR, binary precision, and benign row count. With n=1 held-out day per family, per-family generalization cannot be reliably estimated.
 
-| Family | Held-out day | Attack rows | Recall | Note |
-|---|---|---:|---:|---|
-| Bot | Friday | 306 | 0.0000 | descriptive, n=1 capture day unit |
-| BruteForce | Tuesday | 1441 | 0.2526 | descriptive, n=1 capture day unit |
-| DosDDoS | Wednesday | 28704 | 0.2443 | descriptive, n=1 capture day unit |
-| DosDDoS | Friday | 19177 | 0.9986 | descriptive, n=1 capture day unit |
-| PortScan | Friday | 13661 | 0.0863 | descriptive, n=1 capture day unit |
-| WebAttack | Thursday | 326 | 0.9939 | descriptive, n=1 capture day unit |
+| Family | Held-out day | Attack rows | Recall | Day FPR | Day precision | Day benign rows | Note |
+|---|---|---:|---:|---:|---:|---:|---|
+| Bot | Friday | 306 | 0.0000 | 0.0447 | 0.8844 | 59,423 | descriptive, n=1 capture day unit |
+| BruteForce | Tuesday | 1,441 | 0.2526 | 0.0715 | 0.0758 | 62,046 | descriptive, n=1 capture day unit |
+| DosDDoS | Wednesday | 28,704 | 0.2443 | 0.0633 | 0.6389 | 62,581 | descriptive, n=1 capture day unit |
+| DosDDoS | Friday | 19,177 | 0.9986 | 0.0447 | 0.8844 | 59,423 | descriptive, n=1 capture day unit |
+| PortScan | Friday | 13,661 | 0.0863 | 0.0447 | 0.8844 | 59,423 | descriptive, n=1 capture day unit |
+| WebAttack | Thursday | 326 | 0.9939 | 0.1498 | 0.0338 | 61,758 | descriptive, n=1 capture day unit |

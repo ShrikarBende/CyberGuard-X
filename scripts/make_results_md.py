@@ -646,15 +646,17 @@ def locd_binary_eval_section() -> list[str]:
         rec = f"{float(ops['recall']):.4f}" if ops.get("recall") is not None else "n/a"
         f1 = f"{float(ops['f1']):.4f}" if ops.get("f1") is not None else "n/a"
         fpr = f"{float(ops['fpr']):.4f}" if ops.get("fpr") is not None else "n/a"
+        benign_rows = ops.get("support_negative")
+        benign_str = f"{int(benign_rows):,}" if benign_rows is not None else "n/a"
+        attack_rows = ops.get("support_positive")
+        attack_str = f"{int(attack_rows):,}" if attack_rows is not None else "n/a"
         families = ", ".join(dr.get("families_on_day_per_protocol", [])) or "—"
         day_rows.append(
             f"| {dr['held_out_day']} | {prec} | {rec} | {f1} | {auprc_str} | {fpr} "
-            f"| {dr['test_rows']:,} | {dr['binary_operating_metrics'].get('support_positive', 'n/a')} "
-            f"| {families} |"
+            f"| {benign_str} | {attack_str} | {dr['test_rows']:,} | {families} |"
         )
 
-    # Per-family descriptive recall table
-    # Collect all families that appear across all days
+    # Per-family descriptive recall table paired with per-day FPR, precision, and benign rows
     all_families = sorted({
         fam
         for dr in day_results
@@ -666,10 +668,15 @@ def locd_binary_eval_section() -> list[str]:
             entry = dr.get("per_family_recall_descriptive", {}).get(fam, {})
             n = entry.get("n", 0)
             if n > 0:
+                ops = dr.get("binary_operating_metrics", {})
                 rec_val = entry.get("recall")
                 rec_str = f"{float(rec_val):.4f}" if rec_val is not None else "n/a"
+                fpr_str = f"{float(ops['fpr']):.4f}" if ops.get("fpr") is not None else "n/a"
+                prec_str = f"{float(ops['precision']):.4f}" if ops.get("precision") is not None else "n/a"
+                benign_rows = ops.get("support_negative")
+                benign_str = f"{int(benign_rows):,}" if benign_rows is not None else "n/a"
                 family_recall_rows.append(
-                    f"| {fam} | {dr['held_out_day']} | {n} | {rec_str} "
+                    f"| {fam} | {dr['held_out_day']} | {n:,} | {rec_str} | {fpr_str} | {prec_str} | {benign_str} "
                     f"| descriptive, n=1 capture day unit |"
                 )
 
@@ -706,18 +713,19 @@ def locd_binary_eval_section() -> list[str]:
         "",
         "### Per held-out day results",
         "",
-        "| Held-out day | Precision | Recall | F1 | AUPRC | FPR | Test rows | Attack rows | Families present |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---|",
+        "| Held-out day | Precision | Recall | F1 | AUPRC | FPR | Benign rows | Attack rows | Test rows | Families present |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---|",
         *day_rows,
         "",
         "### Per-family recall (descriptive only, n=1 capture day unit per family)",
         "",
         f"**{proto.get('per_family_recall_note', 'descriptive only')}** "
-        "These counts are observations, not evaluations of model capability. "
+        "Per-family recall without per-day FPR is uninterpretable on its own; "
+        "each row pairs the family's recall with that held-out day's overall binary FPR, binary precision, and benign row count. "
         "With n=1 held-out day per family, per-family generalization cannot be reliably estimated.",
         "",
-        "| Family | Held-out day | Attack rows | Recall | Note |",
-        "|---|---|---:|---:|---|",
+        "| Family | Held-out day | Attack rows | Recall | Day FPR | Day precision | Day benign rows | Note |",
+        "|---|---|---:|---:|---:|---:|---:|---|",
         *family_recall_rows,
     ]
     return lines
