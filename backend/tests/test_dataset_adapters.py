@@ -68,18 +68,24 @@ def test_cse_adapter_rejects_bad_numeric_features(tmp_path):
 
 def test_cse_adapter_drops_nonfinite_rate_rows_and_logs_exact_count(tmp_path, caplog):
     caplog.set_level(logging.INFO, logger=adapters.logger.name)
-    path = tmp_path / "Wednesday-14-02-2018.csv"
-    _fixture_capture(path, ["BENIGN", "Bot", "BENIGN", "Bot", "BENIGN", "Bot", "BENIGN"])
-    frame = pd.read_csv(path)
-    frame["Flow Byts/s"] = [1.0, np.inf, 2.0, 3.0, 4.0, -np.inf, 6.0]
-    frame["Flow Pkts/s"] = [1.0, 1.0, -np.inf, 4.0, 5.0, 6.0, 7.0]
-    frame.to_csv(path, index=False)
-
-    adapters.logger.addHandler(caplog.handler)
+    previous_level = adapters.logger.level
+    previous_disabled = adapters.logger.disabled
+    adapters.logger.setLevel(logging.INFO)
+    adapters.logger.disabled = False
     try:
+        path = tmp_path / "Wednesday-14-02-2018.csv"
+        _fixture_capture(path, ["BENIGN", "Bot", "BENIGN", "Bot", "BENIGN", "Bot", "BENIGN"])
+        frame = pd.read_csv(path)
+        frame["Flow Byts/s"] = [1.0, np.inf, 2.0, 3.0, 4.0, -np.inf, 6.0]
+        frame["Flow Pkts/s"] = [1.0, 1.0, -np.inf, 4.0, 5.0, 6.0, 7.0]
+        frame.to_csv(path, index=False)
+
+        adapters.logger.addHandler(caplog.handler)
         result = CSECICIDS2018Adapter(root=tmp_path, read_chunk_rows=2).load_capture(path)
     finally:
         adapters.logger.removeHandler(caplog.handler)
+        adapters.logger.setLevel(previous_level)
+        adapters.logger.disabled = previous_disabled
 
     assert len(result) == 4
     assert result["Label"].tolist() == ["BENIGN", "Bot", "BENIGN", "BENIGN"]
