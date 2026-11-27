@@ -325,7 +325,7 @@ Generated from completed JSON files in `backend/ml/evaluation/results/`. Means a
 > [!IMPORTANT]
 > **Detection is not production-validated.** This repository is a research and engineering prototype; do not treat its scores or verdicts as production-grade threat detection.
 
-- **Single dataset:** Evaluated on CICIDS2017 only (a 2017 testbed with known labelling limitations).
+- **Dataset coverage:** CICIDS2017 remains the primary benchmark. A supplemental exploratory evaluation uses three CSE-CIC-IDS2018 capture-day files and reports leave-one-capture-day-out plus cross-dataset transfer results in [docs/RESULTS.md](docs/RESULTS.md). Each observed CSE attack family appears on only one capture day, and the transfer run uses bounded, label-stratified samples; these results do not establish broad cross-capture or production performance.
 - **One capture day per attack family:** Within the CICIDS2017 development split (Tuesday–Friday; Monday is reserved untouched), each target attack family appears on a single capture day (`n=1`).
 - **Proxy labels on secondary branches:** The endpoint (DAE + Isolation Forest), user sequence (TFT), host communication graph (GAT), and risk-fusion branches rely on unsupervised, weakly supervised, or synthetic proxy labels rather than independently captured attack/benign pairs.
 - **Further reading:**
@@ -342,7 +342,7 @@ Generated from completed JSON files in `backend/ml/evaluation/results/`. Means a
 
 ## Known limitations
 
-- **Single dataset.** All dataset-labeled results use CICIDS2017, a 2017 testbed with known labelling problems, evaluated on 15% (`light`) and 50% (`medium`) hash samples and 3 seeds. Results do not represent a full-data run.
+- **Dataset coverage and sampling.** The primary multi-seed benchmark uses CICIDS2017, a 2017 testbed with known labelling problems, on 15% (`light`) and 50% (`medium`) hash samples and 3 seeds. A supplemental CSE-CIC-IDS2018 evaluation is reported separately; it covers three capture days, with only one day per observed attack family. Its cross-dataset transfer result uses at most 50,000 CICIDS2017 rows per label and up to 50,000 CSE BENIGN rows per capture while retaining all CSE attack rows. Neither result represents an unrestricted full-data or production evaluation.
 - **Optimistic random splits.** Older saved open-set runs use stratified row splits and can leak capture-session near-duplicates. The session-disjoint comparison exists but only 3 of 10 family/seed folds had unknown support, so its intervals are wide.
 - **Weak unknown detection for PortScan and Bot.** A scan is visible across flows from one host, not within a single flow. Host-window features are implemented but not yet consumed by the saved bundles. Bot (197 rows) and WebAttack (216 rows) also have few unknown test rows.
 - **Bot is the weakest known class** (mean F1 0.8207); the 2.5× class weight has not been re-evaluated.

@@ -2,6 +2,8 @@
 
 Reproduce this report and the five-seed network evaluation with `python scripts/run_network_eval.py`. The command runs the network baseline and renders this document from that run's JSON plus the saved auxiliary evaluation artifacts. Rendering alone does not run model evaluation.
 
+The primary tables below report CICIDS2017 results. The final section records supplemental CSE-CIC-IDS2018 capture-day and cross-dataset measurements separately; those exploratory, bounded-sample results are not part of the five-seed baseline.
+
 Artifact: [`network_baseline_20261127T113549Z.json`](../backend/ml/evaluation/results/network_baseline_20261127T113549Z.json) (run `20261127T113549Z`).
 Dataset: `CICIDS2017`; raw source-file SHA-256 fingerprint: `9bb6edafdf07613af60d43f231e3d74b3fe9a7a308e4475d28446d326f72a1bd`; processed development sample SHA-256: `c31a87dde5b5696974cd48cd1206e236dfa29a729d52bbe08e1c0917821b6a22`.
 Frozen holdout: `Monday-WorkingHours.pcap_ISCX.csv`; manifest SHA-256: `701a6fca14260729a21c47c9352e62af61526643b2ce44ba28bb000a0cb9b618`; status: frozen and untouched; no holdout rows were parsed or used for fitting, calibration, or scoring.
