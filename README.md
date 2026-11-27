@@ -210,11 +210,9 @@ Copy `.env.example` to `.env`, then set a non-empty `SECRET_KEY`. The example in
 docker compose up --build
 ```
 
-The frontend container serves the UI and proxies `/api` and `/ws` to the backend. Its backend health check uses `/api/health`. Open [http://localhost:3000](http://localhost:3000).
-
 Compose mounts the live database at `/app/data/cyberguardx.db` in the persistent named volume `cyberguardx_demo_sqlite_data`; startup applies Alembic migrations automatically. Compose reuses an existing named volume. Do not use `docker compose down -v` when preserving the database. See [docs/OPERATIONS.md](docs/OPERATIONS.md) for the supported single-backend operating boundary, concurrency results, and backup/restore procedure.
 
-The frontend serves the UI and proxies `/api` and `/ws` to the backend. The backend is bound to localhost on port 8000; the frontend is published on port 3000. The backend container is configured for one Uvicorn worker: upload, retrain, evaluation, replay, WebSocket, login-throttle, and agent coordination state is process-local. Running multiple workers or replicas is unsupported until these registries and broadcasts use shared coordination. Agent runs are persisted and interrupted `running` jobs are marked failed after restart; the other background-job status registries are lost on restart.
+The frontend container serves the UI and proxies `/api` and `/ws` to the backend; its health check uses `/api/health`. Open [http://localhost:3000](http://localhost:3000). The backend is bound to localhost on port 8000; the frontend is published on port 3000. The backend container is configured for one Uvicorn worker: upload, retrain, evaluation, replay, WebSocket, login-throttle, and agent coordination state is process-local. Running multiple workers or replicas is unsupported until these registries and broadcasts use shared coordination. Agent runs are persisted and interrupted `running` jobs are marked failed after restart; the other background-job status registries are lost on restart.
 
 ## Results
 
@@ -254,9 +252,9 @@ Random row splits are optimistic for CICIDS2017 because near-duplicate flows fro
 | Split | OSCR AUC | Unknown recall | Benign FPR | Known macro F1 |
 |---|---:|---:|---:|---:|
 | Stratified random | 0.7992 (0.6555–0.9429) | 0.4743 (0.2369–0.7118) | 0.0298 (0.0288–0.0308) | 0.9467 (0.9363–0.9571) |
-| Session-disjoint (sanitized features) | 0.5996 (0.2208–0.9785) | 0.1716 (0.0000–0.5055) | 0.0027 (0.0018–0.0036) | 0.1897 (0.1711–0.2084) |
+| Session-disjoint (sanitized features) | 0.5996 (0.2208–0.9785) | 0.1716 (0.0000–0.5055) | 0.0027 (0.0018–0.0036) | n/a |
 
-The generalization gap remains large after sanitization. Part of the known macro-F1 drop may come from classes absent from the training sessions, so the figure is not a pure measure of feature memorization. Intervals are across available family/seed folds. The bounded light-profile diagnostic in `comprehensive_benchmark_run.json` had several zero-support groups and is not comparable to these numbers; see RESULTS.md.
+The previously reported session-disjoint known macro-F1 (0.1897) averaged across labels with zero test support, so it is not a valid support-aware macro score. The saved comparison artifact lacks per-class values and support needed to recompute it; it is shown as n/a here. No evaluation was rerun. The stratified random value and the other comparison metrics are unchanged; intervals are across available family/seed folds. The bounded light-profile diagnostic in `comprehensive_benchmark_run.json` had several zero-support groups and is not comparable to these numbers; see RESULTS.md.
 
 ### RAG retrieval
 

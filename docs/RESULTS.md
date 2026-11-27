@@ -16,37 +16,37 @@ Confidence intervals: percentile bootstrap of seed-level metric means (10,000 re
 
 Values are the mean across seed runs with the 95% bootstrap interval across those seed-level estimates. The unknown class is the named family in the row; other test labels are treated as known only when that class was present in training.
 
-| Attack family | Test sessions | Unknown support by seed | Precision | Recall | F1 | OSCR AUC | Known macro-F1 | Known FPR | Benign replay false-alert rate |
-|---|---|---|---:|---:|---:|---:|---:|---:|---:|
-| DosDDoS | `Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv`, `Wednesday-workingHours.pcap_ISCX.csv` | 42: 48296; 101: 48296; 202: 48296; 303: 48296; 404: 48296 | 0.7849 (0.6062–0.8888) | 0.6286 (0.3531–0.7947) | 0.6804 (0.4068–0.8343) | 0.7243 (0.5015–0.8539) | 0.2666 (0.2499–0.2999) | 0.0728 (0.0604–0.0838) | 0.0728 (0.0604–0.0838) |
-| PortScan | `Friday-WorkingHours-Afternoon-PortScan.pcap_ISCX.csv` | 42: 13730; 101: 13730; 202: 13730; 303: 13730; 404: 13730 | 0.6185 (0.3638–0.8731) | 0.1364 (0.0080–0.3342) | 0.1880 (0.0154–0.4324) | 0.7712 (0.6579–0.8634) | 0.2293 (0.2093–0.2493) | 0.0223 (0.0021–0.0442) | 0.0223 (0.0021–0.0442) |
-| BruteForce | `Tuesday-WorkingHours.pcap_ISCX.csv` | 42: 1379; 101: 1379; 202: 1379; 303: 1379; 404: 1379 | 0.1262 (0.0341–0.2182) | 0.3373 (0.0094–0.7269) | 0.1320 (0.0161–0.2479) | 0.6374 (0.3455–0.9296) | 0.2078 (0.1955–0.2293) | 0.0371 (0.0050–0.0708) | 0.0371 (0.0050–0.0708) |
-| WebAttack | `Thursday-WorkingHours-Morning-WebAttacks.pcap_ISCX.csv` | 42: 320; 101: 320; 202: 320; 303: 320; 404: 320 | 0.0306 (0.0130–0.0493) | 0.0494 (0.0144–0.0844) | 0.0337 (0.0111–0.0562) | 0.6614 (0.3684–0.9484) | 0.2456 (0.2075–0.2897) | 0.0178 (0.0044–0.0339) | 0.0178 (0.0044–0.0339) |
-| Bot | `Friday-WorkingHours-Morning.pcap_ISCX.csv` | 42: 305; 101: 305; 202: 305; 303: 305; 404: 305 | 0.0146 (0.0000–0.0438) | 0.0649 (0.0000–0.1948) | 0.0239 (0.0000–0.0716) | 0.6130 (0.4058–0.7790) | 0.2731 (0.2297–0.3165) | 0.0196 (0.0046–0.0349) | 0.0196 (0.0046–0.0349) |
+| Attack family | Test sessions | Unknown support by seed | Precision | Recall | F1 | OSCR AUC | Known macro-F1 | Known FPR |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| DosDDoS | `Friday-WorkingHours-Afternoon-DDos.pcap_ISCX.csv`, `Wednesday-workingHours.pcap_ISCX.csv` | 42: 48296; 101: 48296; 202: 48296; 303: 48296; 404: 48296 | 0.7849 (0.6062–0.8888) | 0.6286 (0.3531–0.7947) | 0.6804 (0.4068–0.8343) | 0.7243 (0.5015–0.8539) | n/a | 0.0728 (0.0604–0.0838) |
+| PortScan | `Friday-WorkingHours-Afternoon-PortScan.pcap_ISCX.csv` | 42: 13730; 101: 13730; 202: 13730; 303: 13730; 404: 13730 | 0.6185 (0.3638–0.8731) | 0.1364 (0.0080–0.3342) | 0.1880 (0.0154–0.4324) | 0.7712 (0.6579–0.8634) | n/a | 0.0223 (0.0021–0.0442) |
+| BruteForce | `Tuesday-WorkingHours.pcap_ISCX.csv` | 42: 1379; 101: 1379; 202: 1379; 303: 1379; 404: 1379 | 0.1262 (0.0341–0.2182) | 0.3373 (0.0094–0.7269) | 0.1320 (0.0161–0.2479) | 0.6374 (0.3455–0.9296) | n/a | 0.0371 (0.0050–0.0708) |
+| WebAttack | `Thursday-WorkingHours-Morning-WebAttacks.pcap_ISCX.csv` | 42: 320; 101: 320; 202: 320; 303: 320; 404: 320 | 0.0306 (0.0130–0.0493) | 0.0494 (0.0144–0.0844) | 0.0337 (0.0111–0.0562) | 0.6614 (0.3684–0.9484) | n/a | 0.0178 (0.0044–0.0339) |
+| Bot | `Friday-WorkingHours-Morning.pcap_ISCX.csv` | 42: 305; 101: 305; 202: 305; 303: 305; 404: 305 | 0.0146 (0.0000–0.0438) | 0.0649 (0.0000–0.1948) | 0.0239 (0.0000–0.0716) | 0.6130 (0.4058–0.7790) | n/a | 0.0196 (0.0046–0.0349) |
 
 ## Known-class classifier metrics
 
-Per-class values are one-vs-rest precision, recall, F1, and average precision (AUPRC); macro values, Cohen's kappa, and MCC are aggregated across the five seeds with percentile bootstrap 95% confidence intervals. Metrics are reported for the in-sample training split, known-only validation split, and known-only test split in every family fold. Training metrics are diagnostics, not generalization estimates. The held-out unknown family is excluded from closed-set classifier metrics. AUPRC is `n/a` when a class has no positive rows; macro AUPRC averages classes with positive support.
+Per-class values are one-vs-rest precision, recall, F1, and average precision (AUPRC). Validation/test macro precision, recall, F1, and AUPRC are recomputed per seed over classes with support > 0; a seed with fewer than two supported classes has `n/a` macro metrics, Cohen's kappa, and MCC and is omitted from that metric's cross-seed summary. Training metrics retain the saved in-sample values and are diagnostics, not generalization estimates. The held-out unknown family is excluded from closed-set classifier metrics.
 
 ### Aggregate metrics by split
 
 | Held-out family | Split | Macro precision | Macro recall | Macro F1 | Macro AUPRC | Cohen's kappa | MCC |
 |---|---|---:|---:|---:|---:|---:|---:|
 | DosDDoS | Train (in-sample) | 0.9858 (0.9694–0.9988) | 0.9999 (0.9998–0.9999) | 0.9923 (0.9815–0.9994) | 0.9992 (0.9976–1.0000) | 0.9965 (0.9952–0.9977) | 0.9965 (0.9952–0.9977) |
-| DosDDoS | Validation | 0.2500 (0.2500–0.2500) | 0.2497 (0.2492–0.2500) | 0.2498 (0.2496–0.2500) | 1.0000 (1.0000–1.0000) | 0.0000 (0.0000–0.0000) | n/a |
-| DosDDoS | Known-only test | 0.2500 (0.2500–0.2500) | 0.2498 (0.2497–0.2499) | 0.2499 (0.2498–0.2500) | 1.0000 (1.0000–1.0000) | 0.0000 (0.0000–0.0000) | n/a |
+| DosDDoS | Validation | n/a | n/a | n/a | n/a | n/a | n/a |
+| DosDDoS | Known-only test | n/a | n/a | n/a | n/a | n/a | n/a |
 | PortScan | Train (in-sample) | 0.9368 (0.8977–0.9715) | 0.9997 (0.9994–0.9999) | 0.9618 (0.9349–0.9849) | 0.9942 (0.9888–0.9992) | 0.9946 (0.9901–0.9985) | 0.9946 (0.9902–0.9985) |
-| PortScan | Validation | 0.2835 (0.2340–0.3284) | 0.2497 (0.2225–0.2748) | 0.2406 (0.2064–0.2749) | 0.9751 (0.9519–0.9982) | 0.2078 (0.0321–0.3835) | 0.4371 (0.2875–0.5352) |
-| PortScan | Known-only test | 0.2100 (0.2000–0.2300) | 0.2087 (0.1986–0.2287) | 0.2093 (0.1993–0.2293) | 1.0000 (1.0000–1.0000) | 0.0000 (0.0000–0.0000) | n/a |
+| PortScan | Validation | 0.8061 (0.7310–0.8878) | 0.6657 (0.5919–0.7137) | 0.6278 (0.4779–0.7162) | 0.9585 (0.9377–0.9912) | 0.3464 (0.1607–0.4585) | 0.4371 (0.2875–0.5352) |
+| PortScan | Known-only test | n/a | n/a | n/a | n/a | n/a | n/a |
 | BruteForce | Train (in-sample) | 0.8676 (0.8101–0.9323) | 0.9988 (0.9981–0.9994) | 0.9064 (0.8605–0.9559) | 0.9809 (0.9712–0.9918) | 0.9893 (0.9830–0.9955) | 0.9893 (0.9832–0.9955) |
-| BruteForce | Validation | 0.1794 (0.1121–0.2467) | 0.1989 (0.1769–0.2254) | 0.1670 (0.1275–0.2095) | 0.9344 (0.8821–0.9867) | 0.0289 (-0.0016–0.0709) | 0.0875 (-0.0090–0.1736) |
-| BruteForce | Known-only test | 0.2100 (0.2000–0.2300) | 0.2058 (0.1912–0.2285) | 0.2078 (0.1955–0.2293) | 1.0000 (1.0000–1.0000) | 0.0000 (0.0000–0.0000) | n/a |
+| BruteForce | Validation | 0.3725 (0.2053–0.6668) | 0.4808 (0.4522–0.4992) | 0.3353 (0.2823–0.4182) | 0.8906 (0.8618–0.9334) | 0.0482 (-0.0041–0.1050) | 0.0875 (-0.0090–0.1736) |
+| BruteForce | Known-only test | n/a | n/a | n/a | n/a | n/a | n/a |
 | WebAttack | Train (in-sample) | 0.8839 (0.8314–0.9478) | 0.9980 (0.9955–0.9996) | 0.9100 (0.8563–0.9614) | 0.9789 (0.9682–0.9904) | 0.9781 (0.9489–0.9957) | 0.9788 (0.9511–0.9957) |
-| WebAttack | Validation | 0.2184 (0.1614–0.2853) | 0.2001 (0.1761–0.2299) | 0.1857 (0.1546–0.2203) | 0.9278 (0.8617–0.9938) | 0.0941 (0.0274–0.1609) | 0.2531 (0.2386–0.2673) |
-| WebAttack | Known-only test | 0.2100 (0.2000–0.2300) | 0.2080 (0.1952–0.2295) | 0.2090 (0.1976–0.2297) | 1.0000 (1.0000–1.0000) | 0.0000 (0.0000–0.0000) | n/a |
+| WebAttack | Validation | 0.5349 (0.3453–0.8458) | 0.4860 (0.4526–0.5479) | 0.4135 (0.3616–0.5023) | 0.8796 (0.8332–0.9692) | 0.1569 (0.1370–0.1768) | 0.2531 (0.2386–0.2673) |
+| WebAttack | Known-only test | n/a | n/a | n/a | n/a | n/a | n/a |
 | Bot | Train (in-sample) | 0.9514 (0.9255–0.9789) | 0.9994 (0.9992–0.9997) | 0.9709 (0.9542–0.9878) | 1.0000 (0.9999–1.0000) | 0.9954 (0.9928–0.9977) | 0.9954 (0.9931–0.9977) |
-| Bot | Validation | 0.2574 (0.2267–0.2856) | 0.2108 (0.1876–0.2340) | 0.1836 (0.1515–0.2209) | 0.9326 (0.8676–0.9920) | 0.0546 (0.0022–0.1267) | 0.1635 (0.0445–0.2932) |
-| Bot | Known-only test | 0.2100 (0.2000–0.2300) | 0.2096 (0.1995–0.2298) | 0.2098 (0.1997–0.2299) | 1.0000 (1.0000–1.0000) | 0.0000 (0.0000–0.0000) | n/a |
+| Bot | Validation | 0.6975 (0.6382–0.7453) | 0.5298 (0.4995–0.5865) | 0.4045 (0.3265–0.4807) | 0.8876 (0.8177–0.9600) | 0.0910 (0.0110–0.1859) | 0.1635 (0.0445–0.2932) |
+| Bot | Known-only test | n/a | n/a | n/a | n/a | n/a | n/a |
 
 ### Per-class metrics by split
 
@@ -133,7 +133,7 @@ Support is listed by seed; metric cells show the seed mean and 95% seed-bootstra
 ## Interpretation and split audit
 
 passed; train/validation/test source groups are pairwise disjoint for every family and seed. The final holdout was excluded from row loading, model fitting, threshold selection, and scoring; only raw file checksums were read to verify the frozen dataset identity.
-The benign replay false-alert rate is measured on BENIGN rows in the development test capture sessions: BENIGN rows from held-out development capture sessions incorrectly flagged for unknown review divided by BENIGN rows in those sessions; this is an offline session replay metric, not a live-service replay run.
+Known FPR and the benign replay false-alert rate are equal for every family/seed here because the eligible known test rows are all BENIGN (their supports and false-alert counts match). The report shows Known FPR once rather than duplicating it.
 Unknown review semantics: confidence-threshold rejection is a triage proxy for UNKNOWN_NOVEL review, not a confirmed attack verdict.
 The bootstrap interval resamples the five seed-level estimates on fixed development test sessions. It reflects seed variability, not uncertainty across a large sample of independent capture sessions.
 CICIDS2017 source files contain no timestamps. Host-window features therefore remain zero in this baseline, and the final holdout consists of one complete source-file session.
@@ -270,64 +270,56 @@ Bootstrap: paired over 4 held-out capture-day units, 10,000 resamples. Mean and 
 | DosDDoS | Friday | 19,177 | 0.9986 | 0.0447 | 0.8844 | 59,423 | descriptive, n=1 capture day unit |
 | PortScan | Friday | 13,661 | 0.0863 | 0.0447 | 0.8844 | 59,423 | descriptive, n=1 capture day unit |
 | WebAttack | Thursday | 326 | 0.9939 | 0.1498 | 0.0338 | 61,758 | descriptive, n=1 capture day unit |
-
 ## CSE-CIC-IDS2018 ingestion and transfer evaluation
 
-Generated local artifacts: `backend/ml/evaluation/results/cse_capture_day.json` and `backend/ml/evaluation/results/cross_dataset.json`. Reproduce from `backend/` with:
+Generated from `cse_capture_day.json` and `cross_dataset.json`; both runs used seed 42.
+CSE ingestion replaced infinities with NaN and dropped 13,484 rows with missing/non-finite required numeric features.
+Sampling: retain every non-BENIGN row; deterministic reservoir-sample BENIGN rows to the per-capture cap; max 50,000 BENIGN rows per capture; all non-BENIGN rows retained; feature dtype `float32`.
+Cross-dataset CICIDS2017 sampling is deterministic and stratified by label, capped at 50,000 rows per label; it uses the existing deduplicated cache.
 
-```powershell
-python -m ml.evaluation.cross_dataset --mode cse-capture-day --output ml/evaluation/results/cse_capture_day.json
-python -m ml.evaluation.cross_dataset --mode cross-dataset --output ml/evaluation/results/cross_dataset.json
-```
+### Binary CSE capture-day evaluation
 
-Both runs used seed 42. CSE-CIC-IDS2018 CSV ingestion parses feature strings strictly, replaces infinities with NaN, and drops rows with missing/non-finite required numeric values before validation. It dropped **13,484** rows total (4,050 on 2018-03-02; 5,610 on 2018-02-22; 3,824 on 2018-02-14). The adapter retains every non-BENIGN row and deterministic-reservoir-samples up to **50,000 BENIGN rows per capture**, using a fixed seed derived from seed 42 and the capture filename. Feature matrices use float32. Since some attack classes alone exceed 50,000, the cap applies to BENIGN rows and total rows can exceed 50,000.
-
-The cross-dataset run reads the existing deduplicated CICIDS2017 Parquet cache in batches and uses a deterministic feature-hash priority sample stratified by label, capped at 50,000 rows per label (seed 42). It retained 163,241 of 2,496,702 CICIDS2017 rows. This bounded sample is part of the reported protocol. It is not the full CICIDS2017 population.
-
-### CSE-CIC-IDS2018 binary capture-day evaluation
-
-Protocol: binary attack-vs-benign leave-one-capture-day-out, **n=3 capture days**. The aggregate is the unweighted mean of held-out-day macro-F1; family recalls are descriptive and have only one supporting capture day where present.
+Protocol: CSE-CIC-IDS2018 binary attack-vs-benign leave-one-capture-day-out; n=3 capture days. Aggregate macro-F1 is the unweighted mean across held-out days.
 
 | Metric | Value |
 |---|---:|
-| Mean capture-day macro-F1 | 0.36788369959339545 |
-| Capture-day macro-F1 standard deviation | 0.18663244080542973 |
+| Mean capture-day macro-F1 | 0.3679 |
+| Capture-day macro-F1 standard deviation | 0.1866 |
 | Source rows | 3,145,725 |
-| Rows dropped for non-finite/missing numeric features | 13,484 |
 | Cleaned rows | 3,132,241 |
 | Attack rows retained | 667,496 |
 | BENIGN rows retained | 150,000 |
-| Total rows retained after sampling | 817,496 |
+| Rows retained after sampling | 817,496 |
 
-| Family | Capture days | Files | Cleaned attack flows | Recall | Held-out capture-day units (n) | Support |
+| Family | Capture days | Files | Cleaned attack flows | Recall | n capture days | Support |
 |---|---|---:|---:|---:|---:|---:|
-| Bot | 2018-03-02 | 1 | 286,191 | 0.44703013022771504 | 1 | 286,191 |
-| WebAttack | 2018-02-22 | 1 | 362 | 0.0 | 1 | 362 |
-| BruteForce | 2018-02-14 | 1 | 380,943 | 0.0 | 1 | 380,943 |
-| DoS/DDoS | none | 0 | 0 | n/a | 0 | 0 |
+| Bot | 2018-03-02 | 1 | 286,191 | 0.4470 | 1 | 286,191 |
+| WebAttack | 2018-02-22 | 1 | 362 | 0.0000 | 1 | 362 |
+| BruteForce | 2018-02-14 | 1 | 380,943 | 0.0000 | 1 | 380,943 |
+| DosDDoS | none | 0 | 0 | n/a | 0 | 0 |
 | Infiltration | none | 0 | 0 | n/a | 0 | 0 |
 | PortScan | none | 0 | 0 | n/a | 0 | 0 |
 
 | Held-out capture day | Macro-F1 | Accuracy | Train rows | Test rows |
 |---|---:|---:|---:|---:|
-| 2018-02-14 | 0.10395310830086206 | 0.11601302260391745 | 386,553 | 430,943 |
-| 2018-02-22 | 0.49812151833139007 | 0.9925141972121838 | 767,134 | 50,362 |
-| 2018-03-02 | 0.5015764721479343 | 0.5285328875549911 | 481,305 | 336,191 |
+| 2018-02-14 | 0.1040 | 0.1160 | 386,553 | 430,943 |
+| 2018-02-22 | 0.4981 | 0.9925 | 767,134 | 50,362 |
+| 2018-03-02 | 0.5016 | 0.5285 | 481,305 | 336,191 |
 
-### CICIDS2017 ↔ CSE-CIC-IDS2018 transfer
+### Cross-dataset transfer
 
-Protocol: train on one dataset, test on the other, seed 42. CICIDS2017 is label-stratified and capped at 50,000 rows per label; CSE uses all attack rows plus up to 50,000 BENIGN rows per capture. The model uses the 80 common canonical numeric flow features listed in the JSON. CICIDS2017 `DosDDoS` and `PortScan` are excluded because those labels are absent from the three supplied CSE captures. These results therefore cover the four shared labels only and do not estimate transfer for the excluded families.
+Results cover labels shared by the supplied captures. They are bounded-sample transfer measurements, not full-population estimates.
 
 | Direction | Macro-F1 | Accuracy | Train rows | Test rows | Excluded train rows | Excluded test rows |
 |---|---:|---:|---:|---:|---:|---:|
-| CICIDS2017 → CSE-CIC-IDS2018 | 0.08537530967418447 | 0.18219294039359213 | 63,241 | 817,496 | 100,000 | 0 |
-| CSE-CIC-IDS2018 → CICIDS2017 | 0.2571008570815823 | 0.7829572587403741 | 817,496 | 63,241 | 0 | 100,000 |
+| CICIDS2017 → CSE-CIC-IDS2018 | 0.0854 | 0.1822 | 63,241 | 817,496 | 100,000 | 0 |
+| CSE-CIC-IDS2018 → CICIDS2017 | 0.2571 | 0.7830 | 817,496 | 63,241 | 0 | 100,000 |
 
 | Shared family | CICIDS2017 source rows | CSE cleaned rows | CICIDS2017 → CSE recall | CSE → CICIDS2017 recall |
 |---|---:|---:|---:|---:|
-| BENIGN | 2,071,726 | 2,464,745 | 0.9928266666666666 | 0.98352 |
-| Bot | 1,948 | 286,191 | 4.542420970610536e-05 | 0.060574948665297744 |
-| BruteForce | 9,150 | 380,943 | 0.0 | 0.024153005464480876 |
-| WebAttack | 2,143 | 362 | 0.013812154696132596 | 0.0 |
+| BENIGN | 2,071,726 | 2,464,745 | 0.9928 | 0.9835 |
+| Bot | 1,948 | 286,191 | 0.0000 | 0.0606 |
+| BruteForce | 9,150 | 380,943 | 0.0000 | 0.0242 |
+| WebAttack | 2,143 | 362 | 0.0138 | 0.0000 |
 
-The CSE attack coverage is one capture day per observed family, so capture-day and per-family results are descriptive. The cross-dataset scores use a bounded CICIDS2017 sample and only labels shared by the selected files; they should not be interpreted as full-population performance or as evidence for DoS/DDoS, Infiltration, or PortScan transfer.
+CSE attack coverage is one capture day per observed family; per-family and capture-day values are descriptive. The cross-dataset run uses only labels shared by the supplied files and does not estimate transfer for absent families.

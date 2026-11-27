@@ -7,6 +7,8 @@ import statistics
 import argparse
 from pathlib import Path
 
+import numpy as np
+
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "backend" / "ml" / "evaluation" / "results"
 OUTPUT = ROOT / "docs" / "RESULTS.md"
@@ -339,6 +341,70 @@ def _summary_cell(metric: dict) -> str:
     return f"{float(mean):.4f} ({float(interval[0]):.4f}–{float(interval[1]):.4f})"
 
 
+def _seed_bootstrap_ci(values: list[float], seed: int, resamples: int) -> list[float | None]:
+    if not values:
+        return [None, None]
+    array = np.asarray(values, dtype=np.float64)
+    if len(array) == 1:
+        return [float(array[0]), float(array[0])]
+    rng = np.random.default_rng(seed)
+    indexes = rng.integers(0, len(array), size=(resamples, len(array)))
+    means = array[indexes].mean(axis=1)
+    return [round(float(value), 6) for value in np.quantile(means, [0.025, 0.975])]
+
+
+def _corrected_classifier_summary(family: dict, split_name: str, metric_name: str,
+                                 payload: dict) -> dict:
+    """Recompute validation/test macro summaries over supported classes only."""
+    split = family["classifier_metrics"][split_name]
+    class_metrics = split["per_class"]
+    stored = split["metrics"][metric_name]
+    if split_name == "train":
+        return stored
+
+    metric_class_name = {
+        "macro_precision": "precision",
+        "macro_recall": "recall",
+        "macro_f1": "f1",
+        "macro_auprc": "auprc",
+    }
+    source_metric = metric_class_name.get(metric_name)
+    seed_values = {int(seed): None for seed in payload["seeds"]}
+    stored_by_seed = {int(row["seed"]): row.get("value") for row in stored.get("values_by_seed", [])}
+
+    for seed in seed_values:
+        supported = []
+        for class_name, metrics in class_metrics.items():
+            support = next((item.get("value") for item in metrics.get("support_by_seed", [])
+                            if int(item["seed"]) == seed), None)
+            if support is not None and int(support) > 0:
+                supported.append((class_name, metrics))
+        if len(supported) < 2:
+            continue
+        if source_metric is None:
+            seed_values[seed] = stored_by_seed.get(seed)
+            continue
+        values = []
+        for _class_name, metrics in supported:
+            per_seed = metrics[source_metric].get("values_by_seed", [])
+            value = next((item.get("value") for item in per_seed if int(item["seed"]) == seed), None)
+            if value is not None:
+                values.append(float(value))
+        if values:
+            seed_values[seed] = float(np.mean(values))
+
+    values = [value for value in seed_values.values() if value is not None]
+    resamples = int(payload["model_and_decision_policy"]["bootstrap"]["across_seed_resamples"])
+    return {
+        "mean": round(float(np.mean(values)), 6) if values else None,
+        "95CI_across_seeds": _seed_bootstrap_ci(
+            values, seed=sum(ord(ch) for ch in family["family"] + split_name + metric_name),
+            resamples=resamples,
+        ),
+        "values_by_seed": [{"seed": seed, "value": value} for seed, value in seed_values.items()],
+    }
+
+
 def render_network_baseline(artifact_path: Path) -> str:
     """Render every network-baseline metric from one complete saved JSON artifact."""
     artifact_path = artifact_path.resolve()
@@ -363,6 +429,7 @@ def render_network_baseline(artifact_path: Path) -> str:
     lines = [
         "# Network evaluation results", "",
         "Reproduce this report and the five-seed network evaluation with `python scripts/run_network_eval.py`. The command runs the network baseline and renders this document from that run's JSON plus the saved auxiliary evaluation artifacts. Rendering alone does not run model evaluation.", "",
+        "The primary tables below report CICIDS2017 results. The final section records supplemental CSE-CIC-IDS2018 capture-day and cross-dataset measurements separately; those exploratory, bounded-sample results are not part of the five-seed baseline.", "",
         f"Artifact: [`{artifact_path.name}`]({relative_artifact.as_posix()}) (run `{payload['run_id']}`).",
         f"Dataset: `{dataset['version']}`; raw source-file SHA-256 fingerprint: `{dataset['sha256']}`; processed development sample SHA-256: `{dataset['processed_development_sample_sha256']}`.",
         f"Frozen holdout: `{', '.join(holdout['source_sessions'])}`; manifest SHA-256: `{holdout['manifest_sha256']}`; status: {holdout['status']}.",
@@ -372,8 +439,8 @@ def render_network_baseline(artifact_path: Path) -> str:
         f"Confidence intervals: {model['bootstrap']['across_seeds']} ({model['bootstrap']['across_seed_resamples']:,} resamples). Each seed’s interval uses {model['bootstrap']['per_seed']} ({model['bootstrap']['per_seed_resamples']:,} resamples).", "",
         "## Per-family unknown-review metrics", "",
         "Values are the mean across seed runs with the 95% bootstrap interval across those seed-level estimates. The unknown class is the named family in the row; other test labels are treated as known only when that class was present in training.", "",
-        "| Attack family | Test sessions | Unknown support by seed | Precision | Recall | F1 | OSCR AUC | Known macro-F1 | Known FPR | Benign replay false-alert rate |",
-        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|",
+        "| Attack family | Test sessions | Unknown support by seed | Precision | Recall | F1 | OSCR AUC | Known macro-F1 | Known FPR |",
+        "|---|---|---|---:|---:|---:|---:|---:|---:|",
     ]
     for family in payload["families"]:
         supports = "; ".join(
@@ -384,12 +451,12 @@ def render_network_baseline(artifact_path: Path) -> str:
             f"| {family['family']} | {sessions} | {supports} | "
             f"{_metric_cell(family, 'precision')} | {_metric_cell(family, 'recall')} | "
             f"{_metric_cell(family, 'f1')} | {_metric_cell(family, 'oscr_auc')} | "
-            f"{_metric_cell(family, 'known_macro_f1')} | {_metric_cell(family, 'fpr')} | "
-            f"{_metric_cell(family, 'benign_replay_false_alert_rate')} |"
+            f"{_summary_cell(_corrected_classifier_summary(family, 'known_test', 'macro_f1', payload))} | "
+            f"{_metric_cell(family, 'fpr')} |"
         )
     lines += [
         "", "## Known-class classifier metrics", "",
-        "Per-class values are one-vs-rest precision, recall, F1, and average precision (AUPRC); macro values, Cohen's kappa, and MCC are aggregated across the five seeds with percentile bootstrap 95% confidence intervals. Metrics are reported for the in-sample training split, known-only validation split, and known-only test split in every family fold. Training metrics are diagnostics, not generalization estimates. The held-out unknown family is excluded from closed-set classifier metrics. AUPRC is `n/a` when a class has no positive rows; macro AUPRC averages classes with positive support.", "",
+        "Per-class values are one-vs-rest precision, recall, F1, and average precision (AUPRC). Validation/test macro precision, recall, F1, and AUPRC are recomputed per seed over classes with support > 0; a seed with fewer than two supported classes has `n/a` macro metrics, Cohen's kappa, and MCC and is omitted from that metric's cross-seed summary. Training metrics retain the saved in-sample values and are diagnostics, not generalization estimates. The held-out unknown family is excluded from closed-set classifier metrics.", "",
         "### Aggregate metrics by split", "",
         "| Held-out family | Split | Macro precision | Macro recall | Macro F1 | Macro AUPRC | Cohen's kappa | MCC |",
         "|---|---|---:|---:|---:|---:|---:|---:|",
@@ -400,9 +467,12 @@ def render_network_baseline(artifact_path: Path) -> str:
             metrics = family["classifier_metrics"][split_name]["metrics"]
             lines.append(
                 f"| {family['family']} | {split_label} | "
-                f"{_summary_cell(metrics['macro_precision'])} | {_summary_cell(metrics['macro_recall'])} | "
-                f"{_summary_cell(metrics['macro_f1'])} | {_summary_cell(metrics['macro_auprc'])} | "
-                f"{_summary_cell(metrics['cohen_kappa'])} | {_summary_cell(metrics['mcc'])} |"
+                f"{_summary_cell(_corrected_classifier_summary(family, split_name, 'macro_precision', payload))} | "
+                f"{_summary_cell(_corrected_classifier_summary(family, split_name, 'macro_recall', payload))} | "
+                f"{_summary_cell(_corrected_classifier_summary(family, split_name, 'macro_f1', payload))} | "
+                f"{_summary_cell(_corrected_classifier_summary(family, split_name, 'macro_auprc', payload))} | "
+                f"{_summary_cell(_corrected_classifier_summary(family, split_name, 'cohen_kappa', payload))} | "
+                f"{_summary_cell(_corrected_classifier_summary(family, split_name, 'mcc', payload))} |"
             )
     lines += [
         "", "### Per-class metrics by split", "",
@@ -427,7 +497,7 @@ def render_network_baseline(artifact_path: Path) -> str:
     lines += [
         "", "## Interpretation and split audit", "",
         f"{payload['split_integrity']}. The final holdout was excluded from row loading, model fitting, threshold selection, and scoring; only raw file checksums were read to verify the frozen dataset identity.",
-        f"The benign replay false-alert rate is measured on BENIGN rows in the development test capture sessions: {payload['metric_definitions']['benign_replay_false_alert_rate']}.",
+        "Known FPR and the benign replay false-alert rate are equal for every family/seed here because the eligible known test rows are all BENIGN (their supports and false-alert counts match). The report shows Known FPR once rather than duplicating it.",
         f"Unknown review semantics: {payload['metric_definitions']['unknown_review_semantics']}.",
         "The bootstrap interval resamples the five seed-level estimates on fixed development test sessions. It reflects seed variability, not uncertainty across a large sample of independent capture sessions.",
         "CICIDS2017 source files contain no timestamps. Host-window features therefore remain zero in this baseline, and the final holdout consists of one complete source-file session.",
@@ -456,6 +526,7 @@ def write_results(network_baseline: Path | None = None) -> Path:
     report += "\n".join(branch_fusion_ablation_section())
     report += "\n".join(rag_ablation_section())
     report += "\n".join(locd_binary_eval_section())
+    report += "\n".join(cse_evaluation_section())
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_text(report, encoding="utf-8")
     return OUTPUT
@@ -500,6 +571,104 @@ def host_window_ablation_section() -> list[str]:
             f"Required fields absent from development session headers: `{', '.join(missing) or 'development files unavailable'}`. No model was fitted for this ablation.",
             "A valid rerun requires flow telemetry containing per-row timestamps and source-host identifiers. Do not infer timestamps from row order or derive a 60-second window from aggregate flow IAT fields.",
         ]
+    return lines
+
+
+def cse_evaluation_section() -> list[str]:
+    """Render saved CSE capture-day and cross-dataset outputs without evaluation."""
+    capture_path = RESULTS / "cse_capture_day.json"
+    transfer_path = RESULTS / "cross_dataset.json"
+    if not capture_path.is_file() or not transfer_path.is_file():
+        return []
+    try:
+        capture = read(capture_path)
+        transfer = read(transfer_path)
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not capture.get("aggregate") or not transfer.get("directions"):
+        return []
+
+    def metric(value) -> str:
+        return "n/a" if value is None else f"{float(value):.4f}"
+
+    ingestion = capture["cse_ingestion"]
+    totals = ingestion["totals"]
+    sampling = ingestion["sampling"]
+    lines = [
+        "", "## CSE-CIC-IDS2018 ingestion and transfer evaluation", "",
+        f"Generated from `{capture_path.name}` and `{transfer_path.name}`; both runs used seed {capture.get('seed', transfer.get('seed', 42))}.",
+        f"CSE ingestion replaced infinities with NaN and dropped {totals['dropped_nonfinite_rows']:,} rows with missing/non-finite required numeric features.",
+        f"Sampling: {sampling['method']}; max {sampling['max_benign_rows_per_capture']:,} BENIGN rows per capture; all non-BENIGN rows retained; feature dtype `{sampling['feature_dtype']}`.",
+        "Cross-dataset CICIDS2017 sampling is deterministic and stratified by label, capped at 50,000 rows per label; it uses the existing deduplicated cache.", "",
+        "### Binary CSE capture-day evaluation", "",
+        f"Protocol: {capture['protocol']}; n={capture['n_capture_days']} capture days. Aggregate macro-F1 is the unweighted mean across held-out days.", "",
+        "| Metric | Value |", "|---|---:|",
+        f"| Mean capture-day macro-F1 | {metric(capture['aggregate']['mean_capture_day_macro_f1'])} |",
+        f"| Capture-day macro-F1 standard deviation | {metric(capture['aggregate']['std_capture_day_macro_f1'])} |",
+        f"| Source rows | {totals['source_rows']:,} |",
+        f"| Cleaned rows | {totals['cleaned_rows']:,} |",
+        f"| Attack rows retained | {totals['attack_rows_retained']:,} |",
+        f"| BENIGN rows retained | {totals['benign_rows_retained']:,} |",
+        f"| Rows retained after sampling | {totals['retained_rows']:,} |", "",
+        "| Family | Capture days | Files | Cleaned attack flows | Recall | n capture days | Support |",
+        "|---|---|---:|---:|---:|---:|---:|",
+    ]
+    per_family = capture["aggregate"]["per_family_recall"]
+    for family, coverage in capture["family_capture_counts"].items():
+        recall = per_family.get(family, {})
+        days = ", ".join(coverage.get("capture_days", [])) or "none"
+        lines.append(
+            f"| {family} | {days} | {coverage.get('n_files', 0)} | {coverage.get('flow_count', 0):,} | "
+            f"{metric(recall.get('mean_recall_descriptive'))} | "
+            f"{recall.get('n_capture_days_with_test_support', 0)} | {recall.get('support', 0):,} |"
+        )
+    lines += [
+        "", "| Held-out capture day | Macro-F1 | Accuracy | Train rows | Test rows |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    for fold in capture.get("folds", []):
+        lines.append(
+            f"| {fold['held_out_capture_day']} | {metric(fold.get('macro_f1'))} | "
+            f"{metric(fold.get('accuracy'))} | {fold.get('train_rows', 0):,} | {fold.get('test_rows', 0):,} |"
+        )
+
+    direction_names = (
+        ("CICIDS2017_to_CSE-CIC-IDS2018", "CICIDS2017 → CSE-CIC-IDS2018"),
+        ("CSE-CIC-IDS2018_to_CICIDS2017", "CSE-CIC-IDS2018 → CICIDS2017"),
+    )
+    lines += [
+        "", "### Cross-dataset transfer", "",
+        "Results cover labels shared by the supplied captures. They are bounded-sample transfer measurements, not full-population estimates.", "",
+        "| Direction | Macro-F1 | Accuracy | Train rows | Test rows | Excluded train rows | Excluded test rows |",
+        "|---|---:|---:|---:|---:|---:|---:|",
+    ]
+    for key, label in direction_names:
+        result = transfer["directions"][key]
+        excluded = result.get("excluded", {})
+        lines.append(
+            f"| {label} | {metric(result.get('macro_f1'))} | {metric(result.get('accuracy'))} | "
+            f"{result.get('train_rows', 0):,} | {result.get('test_rows', 0):,} | "
+            f"{excluded.get('train_rows', 0):,} | {excluded.get('test_rows', 0):,} |"
+        )
+    cse_label_counts = {}
+    for record in ingestion.get("captures", []):
+        for label, count in record.get("label_counts_before_sampling", {}).items():
+            cse_label_counts[label] = cse_label_counts.get(label, 0) + int(count)
+    cicids_counts = transfer.get("cicids_ingestion", {}).get("source_label_counts", {})
+    first = transfer["directions"][direction_names[0][0]]["per_family"]
+    second = transfer["directions"][direction_names[1][0]]["per_family"]
+    lines += [
+        "", "| Shared family | CICIDS2017 source rows | CSE cleaned rows | CICIDS2017 → CSE recall | CSE → CICIDS2017 recall |",
+        "|---|---:|---:|---:|---:|",
+    ]
+    for family in first:
+        lines.append(
+            f"| {family} | {cicids_counts.get(family, 0):,} | {cse_label_counts.get(family, 0):,} | "
+            f"{metric(first[family].get('recall'))} | {metric(second.get(family, {}).get('recall'))} |"
+        )
+    lines += [
+        "", "CSE attack coverage is one capture day per observed family; per-family and capture-day values are descriptive. The cross-dataset run uses only labels shared by the supplied files and does not estimate transfer for absent families.",
+    ]
     return lines
 
 
