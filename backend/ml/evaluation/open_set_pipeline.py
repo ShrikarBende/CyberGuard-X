@@ -44,8 +44,9 @@ import torch.nn as nn
 from scipy.spatial.distance import cdist
 from scipy.integrate import trapezoid
 from sklearn.ensemble import IsolationForest
-from sklearn.metrics import roc_auc_score
-from sklearn.metrics import average_precision_score, f1_score
+from sklearn.metrics import (average_precision_score, cohen_kappa_score, f1_score,
+                             matthews_corrcoef, precision_recall_fscore_support,
+                             roc_auc_score)
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 from sklearn.decomposition import PCA
@@ -560,6 +561,65 @@ def binary_operating_metrics(scores: np.ndarray, labels: np.ndarray, threshold: 
 
 # ─── Single family evaluation ─────────────────────────────────────────────────
 
+def multiclass_split_metrics(y_true, y_pred, probabilities, class_names) -> dict:
+    """Return one-vs-rest class metrics plus aggregate agreement for a split.
+
+    AUPRC is average precision computed from the model probability for each
+    class. A class with no positive examples in the split has undefined AUPRC
+    and is reported as null; its precision/recall/F1 remain zero-defined.
+    """
+    truth = np.asarray(y_true, dtype=np.int64).reshape(-1)
+    predicted = np.asarray(y_pred, dtype=np.int64).reshape(-1)
+    scores = np.asarray(probabilities, dtype=np.float64)
+    names = [str(name) for name in class_names]
+    labels = np.arange(len(names), dtype=np.int64)
+    if not len(names) or truth.shape != predicted.shape or scores.shape != (len(truth), len(names)):
+        raise ValueError("Classification labels and probability matrix have incompatible shapes")
+    if len(truth) == 0 or not np.isfinite(scores).all():
+        raise ValueError("Classification split must contain rows and finite probabilities")
+    if np.any((truth < 0) | (truth >= len(names))) or np.any((predicted < 0) | (predicted >= len(names))):
+        raise ValueError("Classification split contains a label outside the model class set")
+
+    precision, recall, f1, support = precision_recall_fscore_support(
+        truth, predicted, labels=labels, zero_division=0
+    )
+    per_class = {}
+    auprc_values = []
+    for index, name in enumerate(names):
+        positive = truth == index
+        auprc = float(average_precision_score(positive, scores[:, index])) if positive.any() else None
+        if auprc is not None:
+            auprc_values.append(auprc)
+        per_class[name] = {
+            "precision": round(float(precision[index]), 6),
+            "recall": round(float(recall[index]), 6),
+            "f1": round(float(f1[index]), 6),
+            "auprc": None if auprc is None else round(auprc, 6),
+            "support": int(support[index]),
+        }
+
+    if len(np.unique(truth)) == 1 and len(np.unique(predicted)) == 1:
+        kappa = mcc = float("nan")
+    else:
+        try:
+            kappa = float(cohen_kappa_score(truth, predicted, labels=labels))
+        except ValueError:
+            kappa = float("nan")
+        try:
+            mcc = (float(matthews_corrcoef(truth, predicted))
+                   if len(np.unique(truth)) > 1 and len(np.unique(predicted)) > 1 else float("nan"))
+        except ValueError:
+            mcc = float("nan")
+    return {
+        "macro_precision": round(float(np.mean(precision)), 6),
+        "macro_recall": round(float(np.mean(recall)), 6),
+        "macro_f1": round(float(np.mean(f1)), 6),
+        "macro_auprc": round(float(np.mean(auprc_values)), 6) if auprc_values else None,
+        "cohen_kappa": round(kappa, 6) if np.isfinite(kappa) else None,
+        "mcc": round(mcc, 6) if np.isfinite(mcc) else None,
+        "per_class": per_class,
+    }
+
 def evaluate_one_family(
     held_out_family: str,
     pipeline: dict,
@@ -665,12 +725,25 @@ def evaluate_one_family(
     # Anomaly score: 1 - max_probability (high = more anomalous)
     prob_vl  = lgbm.predict_proba(X_vl)
     prob_all = lgbm.predict_proba(X_test_all)
+    prob_tr = lgbm.predict_proba(X_tr)
     logits_vl = np.asarray(lgbm.predict(X_vl, raw_score=True), dtype=np.float64)
     logits_all = np.asarray(lgbm.predict(X_test_all, raw_score=True), dtype=np.float64)
     predicted_all = lgbm.predict(X_test_all)
     predicted_val = lgbm.predict(X_vl)
+    predicted_tr = lgbm.predict(X_tr)
     known_correct = predicted_all[:len(X_te_k)] == y_test_known
     known_macro_f1 = float(f1_score(y_test_known, predicted_all[:len(X_te_k)], average="macro", zero_division=0))
+    classifier_metrics = {
+        "train": multiclass_split_metrics(
+            y_tr, predicted_tr, prob_tr, local_le.classes_
+        ),
+        "validation": multiclass_split_metrics(
+            y_vl_clean, predicted_val, prob_vl, local_le.classes_
+        ),
+        "known_test": multiclass_split_metrics(
+            y_test_known, predicted_all[:len(X_te_k)], prob_all[:len(X_te_k)], local_le.classes_
+        ),
+    }
     score_conf_vl  = 1.0 - prob_vl.max(axis=1)
     score_conf_all = 1.0 - prob_all.max(axis=1)
 
@@ -973,6 +1046,7 @@ def evaluate_one_family(
         "row_counts": {"train": int(len(tr)), "validation": int(len(vl_clean)),
                        "test_known": int(len(X_te_k)), "test_unknown": int(len(X_te_u))},
         "known_classes_in_run": local_le.classes_.tolist(),
+        "classifier_metrics": classifier_metrics,
         "excluded_test_rows_without_training_class": {
             str(key): int(value) for key, value in excluded_test_labels.items()
         },

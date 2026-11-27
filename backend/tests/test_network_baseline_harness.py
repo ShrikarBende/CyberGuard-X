@@ -15,9 +15,11 @@ from ml.evaluation.holdout import (  # noqa: E402
     CICIDS_FILES, HOLDOUT_SOURCE_FILE, create_frozen_manifest, load_and_validate_manifest,
 )
 from ml.evaluation.network_baseline import (  # noqa: E402
-    build_family_fold, load_development_frame,
+    _seed_bootstrap_ci, build_family_fold, load_development_frame,
 )
-from ml.evaluation.open_set_pipeline import binary_operating_metrics  # noqa: E402
+from ml.evaluation.open_set_pipeline import (  # noqa: E402
+    binary_operating_metrics, multiclass_split_metrics,
+)
 
 
 def _source_frame(name: str, label: str) -> pd.DataFrame:
@@ -114,3 +116,50 @@ def test_binary_operating_metrics_include_replay_false_alert_and_bootstrap_ci():
     assert set(result["bootstrap_95CI"]) == {
         "precision", "recall", "f1", "fpr", "benign_replay_false_alert_rate"
     }
+
+
+def test_multiclass_split_metrics_match_hand_computed_fixture():
+    # Confusion matrix (rows=true, columns=predicted): [[1, 1], [0, 2]].
+    result = multiclass_split_metrics(
+        y_true=[0, 0, 1, 1],
+        y_pred=[0, 1, 1, 1],
+        probabilities=[[0.9, 0.1], [0.6, 0.4], [0.3, 0.7], [0.2, 0.8]],
+        class_names=["A", "B"],
+    )
+
+    assert result["per_class"]["A"] == {
+        "precision": 1.0, "recall": 0.5, "f1": 0.666667, "auprc": 1.0, "support": 2,
+    }
+    assert result["per_class"]["B"] == {
+        "precision": 0.666667, "recall": 1.0, "f1": 0.8, "auprc": 1.0, "support": 2,
+    }
+    assert result["macro_precision"] == 0.833333
+    assert result["macro_recall"] == 0.75
+    assert result["macro_f1"] == 0.733333
+    assert result["macro_auprc"] == 1.0
+    assert result["cohen_kappa"] == 0.5
+    assert result["mcc"] == 0.57735
+
+
+def test_multiclass_split_metrics_marks_absent_class_auprc_undefined():
+    result = multiclass_split_metrics(
+        y_true=[0, 0], y_pred=[0, 0], probabilities=[[0.8, 0.2], [0.7, 0.3]],
+        class_names=["present", "absent"],
+    )
+    assert result["per_class"]["absent"]["precision"] == 0.0
+    assert result["per_class"]["absent"]["recall"] == 0.0
+    assert result["per_class"]["absent"]["f1"] == 0.0
+    assert result["per_class"]["absent"]["auprc"] is None
+    assert result["macro_auprc"] == 1.0
+
+
+def test_multiclass_split_metrics_rejects_incompatible_probability_shape():
+    with pytest.raises(ValueError, match="incompatible shapes"):
+        multiclass_split_metrics([0], [0], [[1.0]], ["A", "B"])
+
+
+def test_seed_bootstrap_interval_is_repeatable_and_contains_seed_mean():
+    values = [0.2, 0.4, 0.6, 0.8, 1.0]
+    first = _seed_bootstrap_ci(values, seed=1234)
+    assert first == _seed_bootstrap_ci(values, seed=1234)
+    assert first[0] <= np.mean(values) <= first[1]

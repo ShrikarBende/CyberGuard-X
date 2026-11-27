@@ -331,6 +331,14 @@ def _metric_cell(family: dict, name: str) -> str:
     return f"{float(mean):.4f} ({float(interval[0]):.4f}–{float(interval[1]):.4f})"
 
 
+def _summary_cell(metric: dict) -> str:
+    mean = metric.get("mean")
+    interval = metric.get("95CI_across_seeds", [None, None])
+    if mean is None or not interval or interval[0] is None or interval[1] is None:
+        return "n/a"
+    return f"{float(mean):.4f} ({float(interval[0]):.4f}–{float(interval[1]):.4f})"
+
+
 def render_network_baseline(artifact_path: Path) -> str:
     """Render every network-baseline metric from one complete saved JSON artifact."""
     artifact_path = artifact_path.resolve()
@@ -338,7 +346,7 @@ def render_network_baseline(artifact_path: Path) -> str:
     if results_root not in artifact_path.parents or artifact_path.suffix.lower() != ".json":
         raise ValueError("Network baseline artifact must be a JSON file under backend/ml/evaluation/results")
     payload = read(artifact_path)
-    if payload.get("run_status") != "complete" or payload.get("artifact_schema_version") != 1:
+    if payload.get("run_status") != "complete" or payload.get("artifact_schema_version") != 3:
         raise ValueError("Refusing to render an incomplete or unsupported network baseline artifact")
     required = ("dataset", "holdout", "split_rules", "seeds", "families", "model_and_decision_policy")
     if any(key not in payload for key in required):
@@ -346,13 +354,15 @@ def render_network_baseline(artifact_path: Path) -> str:
     expected_families = {"DosDDoS", "PortScan", "BruteForce", "WebAttack", "Bot"}
     if {row.get("family") for row in payload["families"]} != expected_families:
         raise ValueError("Network baseline artifact does not contain every expected family")
+    if any("classifier_metrics" not in row for row in payload["families"]):
+        raise ValueError("Network baseline artifact does not contain per-split classifier metrics")
     dataset = payload["dataset"]
     holdout = payload["holdout"]
     model = payload["model_and_decision_policy"]
     relative_artifact = Path("../backend/ml/evaluation/results") / artifact_path.name
     lines = [
         "# Network evaluation results", "",
-        "This report is generated from one saved network-baseline JSON artifact. It does not run model evaluation.", "",
+        "Reproduce this report and the five-seed network evaluation with `python scripts/run_network_eval.py`. The command runs the network baseline and renders this document from that run's JSON plus the saved auxiliary evaluation artifacts. Rendering alone does not run model evaluation.", "",
         f"Artifact: [`{artifact_path.name}`]({relative_artifact.as_posix()}) (run `{payload['run_id']}`).",
         f"Dataset: `{dataset['version']}`; raw source-file SHA-256 fingerprint: `{dataset['sha256']}`; processed development sample SHA-256: `{dataset['processed_development_sample_sha256']}`.",
         f"Frozen holdout: `{', '.join(holdout['source_sessions'])}`; manifest SHA-256: `{holdout['manifest_sha256']}`; status: {holdout['status']}.",
@@ -362,8 +372,8 @@ def render_network_baseline(artifact_path: Path) -> str:
         f"Confidence intervals: {model['bootstrap']['across_seeds']} ({model['bootstrap']['across_seed_resamples']:,} resamples). Each seed’s interval uses {model['bootstrap']['per_seed']} ({model['bootstrap']['per_seed_resamples']:,} resamples).", "",
         "## Per-family unknown-review metrics", "",
         "Values are the mean across seed runs with the 95% bootstrap interval across those seed-level estimates. The unknown class is the named family in the row; other test labels are treated as known only when that class was present in training.", "",
-        "| Attack family | Test sessions | Unknown support by seed | Precision | Recall | F1 | Known FPR | Benign replay false-alert rate |",
-        "|---|---|---|---:|---:|---:|---:|---:|",
+        "| Attack family | Test sessions | Unknown support by seed | Precision | Recall | F1 | OSCR AUC | Known macro-F1 | Known FPR | Benign replay false-alert rate |",
+        "|---|---|---|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for family in payload["families"]:
         supports = "; ".join(
@@ -373,9 +383,47 @@ def render_network_baseline(artifact_path: Path) -> str:
         lines.append(
             f"| {family['family']} | {sessions} | {supports} | "
             f"{_metric_cell(family, 'precision')} | {_metric_cell(family, 'recall')} | "
-            f"{_metric_cell(family, 'f1')} | {_metric_cell(family, 'fpr')} | "
+            f"{_metric_cell(family, 'f1')} | {_metric_cell(family, 'oscr_auc')} | "
+            f"{_metric_cell(family, 'known_macro_f1')} | {_metric_cell(family, 'fpr')} | "
             f"{_metric_cell(family, 'benign_replay_false_alert_rate')} |"
         )
+    lines += [
+        "", "## Known-class classifier metrics", "",
+        "Per-class values are one-vs-rest precision, recall, F1, and average precision (AUPRC); macro values, Cohen's kappa, and MCC are aggregated across the five seeds with percentile bootstrap 95% confidence intervals. Metrics are reported for the in-sample training split, known-only validation split, and known-only test split in every family fold. Training metrics are diagnostics, not generalization estimates. The held-out unknown family is excluded from closed-set classifier metrics. AUPRC is `n/a` when a class has no positive rows; macro AUPRC averages classes with positive support.", "",
+        "### Aggregate metrics by split", "",
+        "| Held-out family | Split | Macro precision | Macro recall | Macro F1 | Macro AUPRC | Cohen's kappa | MCC |",
+        "|---|---|---:|---:|---:|---:|---:|---:|",
+    ]
+    for family in payload["families"]:
+        for split_name, split_label in (("train", "Train (in-sample)"), ("validation", "Validation"),
+                                        ("known_test", "Known-only test")):
+            metrics = family["classifier_metrics"][split_name]["metrics"]
+            lines.append(
+                f"| {family['family']} | {split_label} | "
+                f"{_summary_cell(metrics['macro_precision'])} | {_summary_cell(metrics['macro_recall'])} | "
+                f"{_summary_cell(metrics['macro_f1'])} | {_summary_cell(metrics['macro_auprc'])} | "
+                f"{_summary_cell(metrics['cohen_kappa'])} | {_summary_cell(metrics['mcc'])} |"
+            )
+    lines += [
+        "", "### Per-class metrics by split", "",
+        "Support is listed by seed; metric cells show the seed mean and 95% seed-bootstrap interval.", "",
+        "| Held-out family | Split | Known class | Precision | Recall | F1 | AUPRC | Support by seed |",
+        "|---|---|---|---:|---:|---:|---:|---|",
+    ]
+    for family in payload["families"]:
+        for split_name, split_label in (("train", "Train (in-sample)"), ("validation", "Validation"),
+                                        ("known_test", "Known-only test")):
+            per_class = family["classifier_metrics"][split_name]["per_class"]
+            for class_name, metrics in sorted(per_class.items()):
+                support = "; ".join(
+                    f"{item['seed']}: {item['value'] if item['value'] is not None else 'n/a'}"
+                    for item in metrics["support_by_seed"]
+                )
+                lines.append(
+                    f"| {family['family']} | {split_label} | {class_name} | "
+                    f"{_summary_cell(metrics['precision'])} | {_summary_cell(metrics['recall'])} | "
+                    f"{_summary_cell(metrics['f1'])} | {_summary_cell(metrics['auprc'])} | {support} |"
+                )
     lines += [
         "", "## Interpretation and split audit", "",
         f"{payload['split_integrity']}. The final holdout was excluded from row loading, model fitting, threshold selection, and scoring; only raw file checksums were read to verify the frozen dataset identity.",
@@ -392,11 +440,24 @@ def latest_network_baseline() -> Path:
     candidates = sorted(RESULTS.glob("network_baseline_*.json"), reverse=True)
     for path in candidates:
         try:
-            if read(path).get("run_status") == "complete":
+            artifact = read(path)
+            if artifact.get("run_status") == "complete" and artifact.get("artifact_schema_version") == 3:
                 return path
         except (OSError, json.JSONDecodeError):
             continue
     raise FileNotFoundError("No complete network_baseline_*.json artifact exists; run scripts/run_network_eval.py first")
+
+
+def write_results(network_baseline: Path | None = None) -> Path:
+    """Render the complete results page from saved evaluation JSON artifacts."""
+    artifact = network_baseline or latest_network_baseline()
+    report = render_network_baseline(artifact)
+    report += "\n".join(host_window_ablation_section())
+    report += "\n".join(branch_fusion_ablation_section())
+    report += "\n".join(rag_ablation_section())
+    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+    OUTPUT.write_text(report, encoding="utf-8")
+    return OUTPUT
 
 
 def host_window_ablation_section() -> list[str]:
@@ -559,9 +620,5 @@ if __name__ == "__main__":
         print(f"Wrote historical report to {OUTPUT}")
     else:
         artifact = args.network_baseline or latest_network_baseline()
-        report = render_network_baseline(artifact)
-        report += "\n".join(host_window_ablation_section())
-        report += "\n".join(branch_fusion_ablation_section())
-        report += "\n".join(rag_ablation_section())
-        OUTPUT.write_text(report, encoding="utf-8")
+        write_results(artifact)
         print(f"Wrote {OUTPUT} from saved artifact {artifact}")

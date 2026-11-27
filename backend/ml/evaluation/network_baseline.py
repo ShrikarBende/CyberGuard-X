@@ -156,7 +156,8 @@ def _seed_bootstrap_ci(values: list[float], seed: int) -> list[float | None]:
 
 
 def _summarize_family(family: str, per_seed: list[dict]) -> dict:
-    metric_names = ("precision", "recall", "f1", "fpr", "benign_replay_false_alert_rate")
+    metric_names = ("precision", "recall", "f1", "oscr_auc", "known_macro_f1",
+                    "fpr", "benign_replay_false_alert_rate")
     seed_values = {}
     for name in metric_names:
         values = [row["metrics"][name] for row in per_seed if row["metrics"][name] is not None]
@@ -168,11 +169,57 @@ def _summarize_family(family: str, per_seed: list[dict]) -> dict:
                 for row in per_seed if row["metrics"][name] is not None
             ],
         }
+    classification = {}
+    for split_name in ("train", "validation", "known_test"):
+        split_runs = [row["classifier_metrics"][split_name] for row in per_seed]
+        aggregate = {}
+        for metric_name in ("macro_precision", "macro_recall", "macro_f1", "macro_auprc",
+                            "cohen_kappa", "mcc"):
+            values = [run[metric_name] for run in split_runs if run[metric_name] is not None]
+            aggregate[metric_name] = {
+                "mean": round(float(np.mean(values)), 6) if values else None,
+                "95CI_across_seeds": _seed_bootstrap_ci(
+                    values, seed=sum(ord(ch) for ch in family + split_name + metric_name)
+                ),
+                "values_by_seed": [
+                    {"seed": row["seed"], "value": row["classifier_metrics"][split_name][metric_name]}
+                    for row in per_seed
+                    if row["classifier_metrics"][split_name][metric_name] is not None
+                ],
+            }
+        classes = sorted({name for run in split_runs for name in run["per_class"]})
+        per_class = {}
+        for class_name in classes:
+            per_class[class_name] = {}
+            for metric_name in ("precision", "recall", "f1", "auprc"):
+                values = [run["per_class"][class_name][metric_name] for run in split_runs
+                          if class_name in run["per_class"] and run["per_class"][class_name][metric_name] is not None]
+                per_class[class_name][metric_name] = {
+                    "mean": round(float(np.mean(values)), 6) if values else None,
+                    "95CI_across_seeds": _seed_bootstrap_ci(
+                        values, seed=sum(ord(ch) for ch in family + split_name + class_name + metric_name)
+                    ),
+                    "values_by_seed": [
+                        {"seed": row["seed"], "value": (
+                            row["classifier_metrics"][split_name]["per_class"].get(class_name, {}).get(metric_name)
+                        )}
+                        for row in per_seed
+                    ],
+                }
+            per_class[class_name]["support_by_seed"] = [
+                {"seed": row["seed"], "value": (
+                    row["classifier_metrics"][split_name]["per_class"].get(class_name, {}).get("support")
+                )}
+                for row in per_seed
+            ]
+        classification[split_name] = {"metrics": aggregate, "per_class": per_class}
+
     return {
         "family": family,
         "test_source_sessions": sorted({group for row in per_seed for group in row["split"]["test_source_sessions"]}),
         "seed_runs": per_seed,
         "metrics": seed_values,
+        "classifier_metrics": classification,
     }
 
 
@@ -205,7 +252,7 @@ def run_network_baseline(*, sample: float = SAMPLE_FRACTION,
 
     per_family = []
     payload = {
-        "artifact_schema_version": 1,
+        "artifact_schema_version": 3,
         "run_id": run_id,
         "created_at_utc": run_time.isoformat(),
         "dataset": {
@@ -253,6 +300,7 @@ def run_network_baseline(*, sample: float = SAMPLE_FRACTION,
             "fpr": "known-class test rows incorrectly flagged for unknown review divided by eligible known-class test rows",
             "benign_replay_false_alert_rate": "BENIGN rows from held-out development capture sessions incorrectly flagged for unknown review divided by BENIGN rows in those sessions; this is an offline session replay metric, not a live-service replay run",
             "unknown_review_semantics": "confidence-threshold rejection is a triage proxy for UNKNOWN_NOVEL review, not a confirmed attack verdict",
+            "classifier_metrics": "For each family/seed fold, per-class one-vs-rest precision, recall, F1, and average precision (AUPRC), plus macro summaries, Cohen's kappa, and MCC are reported on train, known-only validation, and known-only test. Train values are in-sample diagnostics, not generalization estimates. Unknown-family test rows are excluded from closed-set classifier metrics and remain evaluated by the open-set metrics. Macro AUPRC averages classes with positive support; unsupported class AUPRC is null.",
         },
         "seeds": list(seeds),
         "families": [],
@@ -274,15 +322,21 @@ def run_network_baseline(*, sample: float = SAMPLE_FRACTION,
             family_runs.append({
                 "seed": seed,
                 "split": split,
-                "metrics": {name: operating[name] for name in (
-                    "precision", "recall", "f1", "fpr", "benign_replay_false_alert_rate"
-                )},
+                "metrics": {
+                    **{name: operating[name] for name in (
+                        "precision", "recall", "f1", "fpr", "benign_replay_false_alert_rate"
+                    )},
+                    "oscr_auc": detector["oscr_auc"],
+                    "known_macro_f1": detector["known_macro_f1"],
+                },
+                "classifier_metrics": result["classifier_metrics"],
                 "bootstrap_95CI": operating["bootstrap_95CI"],
                 "support": operating["support"],
                 "decision": {
                     "threshold_value": detector["threshold_value"],
                     "threshold_percentile": detector["threshold_percentile"],
                     "known_macro_f1": detector["known_macro_f1"],
+                    "oscr_auc": detector["oscr_auc"],
                     "auroc": detector["AUROC"],
                     "auprc": detector["auprc"],
                 },
