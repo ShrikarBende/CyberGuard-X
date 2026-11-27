@@ -36,6 +36,7 @@ def _action(incident, evidence):
 def test_run_list_returns_summaries_without_step_rows(db_pair, monkeypatch):
     db, _ = db_pair
     _scope(db)
+    monkeypatch.setattr(api.settings, "AGENT_ENABLED", True)
     monkeypatch.setattr(api, "_reap_stale_runs", lambda: None)
     result = api.list_agent_runs(None, 50, _analyst(), db)
     assert not hasattr(result[0], "steps")
