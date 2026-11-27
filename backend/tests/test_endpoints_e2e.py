@@ -117,6 +117,10 @@ async def test_viewer_gets_forbidden_for_every_write_route(api_clients, monkeypa
         ("POST", "/api/agent/proposals/{proposal_id}/reject"): {"json": {"note": "test"}},
         ("POST", "/api/rag/chat"): {"json": {"query": "test"}},
         ("POST", "/api/models/retrain"): {"json": {"profile": "light"}},
+        ("POST", "/api/models/drift"): {"json": {
+            "reference_features": [[0.0], [1.0]],
+            "current_features": [[0.0], [1.0]],
+        }},
         ("POST", "/api/upload"): {"files": {"file": ("empty.json", "[]", "application/json")}},
         ("POST", "/api/analyze"): {"json": {"event_type": "test", "event_category": "auth"}},
         ("POST", "/api/evaluation/run"): {},
