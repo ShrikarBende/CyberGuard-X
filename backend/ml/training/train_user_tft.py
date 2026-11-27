@@ -5,7 +5,6 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-import joblib
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -18,6 +17,8 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 from ml.sequence_graph import (USER_FEATURE_NAMES, TemporalFusionTransformer,
                               generate_synthetic_user_sequences, load_user_sequences)
+from app.core.config import settings
+from ml.artifact_security import save_model_bundle
 
 ARTIFACT_PATH = BACKEND_DIR / "saved_models" / "user_tft.bundle.pkl"
 SEQUENCE_LENGTH = 24
@@ -165,7 +166,8 @@ def train_user_tft(dataset_dir: Path | None = None, output_path: Path | None = N
         "seed": seed, "training_date": datetime.now(timezone.utc).isoformat(),
     }
     destination.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(bundle, destination, compress=3)
+    save_model_bundle(bundle, destination, settings.MODEL_ARTIFACT_HMAC_KEY,
+                      registry_name="user_tft" if output_path is None else None)
     return destination
 
 

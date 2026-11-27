@@ -8,7 +8,6 @@ from collections import Counter
 from datetime import date
 from pathlib import Path
 
-import joblib
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 REPO_DIR = BACKEND_DIR.parent
 if str(BACKEND_DIR) not in sys.path:
@@ -17,6 +16,8 @@ if str(BACKEND_DIR) not in sys.path:
 from app.detection.engine import predict_flow  # noqa: E402
 from app.core.config import settings  # noqa: E402
 from ml.preprocessing.cicids_pipeline import LABEL_COL, build_full_pipeline  # noqa: E402
+from ml.artifact_security import load_verified_joblib  # noqa: E402
+from ml.model_registry import resolve_model_path  # noqa: E402
 
 ARTIFACT_PATH = Path(settings.MODEL_BUNDLE_PATH)
 RESULTS_DIR = BACKEND_DIR / "ml" / "evaluation" / "results"
@@ -80,12 +81,13 @@ def replay_metadata(bundle: dict, pipeline: dict, row_count: int, seed: int) -> 
 def create_summary(n: int = 5000, seed: int = 42) -> dict:
     if n < 1:
         raise ValueError("N must be positive")
-    if not ARTIFACT_PATH.is_file():
+    artifact = resolve_model_path("network_flow", ARTIFACT_PATH)
+    if not artifact.is_file():
         raise FileNotFoundError(
-            f"Configured CICIDS model bundle was not found: {ARTIFACT_PATH}. "
+            f"Configured CICIDS model bundle was not found: {artifact}. "
             "Set MODEL_BUNDLE_PATH to an existing bundle; no alternate bundle is loaded."
         )
-    bundle = joblib.load(ARTIFACT_PATH)
+    bundle = load_verified_joblib(artifact, settings.MODEL_ARTIFACT_HMAC_KEY)
     pipeline = build_full_pipeline(seed=seed, sample=0.15, log1p=True)
     test_rows = pipeline["test_df"]
     selected = stratified_sample(test_rows, n, seed)

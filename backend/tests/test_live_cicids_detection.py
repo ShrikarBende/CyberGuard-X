@@ -21,6 +21,14 @@ from app.models.entities import DetectionResult, Incident, MitreTechnique, Secur
 from app.schemas.schemas import SecurityEventCreate
 from ml.preprocessing.cicids_pipeline import apply_log1p_columns, build_full_pipeline
 from ml.training.train_final import ARTIFACT_PATH, compute_margin_tau
+from ml import fusion_meta
+
+
+@pytest.fixture(autouse=True)
+def use_fusion_fallback_without_loading_repository_artifacts(tmp_path, monkeypatch):
+    """Keep flow tests isolated from the unsigned checked-in Fusion bundle."""
+    monkeypatch.setattr(fusion_meta, "ARTIFACT_PATH", tmp_path / "no-signed-fusion.joblib")
+    monkeypatch.setattr(fusion_meta, "_BUNDLE_CACHE", None)
 
 
 def _finish_inline(coroutine):

@@ -8,7 +8,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-import joblib
 import numpy as np
 import pandas as pd
 from sqlalchemy import func, or_
@@ -155,8 +154,13 @@ def _update_live_host_context(event: SecurityEvent, flow_row: dict | None = None
 def load_endpoint_bundle() -> Optional[Dict[str, Any]]:
     """Load endpoint behavioral model bundle when it has been trained."""
     global _ENDPOINT_BUNDLE_CACHE
-    if _ENDPOINT_BUNDLE_CACHE is None and ENDPOINT_BUNDLE_PATH.is_file():
-        bundle = joblib.load(ENDPOINT_BUNDLE_PATH)
+    if _ENDPOINT_BUNDLE_CACHE is None:
+        from ml.artifact_security import load_verified_joblib
+        from ml.model_registry import resolve_model_path
+        bundle_path = resolve_model_path("endpoint", ENDPOINT_BUNDLE_PATH)
+        if not bundle_path.is_file():
+            return None
+        bundle = load_verified_joblib(bundle_path, settings.MODEL_ARTIFACT_HMAC_KEY)
         required = {"dae", "isolation_forest", "feature_names", "feature_min", "feature_range",
                     "reconstruction_bounds", "iforest_bounds", "model_version"}
         missing = required.difference(bundle)
@@ -169,8 +173,13 @@ def load_endpoint_bundle() -> Optional[Dict[str, Any]]:
 def load_user_bundle() -> Optional[Dict[str, Any]]:
     """Load the optional user-sequence TFT bundle once per process."""
     global _USER_BUNDLE_CACHE
-    if _USER_BUNDLE_CACHE is None and USER_BUNDLE_PATH.is_file():
-        bundle = joblib.load(USER_BUNDLE_PATH)
+    if _USER_BUNDLE_CACHE is None:
+        from ml.artifact_security import load_verified_joblib
+        from ml.model_registry import resolve_model_path
+        bundle_path = resolve_model_path("user_tft", USER_BUNDLE_PATH)
+        if not bundle_path.is_file():
+            return None
+        bundle = load_verified_joblib(bundle_path, settings.MODEL_ARTIFACT_HMAC_KEY)
         required = {"model", "feature_names", "feature_min", "feature_range", "sequence_length", "model_version"}
         missing = required.difference(bundle)
         if missing:
@@ -182,8 +191,13 @@ def load_user_bundle() -> Optional[Dict[str, Any]]:
 def load_network_gat_bundle() -> Optional[Dict[str, Any]]:
     """Load the optional communication-graph GAT bundle once per process."""
     global _NETWORK_GAT_BUNDLE_CACHE
-    if _NETWORK_GAT_BUNDLE_CACHE is None and NETWORK_GAT_BUNDLE_PATH.is_file():
-        bundle = joblib.load(NETWORK_GAT_BUNDLE_PATH)
+    if _NETWORK_GAT_BUNDLE_CACHE is None:
+        from ml.artifact_security import load_verified_joblib
+        from ml.model_registry import resolve_model_path
+        bundle_path = resolve_model_path("network_gat", NETWORK_GAT_BUNDLE_PATH)
+        if not bundle_path.is_file():
+            return None
+        bundle = load_verified_joblib(bundle_path, settings.MODEL_ARTIFACT_HMAC_KEY)
         required = {"model", "host_index", "node_features_by_host", "incoming_by_host", "model_version"}
         missing = required.difference(bundle)
         if missing:
@@ -349,12 +363,15 @@ def load_model_bundle() -> Optional[Dict[str, Any]]:
     """Load the configured real-data model bundle once per process."""
     global _MODEL_BUNDLE_CACHE
     if _MODEL_BUNDLE_CACHE is None:
-        if not MODEL_BUNDLE_PATH.is_file():
+        from ml.artifact_security import load_verified_joblib
+        from ml.model_registry import resolve_model_path
+        bundle_path = resolve_model_path("network_flow", MODEL_BUNDLE_PATH)
+        if not bundle_path.is_file():
             raise FileNotFoundError(
-                f"Configured CICIDS model bundle was not found: {MODEL_BUNDLE_PATH}. "
+                f"Configured CICIDS model bundle was not found: {bundle_path}. "
                 "Set MODEL_BUNDLE_PATH to an existing bundle; no alternate bundle is loaded."
             )
-        bundle = joblib.load(MODEL_BUNDLE_PATH)
+        bundle = load_verified_joblib(bundle_path, settings.MODEL_ARTIFACT_HMAC_KEY)
         required = {
             "model", "scaler", "feature_names", "log1p_columns", "class_names",
             "tau", "score_name", "model_version", "data_hash", "seed", "training_date",
@@ -511,6 +528,16 @@ def score_batch(frame, bundle: Dict[str, Any], events: list[SecurityEvent] | Non
         raise ValueError("CICIDS2017 flow features must be finite")
     transformed = apply_log1p_columns(raw, np.asarray(bundle["log1p_columns"], dtype=bool))
     scaled = bundle["scaler"].transform(transformed)
+    drift_summary = None
+    drift_reference = bundle.get("drift_reference")
+    if len(scaled) >= 2 and isinstance(drift_reference, dict):
+        if drift_reference.get("feature_names") != feature_names:
+            raise ValueError("Model drift reference feature order does not match the model bundle")
+        from ml.feature_drift import monitor_feature_drift
+        drift_summary = monitor_feature_drift(
+            drift_reference.get("values"), scaled, feature_names,
+            psi_threshold=settings.FEATURE_DRIFT_PSI_ALERT_THRESHOLD,
+        )
     raw_scores = np.asarray(bundle["model"].predict(scaled, raw_score=True), dtype=float)
     probabilities = np.asarray(bundle["model"].predict_proba(scaled), dtype=float)
     expected_shape = (len(frame), len(class_names))
@@ -576,6 +603,7 @@ def score_batch(frame, bundle: Dict[str, Any], events: list[SecurityEvent] | Non
                                 "energy_anomaly_score": energy_value}
         results.append({
             "host_window": host_contexts[row_index],
+            **({"feature_drift": drift_summary} if drift_summary is not None else {}),
             "class_names": class_names,
             "probabilities": row_probabilities,
             "probability_by_class": {

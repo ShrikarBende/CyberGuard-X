@@ -4,10 +4,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 import sys
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.correlation.engine import correlate_events
 from app.ingestion.scenarios import generate_demo_events
+from ml import fusion_meta
+
+
+@pytest.fixture(autouse=True)
+def use_fusion_fallback_for_correlation_tests(monkeypatch):
+    # These rules tests exercise the deterministic fallback, not repository artifacts.
+    monkeypatch.setattr(fusion_meta, "_BUNDLE_CACHE", {})
 
 
 def _scenario(name: str):

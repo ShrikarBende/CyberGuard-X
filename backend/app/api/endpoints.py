@@ -792,9 +792,8 @@ def retrain_model(
     admin: AnalystAccount = Depends(require_roles("admin")),
 ):
     """Train a profile in the background and atomically install on success."""
-    import os
     from pathlib import Path
-    from app.detection.engine import MODEL_BUNDLE_PATH
+    from app.core.config import settings
     from ml.training.train_final import ARTIFACT_PATH, MEDIUM_ARTIFACT_PATH
 
     target = Path(ARTIFACT_PATH if request.profile == "light" else MEDIUM_ARTIFACT_PATH)
@@ -829,16 +828,16 @@ def retrain_model(
                         pass
                 logger.warning("Could not load analyst feedback for retraining; proceeding without it", exc_info=True)
                 feedback_samples = []
-            if target.is_file():
-                try:
-                    import joblib
-                    old_bundle = joblib.load(target)
-                    before_metrics["flow_model_version"] = old_bundle.get("model_version")
-                    before_metrics["open_set_thresholds"] = {key: old_bundle.get(key) for key in
-                        ("open_set_union_threshold", "confidence_anomaly_threshold", "energy_anomaly_threshold")}
-                    before_metrics["feedback_samples_used"] = old_bundle.get("feedback_adaptation", {}).get("samples_used", 0)
-                except Exception as exc:
-                    before_metrics["artifact_read_error"] = type(exc).__name__
+            from ml.artifact_security import (load_verified_joblib, manifest_path,
+                                              publish_registered_version)
+            from ml.model_registry import resolve_model_path
+            active_path = resolve_model_path("network_flow", target)
+            if active_path.is_file():
+                old_bundle = load_verified_joblib(active_path, settings.MODEL_ARTIFACT_HMAC_KEY)
+                before_metrics["flow_model_version"] = old_bundle.get("model_version")
+                before_metrics["open_set_thresholds"] = {key: old_bundle.get(key) for key in
+                    ("open_set_union_threshold", "confidence_anomaly_threshold", "energy_anomaly_threshold")}
+                before_metrics["feedback_samples_used"] = old_bundle.get("feedback_adaptation", {}).get("samples_used", 0)
             from ml.training.train_final import train_final
             import inspect
             trainer_signature = inspect.signature(train_final)
@@ -853,38 +852,44 @@ def retrain_model(
             trained_path = train_final(**trainer_kwargs)
             if not Path(trained_path).is_file():
                 raise FileNotFoundError(f"Training completed without producing artifact: {trained_path}")
-            import joblib
-            staged_bundle = joblib.load(trained_path)
+            staged_bundle = load_verified_joblib(trained_path, settings.MODEL_ARTIFACT_HMAC_KEY)
             if not isinstance(staged_bundle, dict) or not staged_bundle.get("model_version"):
                 raise ValueError("Training produced an invalid model bundle.")
-            # Same-directory replacement is atomic; the current bundle remains intact until here.
-            os.replace(trained_path, target)
+            published_flow_path = publish_registered_version(
+                trained_path, settings.MODEL_ARTIFACT_HMAC_KEY, "network_flow",
+            )
+            Path(trained_path).unlink(missing_ok=True)
+            manifest_path(trained_path).unlink(missing_ok=True)
             fusion_feedback = [sample for sample in feedback_samples if sample.get("fusion_features")]
             fusion_metrics = None
             if fusion_feedback:
                 from ml.fusion_meta import ARTIFACT_PATH as FUSION_ARTIFACT_PATH
                 from ml.training.train_fusion_meta import train_fusion_meta
                 fusion_temporary = FUSION_ARTIFACT_PATH.with_name(f".{FUSION_ARTIFACT_PATH.name}.{job_id}.tmp")
-                if FUSION_ARTIFACT_PATH.is_file():
-                    try:
-                        previous_fusion = joblib.load(FUSION_ARTIFACT_PATH)
-                        before_metrics["fusion_validation_metrics"] = previous_fusion.get("validation_metrics")
-                        before_metrics["fusion_decision_threshold"] = previous_fusion.get("decision_threshold")
-                    except Exception as exc:
-                        before_metrics["fusion_artifact_read_error"] = type(exc).__name__
+                fusion_active_path = resolve_model_path("risk_fusion", FUSION_ARTIFACT_PATH)
+                if fusion_active_path.is_file():
+                    previous_fusion = load_verified_joblib(
+                        fusion_active_path, settings.MODEL_ARTIFACT_HMAC_KEY,
+                    )
+                    before_metrics["fusion_validation_metrics"] = previous_fusion.get("validation_metrics")
+                    before_metrics["fusion_decision_threshold"] = previous_fusion.get("decision_threshold")
                 fusion_path = train_fusion_meta(output_path=fusion_temporary, feedback_samples=fusion_feedback)
-                fusion_bundle = joblib.load(fusion_path)
-                os.replace(fusion_path, FUSION_ARTIFACT_PATH)
+                fusion_bundle = load_verified_joblib(fusion_path, settings.MODEL_ARTIFACT_HMAC_KEY)
+                fusion_target = publish_registered_version(
+                    fusion_path, settings.MODEL_ARTIFACT_HMAC_KEY, "risk_fusion",
+                )
+                Path(fusion_path).unlink(missing_ok=True)
+                manifest_path(fusion_path).unlink(missing_ok=True)
                 from ml import fusion_meta
                 fusion_meta._BUNDLE_CACHE = fusion_bundle
+                fusion_meta.ARTIFACT_PATH = fusion_target
                 fusion_metrics = {"validation_metrics": fusion_bundle.get("validation_metrics"),
                                   "decision_threshold": fusion_bundle.get("decision_threshold"),
                                   "feedback_samples_used": fusion_bundle.get("feedback_samples_used")}
-            if target.resolve() == Path(MODEL_BUNDLE_PATH).resolve():
-                from app.detection import engine as detection_engine
-                detection_engine._MODEL_BUNDLE_CACHE = staged_bundle
+            from app.detection import engine as detection_engine
+            detection_engine._MODEL_BUNDLE_CACHE = staged_bundle
             with _RETRAIN_JOBS_LOCK:
-                _RETRAIN_JOBS[job_id].update(status="completed", artifact_path=str(target), error=None,
+                _RETRAIN_JOBS[job_id].update(status="completed", artifact_path=str(published_flow_path), error=None,
                                              feedback_samples_seen=len(feedback_samples),
                                              fusion_adaptation=fusion_metrics)
             after_metrics = {"flow_model_version": staged_bundle.get("model_version"),
@@ -907,6 +912,7 @@ def retrain_model(
         except Exception as exc:
             try:
                 Path(temporary).unlink(missing_ok=True)
+                manifest_path(temporary).unlink(missing_ok=True)
             except OSError:
                 logger.warning("Could not remove temporary model artifact %s", temporary)
             logger.exception("CICIDS %s profile retraining failed", request.profile)

@@ -45,8 +45,16 @@ def test_failed_retrain_keeps_existing_bundle(tmp_path, monkeypatch):
 
 
 def test_successful_retrain_atomically_installs_profile_artifact(tmp_path, monkeypatch):
+    from ml.artifact_security import sign_artifact
+    from ml import model_registry
+
     target = tmp_path / "light.bundle.pkl"
-    target.write_bytes(b"previous-bundle")
+    joblib.dump({"model_version": "previous"}, target)
+    test_key = "retrain-test-key-0123456789abcdef"
+    sign_artifact(target, test_key, model_version="previous")
+    monkeypatch.setattr(detection_engine.settings, "MODEL_ARTIFACT_HMAC_KEY", test_key)
+    monkeypatch.setattr(model_registry, "BACKEND_ROOT", tmp_path / "backend")
+    monkeypatch.setattr(model_registry, "REGISTRY_PATH", tmp_path / "backend" / "models" / "registry.json")
     monkeypatch.setattr(trainer, "ARTIFACT_PATH", target)
     monkeypatch.setattr(detection_engine, "MODEL_BUNDLE_PATH", target)
     monkeypatch.setattr(detection_engine, "_MODEL_BUNDLE_CACHE", {"model_version": "previous"})
@@ -58,12 +66,15 @@ def test_successful_retrain_atomically_installs_profile_artifact(tmp_path, monke
 
     def fake_training(profile, output_path):
         joblib.dump({"model_version": "new-light"}, output_path)
+        sign_artifact(output_path, test_key, model_version="new-light")
         return output_path
 
     monkeypatch.setattr(trainer, "train_final", fake_training)
     started = endpoints.retrain_model(endpoints.RetrainRequest(profile="light"))
     status = _wait_for_job(started["job_id"])
     assert status["status"] == "completed", status.get("error")
-    assert joblib.load(target)["model_version"] == "new-light"
+    assert joblib.load(target)["model_version"] == "previous"
+    assert Path(status["artifact_path"]).is_file()
+    assert joblib.load(status["artifact_path"])["model_version"] == "new-light"
     assert detection_engine._MODEL_BUNDLE_CACHE["model_version"] == "new-light"
     clean_engine.dispose()

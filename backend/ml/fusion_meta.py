@@ -4,8 +4,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Mapping
 
-import joblib
 import numpy as np
+from app.core.config import settings
+from ml.artifact_security import load_verified_joblib
+from ml.model_registry import resolve_model_path
 
 FEATURE_NAMES = (
     "s_user", "s_endpoint", "s_network_flow", "s_network_graph",
@@ -52,9 +54,11 @@ def load_fusion_bundle(path: Path | str | None = None) -> dict | None:
     target = Path(path) if path else ARTIFACT_PATH
     if path is None and _BUNDLE_CACHE is not None:
         return _BUNDLE_CACHE
+    if path is None:
+        target = resolve_model_path("risk_fusion", target)
     if not target.is_file():
         return None
-    bundle = joblib.load(target)
+    bundle = load_verified_joblib(target, settings.MODEL_ARTIFACT_HMAC_KEY)
     required = {"scaler", "model", "positive_coefficients", "model_version"}
     missing = required.difference(bundle)
     if missing:

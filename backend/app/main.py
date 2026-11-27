@@ -24,7 +24,6 @@ from app.api.ws import router as ws_router
 from app.agent.api import router as agent_router
 from app.database.session import engine, SessionLocal, get_db
 from app.auth import account_for_token, get_current_analyst
-import joblib
 from alembic import command
 from alembic.config import Config
 from app.database.session import Base
@@ -81,13 +80,16 @@ def run_database_migrations(database_engine=engine) -> None:
 
 def _print_startup_summary() -> None:
     model_path = Path(settings.MODEL_BUNDLE_PATH)
+    from ml.artifact_security import load_verified_joblib
+    from ml.model_registry import resolve_model_path
+    model_path = resolve_model_path("network_flow", model_path)
     if not model_path.is_file():
         raise RuntimeError(
             f"Configured CICIDS model bundle was not found: {model_path}. "
             "Set MODEL_BUNDLE_PATH to an existing bundle; no alternate bundle is loaded."
         )
     try:
-        bundle = joblib.load(model_path)
+        bundle = load_verified_joblib(model_path, settings.MODEL_ARTIFACT_HMAC_KEY)
     except Exception as exc:
         raise RuntimeError(f"Could not read configured CICIDS model bundle: {model_path}: {exc}") from exc
     profile = bundle.get("profile", {})
