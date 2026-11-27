@@ -173,7 +173,13 @@ class HostWindowAggregator:
 
 
 def enrich_flow_with_host_context(flow_df: pd.DataFrame, aggregator: HostWindowAggregator) -> pd.DataFrame:
-    """Append rolling source host features; rows lacking usable context receive zeros."""
+    """Append rolling source host features only when identifiers and time exist.
+
+    CICIDS2017's MachineLearningCVE export omits source IP and timestamp. In
+    that case these derived columns are not part of the model matrix at all.
+    Rows with partially missing values still receive zero context, but only
+    after the capture has demonstrated that the required fields are available.
+    """
     # The operation only adds feature columns; a deep copy of a multi-million
     # row capture needlessly duplicates every raw CICIDS column in memory.
     # A shallow frame copy keeps the caller's columns intact while isolating
@@ -181,13 +187,16 @@ def enrich_flow_with_host_context(flow_df: pd.DataFrame, aggregator: HostWindowA
     result = flow_df.copy(deep=False)
     names = ["distinct_dst_ports_1m", "syn_to_ack_ratio", "flow_inter_arrival_variance", "mean_bytes_per_flow",
              "win_unique_dst_ports_60s", "win_unique_dst_ips_60s", "win_syn_only_ratio_60s", "win_flow_rate_60s"]
-    if result.empty:
-        for name in names:
-            result[name] = pd.Series(dtype=np.float64)
-        return result
     timestamp_column = next((name for name in ("Timestamp", "timestamp", "flow_start", "Flow Start") if name in result), None)
+    source_column = _find_column(result, ("Source IP", "source_ip", "Src IP", "src_ip", "srcip"))
+    if result.empty or timestamp_column is None or source_column is None:
+        return result
+    parsed_times = pd.to_datetime(result[timestamp_column], errors="coerce", utc=True)
+    usable_sources = result[source_column].notna() & result[source_column].astype(str).str.strip().ne("")
+    if not (usable_sources & parsed_times.notna()).any():
+        return result
     if timestamp_column:
-        timestamps = pd.to_datetime(result[timestamp_column], errors="coerce", utc=True)
+        timestamps = parsed_times
         timestamp_ns = timestamps.astype("int64", copy=False).to_numpy()
         positions = np.argsort(timestamp_ns, kind="mergesort")
     else:

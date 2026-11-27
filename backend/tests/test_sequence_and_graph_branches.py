@@ -105,6 +105,8 @@ def _finish_inline(coroutine):
 
 
 def test_live_network_event_returns_flow_user_and_graph_scores(monkeypatch):
+    from ml import fusion_meta
+    monkeypatch.setattr(fusion_meta, "_BUNDLE_CACHE", {})
     db_engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(bind=db_engine)
     factory = sessionmaker(bind=db_engine, autocommit=False, autoflush=False)

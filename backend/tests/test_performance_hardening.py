@@ -16,6 +16,7 @@ from ml.preprocessing.cicids_pipeline import (
     HostWindowAggregator,
     add_protocol_invariant_features,
     _get_feature_cols,
+    get_feature_matrices,
     enrich_flow_with_host_context,
 )
 from ml.evaluation.open_set_pipeline import adaptive_family_thresholds
@@ -42,8 +43,38 @@ def test_host_window_features_and_offline_fallback():
     assert enriched.iloc[-1]["win_unique_dst_ips_60s"] == 2
     assert enriched.iloc[-1]["win_syn_only_ratio_60s"] == 0.5
     assert enriched.iloc[-1]["win_flow_rate_60s"] == 2 / 60
-    zeros = enrich_flow_with_host_context(pd.DataFrame([{"flow": 1}]), HostWindowAggregator())
-    assert zeros.iloc[0]["flow_inter_arrival_variance"] == 0
+    without_context = enrich_flow_with_host_context(pd.DataFrame([{"flow": 1}]), HostWindowAggregator())
+    assert not any(name.endswith(("_1m", "_60s")) or name in {
+        "syn_to_ack_ratio", "flow_inter_arrival_variance", "mean_bytes_per_flow"
+    } for name in without_context.columns)
+
+
+def test_host_window_features_are_omitted_when_source_or_time_is_unavailable():
+    missing_source = pd.DataFrame([{"Timestamp": "2026-01-01T00:00:00Z", "Destination Port": 443}])
+    missing_time = pd.DataFrame([{"Source IP": "10.0.0.1", "Destination Port": 443}])
+    expected = {"distinct_dst_ports_1m", "syn_to_ack_ratio", "flow_inter_arrival_variance",
+                "mean_bytes_per_flow", "win_unique_dst_ports_60s", "win_unique_dst_ips_60s",
+                "win_syn_only_ratio_60s", "win_flow_rate_60s"}
+    for frame in (missing_source, missing_time, pd.DataFrame([{"flow": 1}])):
+        enriched = enrich_flow_with_host_context(frame, HostWindowAggregator())
+        assert not expected.intersection(enriched.columns)
+
+
+def test_feature_matrix_excludes_host_context_when_identifiers_are_absent():
+    train = pd.DataFrame({"Flow Duration": [1, 2, 3, 4], "Label": ["BENIGN", "BENIGN", "Bot", "Bot"]})
+    val = train.copy()
+    test = train.copy()
+    train = enrich_flow_with_host_context(train, HostWindowAggregator())
+    val = enrich_flow_with_host_context(val, HostWindowAggregator())
+    test = enrich_flow_with_host_context(test, HostWindowAggregator())
+    matrices = get_feature_matrices(train, val, test)
+    feature_names = matrices[6]
+    assert "Flow Duration" in feature_names
+    assert not any(name in feature_names for name in (
+        "distinct_dst_ports_1m", "syn_to_ack_ratio", "flow_inter_arrival_variance",
+        "mean_bytes_per_flow", "win_unique_dst_ports_60s", "win_unique_dst_ips_60s",
+        "win_syn_only_ratio_60s", "win_flow_rate_60s",
+    ))
 
 
 def test_session_sanitization_removes_topology_fields():

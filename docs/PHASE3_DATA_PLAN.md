@@ -1,6 +1,18 @@
 # Phase 3 Data Plan
 
-Status: **planning only (docs only)**. No dataset was downloaded, and no model, split, or feature change was made. Items not directly verified against acquired local files are marked **UNVERIFIED**.
+Status: **adapter and collection planning implemented; external-data evaluation not run**. No dataset was downloaded. Items not directly verified against acquired local files are marked **UNVERIFIED**.
+
+## Implementation status (2026-11-27)
+
+- `backend/ml/datasets/adapters.py` defines the `DatasetAdapter` contract and the CSE-CIC-IDS2018 and optional UNSW-NB15 adapters. CSE inputs preserve raw labels and capture filenames, map only explicit label spellings, and reject unknown labels and non-numeric feature values.
+- Place CSE processed per-day CSVs under `backend/datasets/cse_cic_ids2018/processed/`. A missing directory or empty directory produces an actionable error. No CSE files are currently present locally, so per-family capture-day/file counts, flow counts, and external metrics remain **UNVERIFIED**. This applies to Bot, WebAttack, BruteForce, DoS/DDoS, Infiltration, and PortScan.
+- File names must include a date (`YYYY-MM-DD`, `YYYYMMDD`, or `DD-MM-YYYY`) for leave-one-capture-day-out grouping. Files without a recognizable date are not counted as independent units.
+- Run schema/fixture tests with `python -m pytest backend/tests/test_dataset_adapters.py -q`.
+- Once the processed files are placed, run these from `backend`: `python -m ml.evaluation.cross_dataset --mode cse-capture-day --output ml/evaluation/results/cse_capture_day.json` and `python -m ml.evaluation.cross_dataset --mode cross-dataset --output ml/evaluation/results/cross_dataset.json`. The first runs leave-one-capture-day-out on CSE and reports day/file/flow counts per family, aggregate unweighted capture-day macro-F1, and descriptive per-family recall by number of days with test support. The second runs CICIDS2017→CSE and CSE→CICIDS2017. Both train the existing LightGBM classifier and write result JSON; neither was run here.
+- The CSE adapter maps abbreviated fields to CICIDS2017 canonical names, but shared names do not prove CICFlowMeter formula, unit, timeout, or version equivalence. Treat feature equivalence as **candidate mapping only** until headers and extraction provenance from the actual files are inspected. Host-window features are added only when usable source IP and timestamp data exist.
+- The optional UNSW adapter reads supplied `UNSW-NB15_[1-4].csv` files if present and maps the supplied binary label to `BENIGN`/`Attack`; it is not used by the CSE evaluation command and does not claim attack-family equivalence.
+- Endpoint capture steps and label rules are documented in [`ENDPOINT_DATA_COLLECTION.md`](ENDPOINT_DATA_COLLECTION.md). `backend/ml/endpoint_dataset.py` validates already windowed CSV/JSONL rows with explicit labels and capture IDs; it does not assign labels to raw Sysmon records. No labeled endpoint data was created.
+- TFT, GAT, and Fusion metadata in the incident explanation API now reports **proxy-label validated** with per-branch label provenance limitations. The UI repeats this caveat; it does not claim independent real-world validation.
 
 ---
 

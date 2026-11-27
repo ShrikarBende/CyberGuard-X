@@ -177,7 +177,8 @@ probability scores).
 `POST /api/models/drift` (admin-only) computes feature-level Population Stability Index (PSI), two-sample Kolmogorov–Smirnov (KS) statistics, and optional prediction-distribution PSI against configurable thresholds (`DRIFT_PSI_THRESHOLD`, `DRIFT_KS_THRESHOLD`, `DRIFT_PREDICTION_PSI_THRESHOLD`).
 
 * **Current scope:** The endpoint is an **on-demand, caller-supplied comparison** — the caller passes both `reference_features` and `current_features` (and optional prediction arrays) in the request body, bounded by `DRIFT_MAX_ROWS` (HTTP 413 on excess) and `DRIFT_MAX_FEATURES` (HTTP 422 on excess). It is **not** continuous background monitoring and does not read a stored baseline.
-* **Planned (Phase 5a):** Store a signed training-time feature-distribution baseline inside the artifact manifest and compare against recent live scored data, to be built alongside Phase 5a metrics infrastructure.
+* **Batch inference:** `score_batch()` also reports per-feature PSI and KS summaries when the loaded bundle contains a training-time `drift_reference`. The PSI alert threshold is `FEATURE_DRIFT_PSI_ALERT_THRESHOLD` (default `0.2`). Updated CICIDS training writes this reference; older bundles without it omit the batch drift field. Single-row inference does not compute a KS comparison.
+* The batch report is a caller-provided batch summary, not continuous monitoring or a production alerting pipeline. The endpoint and batch paths use separate thresholds and payloads.
 
 ---
 

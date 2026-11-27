@@ -85,9 +85,10 @@ def test_uppercase_json_extension_and_iso_offset(db_session, monkeypatch):
 
 
 def test_cicids_csv_is_scored_in_one_batch(db_session, monkeypatch):
-    if not detection_engine.MODEL_BUNDLE_PATH.is_file():
+    from ml.artifact_security import manifest_path
+    if not detection_engine.MODEL_BUNDLE_PATH.is_file() or not manifest_path(detection_engine.MODEL_BUNDLE_PATH).is_file():
         pytest.skip(
-            "Requires the CICIDS model bundle, which is not checked into the repository."
+            "Requires an operator-signed CICIDS model bundle and manifest; unsigned bundles fail closed."
         )
     bundle = detection_engine.load_model_bundle()
     monkeypatch.setattr(detection_engine, "load_model_bundle", lambda: bundle)

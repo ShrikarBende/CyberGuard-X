@@ -45,8 +45,14 @@ def test_failed_retrain_keeps_existing_bundle(tmp_path, monkeypatch):
 
 
 def test_successful_retrain_atomically_installs_profile_artifact(tmp_path, monkeypatch):
+    from ml import model_registry
+
     target = tmp_path / "light.bundle.pkl"
-    target.write_bytes(b"previous-bundle")
+    joblib.dump({"model_version": "previous"}, target)
+    test_key = "retrain-test-key-0123456789abcdef"
+    monkeypatch.setattr(detection_engine.settings, "MODEL_ARTIFACT_HMAC_KEY", test_key)
+    monkeypatch.setattr(model_registry, "BACKEND_ROOT", tmp_path / "backend")
+    monkeypatch.setattr(model_registry, "REGISTRY_PATH", tmp_path / "backend" / "models" / "registry.json")
     monkeypatch.setattr(trainer, "ARTIFACT_PATH", target)
     monkeypatch.setattr(detection_engine, "MODEL_BUNDLE_PATH", target)
     monkeypatch.setattr(detection_engine, "_MODEL_BUNDLE_CACHE", {"model_version": "previous"})
@@ -65,10 +71,14 @@ def test_successful_retrain_atomically_installs_profile_artifact(tmp_path, monke
     status = _wait_for_job(started["job_id"])
     assert status["status"] == "completed", status.get("error")
     assert joblib.load(target)["model_version"] == "new-light"
+    assert Path(status["artifact_path"]).is_file()
+    assert joblib.load(status["artifact_path"])["model_version"] == "new-light"
     assert detection_engine._MODEL_BUNDLE_CACHE["model_version"] == "new-light"
     assert (tmp_path / f"{target.name}.manifest.json").is_file()
     versions_dir = tmp_path / "versions"
-    assert any(p.name.startswith(f"{target.name}.") for p in versions_dir.iterdir())
+    archived = [p for p in versions_dir.iterdir() if p.name.startswith(f"{target.name}.")]
+    assert archived
+    assert joblib.load(archived[0])["model_version"] == "previous"
     clean_engine.dispose()
 
 

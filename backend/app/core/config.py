@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     DRIFT_PREDICTION_PSI_THRESHOLD: float = 0.25
     DRIFT_MAX_ROWS: int = Field(default=50_000, ge=1)
     DRIFT_MAX_FEATURES: int = Field(default=500, ge=1)
+    # Compatibility setting used by the Phase 4 content-addressed bundle helper.
+    MODEL_ARTIFACT_HMAC_KEY: str = ""
+    FEATURE_DRIFT_PSI_ALERT_THRESHOLD: float = Field(default=0.2, gt=0.0)
     # NOT CALIBRATED: placeholder probability gate for rule-based MITRE mapping.
     MITRE_MIN_PROBABILITY: float = 0.7
     RISK_HIGH_THRESHOLD: float = 60.0
@@ -145,6 +148,16 @@ class Settings(BaseSettings):
         self.AGENT_LLM_API_URL = self.AGENT_LLM_API_URL or self.LLM_API_URL
         self.AGENT_LLM_API_KEY = self.AGENT_LLM_API_KEY or self.LLM_API_KEY
         self.AGENT_LLM_MODEL = self.AGENT_LLM_MODEL or self.LLM_MODEL
+        return self
+
+    @model_validator(mode="after")
+    def model_artifact_key_alias(self):
+        if (self.ARTIFACT_HMAC_KEY and self.MODEL_ARTIFACT_HMAC_KEY
+                and self.ARTIFACT_HMAC_KEY != self.MODEL_ARTIFACT_HMAC_KEY):
+            raise ValueError("ARTIFACT_HMAC_KEY and MODEL_ARTIFACT_HMAC_KEY must match")
+        key = self.ARTIFACT_HMAC_KEY or self.MODEL_ARTIFACT_HMAC_KEY
+        self.ARTIFACT_HMAC_KEY = key
+        self.MODEL_ARTIFACT_HMAC_KEY = key
         return self
 
 

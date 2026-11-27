@@ -92,8 +92,10 @@ def test_reset_removes_only_demo_rows_and_unused_demo_entities(demo_session):
     assert {"demo_load", "demo_reset"} <= actions
 
 
-def test_loaded_demo_events_produce_one_takeover_incident_when_correlated(demo_session):
+def test_loaded_demo_events_produce_one_takeover_incident_when_correlated(demo_session, monkeypatch):
     session, admin = demo_session
+    from ml import fusion_meta
+    monkeypatch.setattr(fusion_meta, "_BUNDLE_CACHE", {})
     load_demo_scenarios(session, admin)
     from app.correlation.engine import run_correlation
 

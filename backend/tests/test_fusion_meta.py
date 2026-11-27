@@ -94,7 +94,8 @@ def test_explainability_returns_fusion_and_multimodal_payload(tmp_path, monkeypa
                             details={"s_endpoint": .9, "feature_residuals": {"privilege": .8},
                                      "top_contributing_features": [{"feature": "privilege", "residual": .8}],
                                      "open_set_score": .85, "open_set_label": "UNKNOWN_NOVEL",
-                                     "user_sequence": {"temporal_attention": [.2, .8]},
+                                     "user_sequence": {"temporal_attention": [.2, .8],
+                                                       "variable_selection_weights": {"failed_logins": .75}},
                                      "network_graph": {"s_network_graph": .7,
                                                        "top_suspicious_edges": [{"srcip": "a", "dstip": "b", "attention": .9}]} }),
         ])
@@ -103,10 +104,19 @@ def test_explainability_returns_fusion_and_multimodal_payload(tmp_path, monkeypa
         assert response["available"] is True
         assert response["calibrated_risk_score"] == pytest.approx(.63)
         assert response["severity"] == "HIGH"
+        assert response["proxy_label_validation"]["status"] == "proxy-label validated"
+        assert set(response["proxy_label_validation"]["branches"]) == {"TFT", "GAT", "Fusion"}
+        assert "independently labeled real-world" in response["proxy_label_validation"]["limitation"]
         assert sum(response["per_layer_contributions"].values()) == pytest.approx(100.0)
         assert response["explanations"]["endpoint_reconstruction_residuals"]
         assert response["explanations"]["user_temporal_attention"]
         assert response["explanations"]["network_graph_edge_attention"]
+        branch_attributions = response["explanations"]["branch_feature_attributions"]
+        assert {row["branch"] for row in branch_attributions} == {"endpoint_dae", "user_tft", "network_gat"}
+        assert all(set(item) == {"feature", "value"}
+                   for branch in branch_attributions for item in branch["attributions"])
+        assert branch_attributions[0]["attributions"][0] == {"feature": "privilege", "value": .8}
+        assert "non-causal indicators" in response["explanations"]["non_causal_note"]
         assert response["explanations"]["open_set_novelty"][0]["flagged"] is True
         assert response["explanations"]["tree_shap_feature_attributions"] == []
     finally:

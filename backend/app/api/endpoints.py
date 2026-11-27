@@ -624,25 +624,60 @@ def get_explainability(
     endpoint_residuals = []
     temporal_attention = []
     graph_attention = []
+    branch_feature_attributions = []
     open_set_rationales = []
     for row in detections:
         details = row.details or {}
         if row.layer == "endpoint" or details.get("feature_residuals"):
+            residuals = details.get("feature_residuals") or {}
+            if isinstance(residuals, dict):
+                endpoint_attributions = sorted(
+                    ({"feature": str(name), "value": float(value)} for name, value in residuals.items()),
+                    key=lambda item: abs(item["value"]), reverse=True,
+                )[:10]
+            else:
+                endpoint_attributions = [
+                    {"feature": str(item.get("feature", "feature")),
+                     "value": float(item.get("value", item.get("residual", 0.0)))}
+                    for item in residuals if isinstance(item, dict)
+                ][:10]
             endpoint_residuals.append({"event_id": row.event_id,
                                        "top_features": details.get("top_contributing_features", details.get("feature_residuals", [])),
+                                       "feature_attributions": endpoint_attributions,
                                        "reconstruction_error": details.get("reconstruction_error", row.reconstruction_error),
                                        "s_endpoint": details.get("s_endpoint", row.score)})
+            if endpoint_attributions:
+                branch_feature_attributions.append({"branch": "endpoint_dae", "event_id": row.event_id,
+                                                    "attributions": endpoint_attributions})
         user_result = details.get("user_sequence", details)
         if user_result.get("temporal_attention"):
+            variable_weights = user_result.get("variable_selection_weights") or {}
+            user_attributions = ([{"feature": str(name), "value": float(value)}
+                                  for name, value in variable_weights.items()]
+                                 if isinstance(variable_weights, dict) else [])
             temporal_attention.append({"event_id": row.event_id,
                                        "attention": user_result["temporal_attention"],
-                                       "variable_selection_weights": user_result.get("variable_selection_weights")})
+                                       "variable_selection_weights": variable_weights,
+                                       "feature_attributions": user_attributions})
+            if user_attributions:
+                branch_feature_attributions.append({"branch": "user_tft", "event_id": row.event_id,
+                                                    "attributions": user_attributions})
         graph_result = details.get("network_graph", details)
         if graph_result.get("top_suspicious_edges") or graph_result.get("edge_attention") is not None:
+            edges = graph_result.get("top_suspicious_edges", [])
+            edge_attributions = [
+                {"feature": f"{edge.get('srcip', '?')} → {edge.get('dstip', '?')}",
+                 "value": float(edge.get("attention", 0.0))}
+                for edge in edges if isinstance(edge, dict)
+            ][:10]
             graph_attention.append({"event_id": row.event_id,
                                     "score": graph_result.get("s_network_graph"),
                                     "edge_attention": graph_result.get("edge_attention"),
-                                    "top_suspicious_edges": graph_result.get("top_suspicious_edges", [])})
+                                    "top_suspicious_edges": edges,
+                                    "feature_attributions": edge_attributions})
+            if edge_attributions:
+                branch_feature_attributions.append({"branch": "network_gat", "event_id": row.event_id,
+                                                    "attributions": edge_attributions})
         open_set_score = details.get("open_set_score")
         centroid_distance = details.get("centroid_distance", row.open_set_distance)
         if open_set_score is not None or row.verdict in {"UNKNOWN_CANDIDATE", "UNKNOWN_NOVEL"}:
@@ -703,6 +738,17 @@ def get_explainability(
         "fusion_confidence": float(fusion.get("fusion_confidence", 0.5)),
         "calibration_source": fusion.get("calibration_source", "synthetic_weak_labels_plus_feedback"),
         "risk_score_interpretation": "calibrated triage score (0-100), not a real-world incident probability",
+        "proxy_label_validation": {
+            "status": "proxy-label validated",
+            "limitation": ("TFT labels are heuristic weak labels; GAT labels indicate attack-category presence; "
+                           "Fusion labels are synthetic/weak proxies with feedback. These signals do not establish "
+                           "independently labeled real-world incident performance."),
+            "branches": {
+                "TFT": "Heuristic sequence labels derived from event indicators; no verified account-takeover ground truth.",
+                "GAT": "Non-benign attack-category labels; not verified lateral-movement ground truth.",
+                "Fusion": "Synthetic/weak-label calibration plus analyst feedback; not a paired independent incident benchmark.",
+            },
+        },
         "severity": inc.severity,
         "threat_classification": inc.threat_classification,
         "risk_breakdown": risk_breakdown,
@@ -716,6 +762,9 @@ def get_explainability(
         "explanation": risk_detail.explanation_summary if risk_detail else inc.description,
         "explanations": {
             "tree_shap_feature_attributions": tree_shap,
+            "branch_feature_attributions": branch_feature_attributions,
+            "non_causal_note": ("Endpoint reconstruction residuals, TFT attention/variable weights, and GAT edge weights "
+                                 "are non-causal indicators; they describe model behavior, not causal explanations."),
             "endpoint_reconstruction_residuals": endpoint_residuals,
             "user_temporal_attention": temporal_attention,
             "network_graph_edge_attention": graph_attention,

@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Sequence
 
-import joblib
 import lightgbm as lgb
 import numpy as np
 
@@ -27,6 +26,8 @@ from sklearn.ensemble import IsolationForest  # noqa: E402
 from sklearn.decomposition import PCA  # noqa: E402
 from sklearn.preprocessing import StandardScaler  # noqa: E402
 from ml.open_set import calibrated_union_score, temperature_scaled_energy  # noqa: E402
+from app.core.config import settings  # noqa: E402
+from ml.artifact_security import save_model_bundle  # noqa: E402
 
 SEED = 42
 LIGHT_SAMPLE = 0.15
@@ -223,6 +224,16 @@ def train_final(
         "score_name": SCORE_NAME,
         "model_version": model_version,
         "data_hash": pipeline["data_hash"],
+        "drift_reference": {
+            "feature_names": list(pipeline["feat_cols"]),
+            "values": np.asarray(
+                pipeline["X_train"][np.linspace(
+                    0, len(pipeline["X_train"]) - 1,
+                    num=min(2048, len(pipeline["X_train"])), dtype=np.int64,
+                )], dtype=np.float32,
+            ),
+            "space": "log1p_then_training_scaler",
+        },
         "seed": SEED,
         "training_date": datetime.now(timezone.utc).isoformat(),
         "evaluation_json_path": evaluation_json_path,
@@ -243,7 +254,10 @@ def train_final(
         if matching.is_file():
             bundle["evaluation_json_path"] = str(matching.resolve())
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(bundle, artifact_path, compress=3)
+    save_model_bundle(
+        bundle, artifact_path, settings.MODEL_ARTIFACT_HMAC_KEY,
+        registry_name="network_flow" if output_path is None else None,
+    )
     size_bytes = artifact_path.stat().st_size
     print(f"Artifact: {artifact_path}")
     print(f"Artifact size: {size_bytes} bytes ({size_bytes / (1024 * 1024):.2f} MiB)")

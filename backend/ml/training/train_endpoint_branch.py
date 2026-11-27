@@ -5,7 +5,6 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-import joblib
 import numpy as np
 import torch
 from torch import nn
@@ -17,6 +16,8 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 from ml.endpoint_branch import (DenoisingAutoencoder, FEATURE_NAMES, generate_synthetic_endpoint_data,
                                 load_sysmon_feature_rows, parse_sysmon_json)
+from app.core.config import settings
+from ml.artifact_security import save_model_bundle
 
 ARTIFACT_PATH = BACKEND_DIR / "saved_models" / "endpoint_behavior.bundle.pkl"
 
@@ -126,7 +127,8 @@ def train_endpoint_branch(benign_features: np.ndarray | None = None, output_path
         "training_scope": "benign_baseline_only" if training_source == "provided_benign_baseline" else training_source,
         "training_source": training_source, "labeled_endpoint_evaluation": evaluation}
     destination.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(bundle, destination, compress=3)
+    save_model_bundle(bundle, destination, settings.MODEL_ARTIFACT_HMAC_KEY,
+                      registry_name="endpoint" if output_path is None else None)
     return destination
 
 

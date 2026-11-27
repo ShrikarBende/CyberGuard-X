@@ -11,7 +11,6 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-import joblib
 import numpy as np
 import pandas as pd
 from sklearn.calibration import CalibratedClassifierCV
@@ -24,6 +23,8 @@ BACKEND_DIR = Path(__file__).resolve().parents[2]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 from ml.fusion_meta import ARTIFACT_PATH, FEATURE_NAMES
+from app.core.config import settings
+from ml.artifact_security import save_model_bundle
 
 DATA_PATH = BACKEND_DIR / "datasets" / "fusion_training.csv"
 SEED = 2026
@@ -148,7 +149,8 @@ def train_fusion_meta(data_path: Path = DATA_PATH, output_path: Path = ARTIFACT_
                                 "HIGH": [0.5, 0.75], "CRITICAL": [0.75, 1.0]},
     }
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(bundle, output_path, compress=3)
+    save_model_bundle(bundle, output_path, settings.MODEL_ARTIFACT_HMAC_KEY,
+                      registry_name="risk_fusion" if Path(output_path).resolve() == ARTIFACT_PATH.resolve() else None)
     print(json.dumps({"artifact": str(output_path.resolve()), "metrics": metrics,
                       "class_balance": bundle["class_balance"], "training_source": source}, indent=2))
     return output_path

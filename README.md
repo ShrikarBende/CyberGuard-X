@@ -162,6 +162,22 @@ The API health URL is [http://127.0.0.1:8000/api/health](http://127.0.0.1:8000/a
 
 The application runtime supports SQLite only. `backend/app/database/session.py` rejects non-SQLite `DATABASE_URL` values with `ValueError` during startup, and a regression test covers PostgreSQL URLs. SQLite is used for local development, CI, and the Compose demonstration, which stores its database in the `cyberguardx_demo_sqlite_data` named volume. PostgreSQL application-runtime support is a planned Phase 5 upgrade; the separate staging-only recovery utility does not provide runtime PostgreSQL support. Run `alembic upgrade head` from `backend/` to apply schema migrations.
 
+### Signing model bundles for local demos
+
+Runtime bundle verification uses `ARTIFACT_HMAC_KEY` (also accepted as `MODEL_ARTIFACT_HMAC_KEY`) and rejects unsigned bundles by default. Configure a key with at least 32 random bytes in the shell or local secret store. From the repository root, sign the existing trusted bundles:
+
+```powershell
+python scripts/sign_existing_models.py --models-dir backend/saved_models
+```
+
+To record a signed version in the file-based registry, run:
+
+```powershell
+python scripts/model_registry.py register network_flow backend/saved_models/cicids2017_medium_lightgbm.bundle.pkl --version-id local-demo
+```
+
+The sign command writes manifests beside the bundles; it does not alter model contents. Never use a public or demo key in a real deployment. See [Model Artifact Security](docs/MODEL_ARTIFACT_SECURITY.md) for signing and rollback details.
+
 ## Analyst accounts and permissions
 
 The API issues signed bearer tokens from `POST /api/auth/login`. Create the initial admin interactively from `backend/` with `python -m app.cli create_admin`, or set both `ADMIN_USERNAME` and `ADMIN_PASSWORD` for one-time startup setup. Environment bootstrap is ignored once any analyst account exists. Admins create additional accounts with `POST /api/auth/users`. Viewers have read-only access. Analysts can update incident status, add notes, use RAG chat, and analyze or upload telemetry. Admins can additionally load and replay demos, run correlation, retrain models, run evaluations, and manage accounts. Login attempts, incident status changes, and analyst notes are recorded in `analyst_activity`.
@@ -259,9 +275,9 @@ These figures are read from the locally saved bundles in `backend/saved_models/`
 |---|---|---|
 | Network flow — LightGBM + open-set fusion | CICIDS2017 medium profile; 50% sample; seed 42; leave-one-family-out evaluation | See the family-level OSCR/recall/F1/AUPRC table above. The bundle includes 78 flow features, compact class centroids, pooled covariance, benign Isolation Forest, energy/margin, and calibrated thresholds. |
 | Endpoint — Denoising Autoencoder + Isolation Forest | Saved bundle trained unsupervised on 293 Sysmon capture windows | No independent validation metrics are stored. The checked-in corpus does not establish a labeled benign baseline; do not interpret this bundle as a validated benign-only detector. |
-| User sequence — Temporal Fusion Transformer | 1,978 training sequences; 495 validation sequences; 24 steps; Sysmon/CERT weak labels; seed 42 | Validation ROC AUC **0.99998**, accuracy **0.9960**, precision **0.9926**, recall **0.9926** on heuristic proxy labels. This saved bundle predates the user-disjoint split and records `stratified_sequence_level_80_20`; these values mostly show the model recovers the heuristic and are not ground-truth performance. |
-| Network graph — Graph Attention Network | 12,000 UNSW-NB15 rows; 1,148 rows marked positive; seed 42 | No independent validation metrics are stored. The positive target is "non-benign attack category" as a multi-host anomaly proxy, not ground-truth lateral movement. |
-| Risk fusion — calibrated logistic meta-model | 4,800 weakly labeled training rows; 1,200 validation rows; synthetic weak-label source | Validation ROC AUC **0.8573**, Brier score **0.1507**; validation positive rate 52.4%. This is a calibration/meta-model estimate on weak labels, not an end-to-end incident benchmark. |
+| User sequence — Temporal Fusion Transformer | 1,978 training sequences; 495 validation sequences; 24 steps; Sysmon/CERT weak labels; seed 42 | **proxy-label validated**: validation ROC AUC **0.99998**, accuracy **0.9960**, precision **0.9926**, recall **0.9926** on heuristic proxy labels. This saved bundle predates the user-disjoint split and records `stratified_sequence_level_80_20`; these values mostly show the model recovers the heuristic and are not ground-truth performance. |
+| Network graph — Graph Attention Network | 12,000 UNSW-NB15 rows; 1,148 rows marked positive; seed 42 | **proxy-label validated**: no independent validation metrics are stored. The positive target is "non-benign attack category" as a multi-host anomaly proxy, not ground-truth lateral movement. |
+| Risk fusion — calibrated logistic meta-model | 4,800 weakly labeled training rows; 1,200 validation rows; synthetic weak-label source | **proxy-label validated**: validation ROC AUC **0.8573**, Brier score **0.1507**; validation positive rate 52.4%. This is a calibration/meta-model estimate on weak labels, not an end-to-end incident benchmark. |
 
 The UI evaluation page reads saved multi-seed evaluation summaries from `/api/evaluation/summary`; a multi-seed result is preferred for model comparisons. The estimates above are the currently available local artifact reports and are not a substitute for repeated, independently labeled test runs.
 
@@ -331,7 +347,7 @@ Generated from completed JSON files in `backend/ml/evaluation/results/`. Means a
 - **Weak unknown detection for PortScan and Bot.** A scan is visible across flows from one host, not within a single flow. Host-window features are implemented but not yet consumed by the saved bundles. Bot (197 rows) and WebAttack (216 rows) also have few unknown test rows.
 - **Bot is the weakest known class** (mean F1 0.8207); the 2.5× class weight has not been re-evaluated.
 - **Replay is illustrative.** Replay profile, split type, and sampling method are not recorded in the saved metadata, and families under 100 flows (Bot, BruteForce, WebAttack) are not interpretable. The 3.1% benign false-alert rate was measured before noise suppression; the post-suppression rate has not been measured.
-- **Proxy labels.** TFT, GAT, and fusion estimates are weakly supervised or synthetic proxies. The endpoint bundle has no labeled benign-versus-Atomic-Red-Team evaluation; separate capture directories are required.
+- **Proxy labels.** TFT, GAT, and Fusion metrics and scores are marked **proxy-label validated** because they use heuristic sequence labels, attack-category indicators, or synthetic/weak labels with feedback. These results do not establish independently labeled real-world incident performance. The endpoint bundle has no labeled benign-versus-Atomic-Red-Team evaluation; see [the isolated Sysmon collection guide](docs/ENDPOINT_DATA_COLLECTION.md).
 - **No ablation yet.** The benefit of cross-layer fusion over single branches has not been measured. Correlation thresholds and the twelve-scenario taxonomy are developer-written demo values, not calibrated or captured attack data.
 - **RAG coverage is limited.** Both retrieval suites are developer-authored, and the support score is an extractive proxy, not human-judged factual faithfulness.
 - The agent layer is opt-in and its FakeLLM evaluation measures plumbing only. Real-model investigation quality, latency, and resistance to prompt injection remain unevaluated. Agent reports are advisory, cite only evidence returned in that run, and preserve the repo's synthetic and proxy-label caveats.
