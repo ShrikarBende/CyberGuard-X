@@ -937,7 +937,7 @@ def get_model_status():
 @router.post("/models/drift")
 def run_drift_check(
     request: dict,
-    current_user: AnalystAccount = Depends(require_roles("analyst", "admin")),
+    current_user: AnalystAccount = Depends(require_roles("admin")),
 ):
     """
     Evaluate feature-level PSI/KS drift and prediction-distribution shift.
@@ -957,6 +957,7 @@ def run_drift_check(
     Returns the full drift evaluation dict produced by ml.models.drift.evaluate_drift.
     """
     import numpy as np
+    from app.core.config import settings
     from ml.models.drift import evaluate_drift
 
     try:
@@ -972,6 +973,23 @@ def run_drift_check(
         )
     if ref_x.size == 0 or cur_x.size == 0:
         raise HTTPException(status_code=400, detail="Feature arrays must not be empty.")
+
+    if ref_x.shape[0] > settings.DRIFT_MAX_ROWS or cur_x.shape[0] > settings.DRIFT_MAX_ROWS:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"Drift payload exceeds DRIFT_MAX_ROWS ({settings.DRIFT_MAX_ROWS}): "
+                f"got reference={ref_x.shape[0]}, current={cur_x.shape[0]}."
+            ),
+        )
+    if ref_x.shape[1] > settings.DRIFT_MAX_FEATURES or cur_x.shape[1] > settings.DRIFT_MAX_FEATURES:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Drift payload exceeds DRIFT_MAX_FEATURES ({settings.DRIFT_MAX_FEATURES}): "
+                f"got reference={ref_x.shape[1]}, current={cur_x.shape[1]}."
+            ),
+        )
 
     ref_preds = request.get("reference_predictions")
     cur_preds = request.get("current_predictions")

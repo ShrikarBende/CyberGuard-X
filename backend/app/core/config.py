@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     DRIFT_PSI_THRESHOLD: float = 0.25
     DRIFT_KS_THRESHOLD: float = 0.15
     DRIFT_PREDICTION_PSI_THRESHOLD: float = 0.25
+    DRIFT_MAX_ROWS: int = Field(default=50_000, ge=1)
+    DRIFT_MAX_FEATURES: int = Field(default=500, ge=1)
     # NOT CALIBRATED: placeholder probability gate for rule-based MITRE mapping.
     MITRE_MIN_PROBABILITY: float = 0.7
     RISK_HIGH_THRESHOLD: float = 60.0

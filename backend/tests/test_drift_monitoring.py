@@ -309,14 +309,14 @@ class TestEvaluateDriftThresholds:
 # ---------------------------------------------------------------------------
 
 class TestDriftEndpointRegistered:
-    """Verify that POST /api/models/drift is registered in the application router.
+    """Verify that POST /api/models/drift is registered, admin-only, and enforces caps.
 
-    Inspects the FastAPI route table without starting the app or loading any
-    ML model bundles, keeping this test instantaneous.
+    Inspects the FastAPI route table and calls the endpoint handler directly
+    without starting the app lifespan, keeping this test instantaneous.
     """
 
-    def test_drift_route_is_registered(self):
-        """POST /api/models/drift must exist in the app router."""
+    def test_drift_route_is_registered_and_admin_only(self):
+        """POST /api/models/drift must exist and require the admin role only."""
         from app.main import app
 
         drift_routes = [
@@ -326,3 +326,85 @@ class TestDriftEndpointRegistered:
         assert drift_routes, "Expected a /models/drift route to be registered in the app"
         methods = {m for r in drift_routes for m in getattr(r, "methods", [])}
         assert "POST" in methods, f"Expected POST method on /models/drift; found: {methods}"
+
+        route = drift_routes[0]
+        role_sets = [
+            dep.call.required_roles
+            for dep in route.dependant.dependencies
+            if hasattr(dep.call, "required_roles")
+        ]
+        assert role_sets == [frozenset({"admin"})], (
+            f"Expected admin-only role requirement on /models/drift; got {role_sets}"
+        )
+
+    def test_drift_role_dependency_rejects_analyst(self):
+        """require_roles('admin') dependency on /models/drift must reject analyst with 403."""
+        from types import SimpleNamespace
+        from fastapi import HTTPException
+        from app.main import app
+
+        route = next(r for r in app.routes if hasattr(r, "path") and "/models/drift" in r.path)
+        role_dep = next(dep.call for dep in route.dependant.dependencies if hasattr(dep.call, "required_roles"))
+        analyst = SimpleNamespace(role="analyst", username="analyst1")
+        with pytest.raises(HTTPException) as exc_info:
+            role_dep(account=analyst)
+        assert exc_info.value.status_code == 403
+
+        admin = SimpleNamespace(role="admin", username="admin1")
+        assert role_dep(account=admin) is admin
+
+    def test_drift_payload_exceeding_max_rows_returns_413(self, monkeypatch):
+        """Payloads with more rows than DRIFT_MAX_ROWS must return HTTP 413."""
+        from types import SimpleNamespace
+        from fastapi import HTTPException
+        from app.api.endpoints import run_drift_check
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "DRIFT_MAX_ROWS", 5)
+        monkeypatch.setattr(settings, "DRIFT_MAX_FEATURES", 10)
+        admin = SimpleNamespace(role="admin", username="admin1")
+        payload = {
+            "reference_features": [[0.0, 1.0]] * 6,
+            "current_features": [[0.0, 1.0]] * 3,
+        }
+        with pytest.raises(HTTPException) as exc_info:
+            run_drift_check(payload, current_user=admin)
+        assert exc_info.value.status_code == 413
+
+    def test_drift_payload_exceeding_max_features_returns_422(self, monkeypatch):
+        """Payloads with more features than DRIFT_MAX_FEATURES must return HTTP 422."""
+        from types import SimpleNamespace
+        from fastapi import HTTPException
+        from app.api.endpoints import run_drift_check
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "DRIFT_MAX_ROWS", 100)
+        monkeypatch.setattr(settings, "DRIFT_MAX_FEATURES", 3)
+        admin = SimpleNamespace(role="admin", username="admin1")
+        payload = {
+            "reference_features": [[0.0, 1.0, 2.0, 3.0]] * 5,
+            "current_features": [[0.0, 1.0, 2.0, 3.0]] * 5,
+        }
+        with pytest.raises(HTTPException) as exc_info:
+            run_drift_check(payload, current_user=admin)
+        assert exc_info.value.status_code == 422
+
+    def test_drift_payload_within_caps_succeeds(self, monkeypatch):
+        """SYNTHETIC: valid payload within DRIFT_MAX_ROWS and DRIFT_MAX_FEATURES succeeds."""
+        from types import SimpleNamespace
+        from app.api.endpoints import run_drift_check
+        from app.core.config import settings
+
+        monkeypatch.setattr(settings, "DRIFT_MAX_ROWS", 100)
+        monkeypatch.setattr(settings, "DRIFT_MAX_FEATURES", 10)
+        admin = SimpleNamespace(role="admin", username="admin1")
+        ref, _ = _identical_gaussian(n=20, d=3)
+        result = run_drift_check(
+            {
+                "reference_features": ref.tolist(),
+                "current_features": ref.tolist(),
+            },
+            current_user=admin,
+        )
+        assert result["drift_detected"] is False
+        assert result["summary"]["reference_rows"] == 20
