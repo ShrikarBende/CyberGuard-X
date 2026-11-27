@@ -174,7 +174,11 @@ class HostWindowAggregator:
 
 def enrich_flow_with_host_context(flow_df: pd.DataFrame, aggregator: HostWindowAggregator) -> pd.DataFrame:
     """Append rolling source host features; rows lacking usable context receive zeros."""
-    result = flow_df.copy()
+    # The operation only adds feature columns; a deep copy of a multi-million
+    # row capture needlessly duplicates every raw CICIDS column in memory.
+    # A shallow frame copy keeps the caller's columns intact while isolating
+    # the returned frame's column assignments.
+    result = flow_df.copy(deep=False)
     names = ["distinct_dst_ports_1m", "syn_to_ack_ratio", "flow_inter_arrival_variance", "mean_bytes_per_flow",
              "win_unique_dst_ports_60s", "win_unique_dst_ips_60s", "win_syn_only_ratio_60s", "win_flow_rate_60s"]
     if result.empty:
@@ -675,7 +679,10 @@ def build_splits(
 def _get_feature_cols(df: pd.DataFrame, sanitize_session_features: bool = False) -> List[str]:
     """Return all numeric feature columns (exclude Label and provenance cols)."""
     exclude = {LABEL_COL, "_source_file"}
-    num_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+    # select_dtypes materializes and consolidates a multi-million-row copy on
+    # recent pandas versions. Inspect the dtype metadata directly instead.
+    num_cols = [column for column, dtype in df.dtypes.items()
+                if pd.api.types.is_numeric_dtype(dtype)]
     columns = [c for c in num_cols if c not in exclude]
     if sanitize_session_features:
         blacklist = {name.strip().lower() for name in SESSION_INVARIANT_DROP_COLS}
