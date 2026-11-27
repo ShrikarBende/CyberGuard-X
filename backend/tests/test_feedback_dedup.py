@@ -4,7 +4,34 @@ from __future__ import annotations
 import logging
 from types import SimpleNamespace
 
+import pytest
+
+from app.api import endpoints as endpoints_mod
 from app.api.endpoints import _build_fusion_feedback_samples
+
+
+@pytest.fixture
+def capture_endpoint_logs():
+    records: list[str] = []
+
+    class _ListHandler(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            records.append(self.format(record))
+
+    handler = _ListHandler()
+    handler.setLevel(logging.INFO)
+    prev_level = endpoints_mod.logger.level
+    prev_disabled = endpoints_mod.logger.disabled
+    endpoints_mod.logger.disabled = False
+    endpoints_mod.logger.addHandler(handler)
+    if prev_level == logging.NOTSET or prev_level > logging.INFO:
+        endpoints_mod.logger.setLevel(logging.INFO)
+    try:
+        yield records
+    finally:
+        endpoints_mod.logger.removeHandler(handler)
+        endpoints_mod.logger.setLevel(prev_level)
+        endpoints_mod.logger.disabled = prev_disabled
 
 
 def _make_activity(
@@ -33,15 +60,14 @@ def _make_activity(
     return SimpleNamespace(target_id=incident_id, details=details)
 
 
-def test_keeps_only_latest_feedback_per_incident(caplog):
+def test_keeps_only_latest_feedback_per_incident(capture_endpoint_logs):
     activities = [
         _make_activity("inc-1", "CONFIRMED", 1),
         _make_activity("inc-1", "FALSE_POSITIVE", 0),
         _make_activity("inc-1", "CONFIRMED", 1),
         _make_activity("inc-2", "FALSE_POSITIVE", 0),
     ]
-    with caplog.at_level(logging.INFO, logger="app.api.endpoints"):
-        samples = _build_fusion_feedback_samples(activities)
+    samples = _build_fusion_feedback_samples(activities)
 
     assert len(samples) == 2
     by_id = {s["source_incident_id"]: s for s in samples}
@@ -51,42 +77,40 @@ def test_keeps_only_latest_feedback_per_incident(caplog):
     assert by_id["inc-2"]["target"] == 0
 
     assert any(
-        "raw_rows=4" in rec.message
-        and "deduplicated_rows=2" in rec.message
-        and "'CONFIRMED': 1" in rec.message
-        and "'FALSE_POSITIVE': 1" in rec.message
-        for rec in caplog.records
+        "raw_rows=4" in msg
+        and "deduplicated_rows=2" in msg
+        and "'CONFIRMED': 1" in msg
+        and "'FALSE_POSITIVE': 1" in msg
+        for msg in capture_endpoint_logs
     )
 
 
-def test_overwrites_earlier_label_with_later_label_per_incident(caplog):
+def test_overwrites_earlier_label_with_later_label_per_incident(capture_endpoint_logs):
     activities = [
         _make_activity("inc-10", "CONFIRMED", 1),
         _make_activity("inc-10", "FALSE_POSITIVE", 0),
     ]
-    with caplog.at_level(logging.INFO, logger="app.api.endpoints"):
-        samples = _build_fusion_feedback_samples(activities)
+    samples = _build_fusion_feedback_samples(activities)
 
     assert len(samples) == 1
     assert samples[0]["label"] == "FALSE_POSITIVE"
     assert samples[0]["target"] == 0
     assert any(
-        "raw_rows=2" in rec.message
-        and "deduplicated_rows=1" in rec.message
-        and "'FALSE_POSITIVE': 1" in rec.message
-        for rec in caplog.records
+        "raw_rows=2" in msg
+        and "deduplicated_rows=1" in msg
+        and "'FALSE_POSITIVE': 1" in msg
+        for msg in capture_endpoint_logs
     )
 
 
-def test_filters_non_fusion_and_falls_back_to_target_id(caplog):
+def test_filters_non_fusion_and_falls_back_to_target_id(capture_endpoint_logs):
     activities = [
         _make_activity("inc-a", "CONFIRMED", 1, include_fusion=False),
         _make_activity("inc-b", "CONFIRMED", 1, use_target_id_only=True),
         _make_activity("inc-b", "FALSE_POSITIVE", 0, use_target_id_only=True),
     ]
-    with caplog.at_level(logging.INFO, logger="app.api.endpoints"):
-        samples = _build_fusion_feedback_samples(activities)
+    samples = _build_fusion_feedback_samples(activities)
 
     assert len(samples) == 1
     assert samples[0]["label"] == "FALSE_POSITIVE"
-    assert any("raw_rows=2" in rec.message and "deduplicated_rows=1" in rec.message for rec in caplog.records)
+    assert any("raw_rows=2" in msg and "deduplicated_rows=1" in msg for msg in capture_endpoint_logs)
