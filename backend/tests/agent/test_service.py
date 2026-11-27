@@ -3,7 +3,7 @@ import threading
 import pytest
 from app.agent import service
 from app.agent.llm import AssistantTurn, FakeLLM
-from app.agent.models import AgentRun
+from app.agent.models import AgentRun, ActionProposal
 from app.agent.limits import RunLimits, RunLimitReached
 from app.models.entities import Incident, AnalystActivity, InvestigationNote
 
@@ -40,6 +40,23 @@ def test_concurrency_one_run_per_incident_and_cancel_flag(db_pair, monkeypatch):
     service._RUNS.clear()
 
 
+def test_start_run_persists_manifest_clamped_limits(db_pair, monkeypatch):
+    db, _ = db_pair
+    incident = _incident(db, "manifest-limit")
+    manifest = service.load_manifest("investigator")
+    manifest.limits["max_steps"] = 2
+    monkeypatch.setattr(service, "load_manifest", lambda _name: manifest)
+    class HeldThread:
+        def __init__(self, **kwargs): self.started = False
+        def start(self): self.started = True
+        def is_alive(self): return self.started
+    monkeypatch.setattr(service.threading, "Thread", HeldThread)
+    service._RUNS.clear()
+    run = service.start_run(db, incident.incident_id, "analyst")
+    assert run.limits["max_steps"] == 2
+    service._RUNS.clear()
+
+
 def test_stale_running_rows_are_reaped(db_pair, monkeypatch):
     db, factory = db_pair
     incident = _incident(db, "stale")
@@ -52,6 +69,115 @@ def test_stale_running_rows_are_reaped(db_pair, monkeypatch):
     db.expire_all()
     assert db.get(AgentRun, "stale-run").status == "failed"
     assert db.query(AnalystActivity).filter_by(action_type="agent_run_finished").count() == 1
+
+
+def test_stale_reaper_runs_at_most_once_per_ten_seconds(monkeypatch):
+    calls = []
+    class Query:
+        def filter(self, *_): return self
+        def all(self): return []
+    class FakeSession:
+        def __enter__(self): return self
+        def __exit__(self, *_): pass
+        def query(self, *_): calls.append("query"); return Query()
+    times = iter([20.0, 25.0, 31.0])
+    monkeypatch.setattr(service, "SessionLocal", FakeSession)
+    monkeypatch.setattr(service.time, "monotonic", lambda: next(times))
+    monkeypatch.setattr(service, "_LAST_REAP_AT", 0.0)
+    service._reap_stale_runs(); service._reap_stale_runs(); service._reap_stale_runs()
+    assert len(calls) == 2
+
+
+def test_worker_materializes_staged_and_report_actions_once_after_success(db_pair, monkeypatch):
+    db, factory = db_pair
+    incident = _incident(db, "proposal-success")
+    run = AgentRun(run_id="proposal-success-run", incident_id=incident.incident_id,
+        requested_by="analyst", status="queued", agent_id="investigator", mode="agent",
+        model_name="fake", limits={}, usage={}, validation={})
+    db.add(run); db.commit()
+    action = {"action_type": "preserve_logs", "target_type": "incident", "target": incident.incident_id,
+        "rationale": "Preserve evidence for review.", "confidence": 0.8,
+        "evidence_ids": [f"inc:{incident.incident_id}"]}
+    monkeypatch.setattr(service, "SessionLocal", factory)
+    monkeypatch.setattr(service.settings, "AGENT_LLM_API_URL", "configured")
+    monkeypatch.setattr(service.settings, "AGENT_LLM_API_KEY", "configured")
+    monkeypatch.setattr(service, "run_agent", lambda *args, **kwargs: {
+        "report": {"recommended_actions": [action]}, "validation": {"injection_flags": 0},
+        "usage": {}, "staged_actions": [{"action": action}],
+        "evidence_ids": [f"inc:{incident.incident_id}"]})
+    service._worker(run.run_id, incident.incident_id, "analyst", threading.Event())
+    assert db.query(ActionProposal).filter_by(run_id=run.run_id).count() == 1
+
+
+@pytest.mark.parametrize("outcome", ["injected", "cancelled", "fallback"])
+def test_untrusted_or_incomplete_run_never_materializes_staged_actions(db_pair, monkeypatch, outcome):
+    db, factory = db_pair
+    incident = _incident(db, f"proposal-{outcome}")
+    run = AgentRun(run_id=f"proposal-{outcome}-run", incident_id=incident.incident_id,
+        requested_by="analyst", status="queued", agent_id="investigator", mode="agent",
+        model_name="fake", limits={}, usage={}, validation={})
+    db.add(run); db.commit()
+    action = {"action_type": "preserve_logs", "target_type": "incident", "target": incident.incident_id,
+        "rationale": "Preserve evidence for review.", "confidence": 0.8,
+        "evidence_ids": [f"inc:{incident.incident_id}"]}
+    monkeypatch.setattr(service, "SessionLocal", factory)
+    monkeypatch.setattr(service.settings, "AGENT_LLM_API_URL", "configured")
+    monkeypatch.setattr(service.settings, "AGENT_LLM_API_KEY", "configured")
+    monkeypatch.setattr(service, "investigate_incident", lambda *args, **kwargs: {"incident_id": incident.incident_id})
+    if outcome == "fallback":
+        monkeypatch.setattr(service, "_llm_factory", service.AgentLLM)
+        monkeypatch.setattr(service.settings, "AGENT_LLM_API_URL", "")
+        monkeypatch.setattr(service.settings, "AGENT_LLM_API_KEY", "")
+    elif outcome == "cancelled":
+        monkeypatch.setattr(service, "run_agent", lambda *args, **kwargs: (_ for _ in ()).throw(InterruptedError("cancelled")))
+    else:
+        monkeypatch.setattr(service, "run_agent", lambda *args, **kwargs: {
+            "report": {"recommended_actions": [action]}, "validation": {"injection_flags": 1},
+            "usage": {}, "staged_actions": [{"action": action}],
+            "evidence_ids": [f"inc:{incident.incident_id}"]})
+    service._worker(run.run_id, incident.incident_id, "analyst", threading.Event())
+    assert db.query(ActionProposal).filter_by(run_id=run.run_id).count() == 0
+    if outcome == "injected":
+        assert db.query(AnalystActivity).filter_by(action_type="agent_proposals_discarded").count() == 1
+
+
+def test_worker_records_limit_reached_with_deterministic_baseline(db_pair, monkeypatch):
+    db, factory = db_pair
+    incident = _incident(db, "limit-reached")
+    run = AgentRun(run_id="limit-reached-run", incident_id=incident.incident_id, requested_by="analyst",
+        status="queued", agent_id="investigator", mode="agent", model_name="fake", limits={}, usage={}, validation={})
+    db.add(run); db.commit()
+    monkeypatch.setattr(service, "SessionLocal", factory)
+    monkeypatch.setattr(service.settings, "AGENT_LLM_API_URL", "configured")
+    monkeypatch.setattr(service.settings, "AGENT_LLM_API_KEY", "configured")
+    monkeypatch.setattr(service, "investigate_incident", lambda *args, **kwargs: {"incident_id": incident.incident_id})
+    monkeypatch.setattr(service, "run_agent", lambda *args, **kwargs: (_ for _ in ()).throw(RunLimitReached("step limit reached")))
+    service._worker(run.run_id, incident.incident_id, "analyst", threading.Event())
+    db.expire_all()
+    saved = db.get(AgentRun, run.run_id)
+    assert saved.status == "limit_reached"
+    assert saved.validation["fallback_reason"] == "limit_reached: step limit reached"
+    assert db.query(ActionProposal).filter_by(run_id=run.run_id).count() == 0
+
+
+def test_worker_failure_stores_only_sanitized_exception_text(db_pair, monkeypatch, caplog):
+    db, factory = db_pair
+    incident = _incident(db, "error-sanitize")
+    run = AgentRun(run_id="error-sanitize-run", incident_id=incident.incident_id, requested_by="analyst",
+        status="queued", agent_id="investigator", mode="agent", model_name="fake", limits={}, usage={}, validation={})
+    db.add(run); db.commit()
+    monkeypatch.setattr(service, "SessionLocal", factory)
+    monkeypatch.setattr(service.settings, "AGENT_LLM_API_URL", "configured")
+    monkeypatch.setattr(service.settings, "AGENT_LLM_API_KEY", "configured")
+    monkeypatch.setattr(service, "investigate_incident", lambda *args, **kwargs: {"incident_id": incident.incident_id})
+    secret_text = "Bearer token123 sk-secret gsk_other https://user:pass@host/path"
+    monkeypatch.setattr(service, "run_agent", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError(secret_text)))
+    service._worker(run.run_id, incident.incident_id, "analyst", threading.Event())
+    db.expire_all()
+    saved = db.get(AgentRun, run.run_id)
+    assert saved.error.startswith("RuntimeError:")
+    assert all(secret not in saved.error for secret in ("token123", "sk-secret", "gsk_other", "user:pass"))
+    assert "RuntimeError" in caplog.text
 
 
 @pytest.mark.parametrize("llm_factory", [None, "exception", "bad_json"])

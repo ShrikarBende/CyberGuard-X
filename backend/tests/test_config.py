@@ -52,3 +52,34 @@ def test_env_file_path_is_project_root_absolute_even_after_chdir(tmp_path, monke
     env_file = Path(Settings.model_config["env_file"])
     assert env_file.is_absolute()
     assert env_file == PROJECT_ROOT / ".env"
+
+
+def test_trusted_proxy_cidrs_default_empty_and_accept_ipv4_ipv6(monkeypatch):
+    monkeypatch.delenv("TRUSTED_PROXY_CIDRS", raising=False)
+    config = Settings(_env_file=None, SECRET_KEY="test-key")
+    assert config.TRUSTED_PROXY_CIDRS == []
+    configured = Settings(
+        _env_file=None,
+        SECRET_KEY="test-key",
+        TRUSTED_PROXY_CIDRS=["192.0.2.10/32", "2001:db8::10/128"],
+    )
+    assert configured.TRUSTED_PROXY_CIDRS == ["192.0.2.10/32", "2001:db8::10/128"]
+
+
+@pytest.mark.parametrize("cidr", ["not-a-cidr", "0.0.0.0/0", "::/0"])
+def test_trusted_proxy_cidrs_reject_invalid_and_universal_ranges(cidr):
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, SECRET_KEY="test-key", TRUSTED_PROXY_CIDRS=[cidr])
+
+
+def test_trusted_proxy_cidrs_json_environment_value(monkeypatch):
+    monkeypatch.setenv("TRUSTED_PROXY_CIDRS", '["192.0.2.10/32", "2001:db8::10/128"]')
+    config = Settings(_env_file=None, SECRET_KEY="test-key")
+    assert config.TRUSTED_PROXY_CIDRS == ["192.0.2.10/32", "2001:db8::10/128"]
+
+
+def test_trusted_proxy_validation_error_hides_input_value():
+    sentinel = "secret-value-must-not-leak"
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(_env_file=None, SECRET_KEY=sentinel, TRUSTED_PROXY_CIDRS=["invalid-cidr"])
+    assert sentinel not in str(exc_info.value)

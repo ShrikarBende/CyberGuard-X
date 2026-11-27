@@ -1,8 +1,11 @@
 """Threaded run lifecycle with global and per-incident concurrency guards."""
 from datetime import datetime, timezone
+import logging
 import threading
+import time
 import uuid
 from app.agent.config import CEILINGS
+from app.agent.limits import RunLimitReached
 from app.agent.limits import clamp_to_ceilings, RunLimits
 from app.agent.llm import AgentLLM
 from app.agent.loop import run_agent
@@ -10,14 +13,44 @@ from app.agent.manifest import load_manifest
 from app.agent.models import AgentRun, AgentStep
 from app.agent.tools import ToolRegistry
 from app.audit import record_analyst_activity
+from app.agent.proposals import ProposalRejected, persist_proposal, validate_proposal
+from app.agent.sanitize import sanitize_error, redact_exception_for_logging
+from app.agent.report import render_report_markdown
 from app.core.config import settings
 from app.database.session import SessionLocal
 from app.models.entities import Incident
 from app.rag.assistant import investigate_incident
 
 _RUNS: dict[str, dict] = {}
+logger = logging.getLogger("app.agent")
 _RUNS_LOCK = threading.Lock()
 _llm_factory = AgentLLM
+_LAST_REAP_AT = 0.0
+_REAP_LOCK = threading.Lock()
+
+
+def _materialize_proposals(db, run, incident, staged, report, evidence_ids, validation):
+    if int(validation.get("injection_flags", 0) or 0) > 0:
+        if staged or report.get("recommended_actions"):
+            record_analyst_activity(db, run.requested_by, "agent_proposals_discarded", "incident",
+                incident.incident_id, {"run_id": run.run_id, "reason": "untrusted instruction-like evidence"})
+        return
+    candidates = [item.get("action", {}) for item in staged]
+    candidates.extend(report.get("recommended_actions", []))
+    signatures, created = set(), 0
+    for action in candidates:
+        if created >= 5:
+            break
+        try:
+            normalized = validate_proposal(db, incident, action, set(evidence_ids), signatures, created)
+        except ProposalRejected:
+            continue
+        signature = (normalized["action_type"], normalized["target_type"], normalized["target"].casefold())
+        if signature in signatures:
+            continue
+        persist_proposal(db, run.run_id, incident, run.requested_by, normalized)
+        signatures.add(signature)
+        created += 1
 
 
 class RunConflict(RuntimeError):
@@ -57,19 +90,25 @@ def _finish(db, run, status, report=None, validation=None, usage=None, error=Non
     db.commit()
 
 
-def _fallback(db, run, incident, reason=None):
+def _fallback(db, run, incident, reason=None, error=None):
     baseline = investigate_incident(incident, db, top_k=6)
     run.mode = "fallback"
     from app.models.entities import InvestigationNote
-    import json
     import uuid
     note = InvestigationNote(note_id=f"agent_note_{uuid.uuid4().hex}", incident_id=incident.incident_id,
-        author="cyberguard-agent", content=json.dumps(baseline, ensure_ascii=False, indent=2),
+        author="cyberguard-agent", content=render_report_markdown(baseline),
         is_ai_generated=True, citations=[])
     db.add(note)
     _finish(db, run, "completed_fallback", baseline,
             {"fallback_reason": str(reason)[:300] if reason else "LLM is not configured"},
-            {"llm_calls": 0, "tool_calls": 0}, None)
+            {"llm_calls": 0, "tool_calls": 0}, error)
+
+
+def _limit_reached(db, run, incident, reason):
+    baseline = investigate_incident(incident, db, top_k=6)
+    _finish(db, run, "limit_reached", baseline,
+        {"fallback_reason": f"limit_reached: {str(reason)[:250]}"},
+        run.usage or {"llm_calls": 0, "tool_calls": 0}, None)
 
 
 def _worker(run_id, incident_id, requested_by, cancel_event):
@@ -84,7 +123,7 @@ def _worker(run_id, incident_id, requested_by, cancel_event):
         if incident is None:
             _finish(db, run, "failed", error="Incident not found")
             return
-        configured = bool(settings.AGENT_LLM_API_URL and settings.AGENT_LLM_API_KEY)
+        configured = bool(settings.AGENT_LLM_API_URL)
         try:
             if not configured and _llm_factory is AgentLLM:
                 _fallback(db, run, incident)
@@ -95,22 +134,39 @@ def _worker(run_id, incident_id, requested_by, cancel_event):
             llm = _llm_factory()
             result = run_agent(run_id, incident_id, requested_by, manifest, llm, ToolRegistry(), limits, db,
                                cancelled=cancel_event.is_set)
+            _materialize_proposals(db, run, incident, result.get("staged_actions", []),
+                result["report"], result.get("evidence_ids", []), result["validation"])
             _finish(db, run, "completed", result["report"], result["validation"], result["usage"])
         except InterruptedError as exc:
             _finish(db, run, "cancelled", error=exc)
+        except RunLimitReached as exc:
+            db.rollback()
+            try:
+                _limit_reached(db, run, incident, exc)
+            except Exception as fallback_exc:
+                _finish(db, run, "failed", error=f"{type(fallback_exc).__name__}: limit fallback failed")
         except Exception as exc:
+            safe = redact_exception_for_logging(exc)
+            logger.exception("Agent worker failed for run %s: %s", run_id, safe)
+            saved_error = f"{type(exc).__name__}: {sanitize_error(safe)[:200]}"
             # Deterministic fallback protects the analyst from an empty result.
             db.rollback()
             try:
-                _fallback(db, run, incident, type(exc).__name__)
+                _fallback(db, run, incident, type(exc).__name__, error=saved_error)
             except Exception as fallback_exc:
-                _finish(db, run, "failed", error=f"{type(fallback_exc).__name__}: deterministic fallback failed")
+                safe_fallback = sanitize_error(fallback_exc)[:200]
+                redact_exception_for_logging(fallback_exc)
+                logger.exception("Agent fallback failed for run %s: %s", run_id, safe_fallback)
+                _finish(db, run, "failed", error=f"{type(fallback_exc).__name__}: {safe_fallback}")
 
 
 def start_run(db, incident_id, requested_by):
     incident = db.query(Incident).filter(Incident.incident_id == incident_id).first()
     if incident is None:
         raise LookupError("Incident not found")
+    agent_id = "unknown_hunter" if incident.threat_classification in {"UNKNOWN_CANDIDATE", "UNKNOWN_NOVEL"} else "investigator"
+    manifest = load_manifest(agent_id)
+    manifest_limits = clamp_to_ceilings(manifest.limits)
     configured_limit = min(settings.AGENT_MAX_CONCURRENT_RUNS, CEILINGS["max_concurrent_runs"])
     with _RUNS_LOCK:
         live = {key: value for key, value in _RUNS.items() if value["thread"].is_alive()}
@@ -120,10 +176,9 @@ def start_run(db, incident_id, requested_by):
         if any(value["incident_id"] == incident_id for value in _RUNS.values()):
             raise RunConflict("An agent run is already active for this incident")
         run_id = f"agent_{uuid.uuid4().hex}"
-        agent_id = "unknown_hunter" if incident.threat_classification in {"UNKNOWN_CANDIDATE", "UNKNOWN_NOVEL"} else "investigator"
         run = AgentRun(run_id=run_id, incident_id=incident_id, requested_by=requested_by,
             status="queued", agent_id=agent_id, mode="agent", model_name=settings.AGENT_LLM_MODEL,
-            limits=clamp_to_ceilings().as_dict(), usage={}, validation={})
+            limits=manifest_limits.as_dict(), usage={}, validation={})
         db.add(run)
         record_analyst_activity(db, requested_by, "agent_run_started", "incident", incident_id,
                                 {"run_id": run_id, "agent_id": agent_id})
@@ -139,6 +194,12 @@ def start_run(db, incident_id, requested_by):
 
 def _reap_stale_runs():
     """Mark persisted runs that lost their worker after a process restart."""
+    global _LAST_REAP_AT
+    now = time.monotonic()
+    with _REAP_LOCK:
+        if now - _LAST_REAP_AT < 10:
+            return
+        _LAST_REAP_AT = now
     with _RUNS_LOCK:
         live_ids = {run_id for run_id, value in _RUNS.items() if value["thread"].is_alive()}
     with SessionLocal() as db:

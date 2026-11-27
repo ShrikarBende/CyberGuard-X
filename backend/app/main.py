@@ -16,6 +16,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy import text
 from app.core.config import settings
 from app.api.endpoints import router as api_router
 from app.api.auth import router as auth_router
@@ -244,9 +245,16 @@ def root():
 
 @app.get("/api/health")
 def health():
-    return {
-        "status": "healthy",
-        "service": "CyberGuard X Backend",
-        "database": "connected"
-    }
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception as exc:
+        logger.warning("Database health probe failed: %s", type(exc).__name__)
+        return JSONResponse(status_code=503, content={
+            "status": "unhealthy",
+            "service": "CyberGuard X Backend",
+            "database": "disconnected",
+            "error": "Database connectivity check failed.",
+        })
+    return {"status": "healthy", "service": "CyberGuard X Backend", "database": "connected"}
 

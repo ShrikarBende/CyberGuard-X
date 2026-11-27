@@ -1,11 +1,12 @@
 """Bounded tool-calling loop with persisted, citation-checked trace."""
 from datetime import datetime, timezone
 import json
+import copy
 import time
 import uuid
 from app.agent.limits import RunLimitReached
 from app.agent.models import AgentStep
-from app.agent.report import validate_report, detect_injection, redact_prompt_echo
+from app.agent.report import validate_report, detect_injection, redact_prompt_echo, render_report_markdown
 from app.agent.tools import ToolRegistry
 from app.models.entities import Incident, InvestigationNote
 from app.rag.assistant import _untrusted
@@ -25,7 +26,15 @@ REPORT_SCHEMA_REMINDER = {
 
 def _persist_step(db, run_id, number, kind, tool=None, args=None, summary="", evidence=None,
                   ok=True, duration_ms=0):
-    safe_args = {"fields": sorted(args) if isinstance(args, dict) else [], "values_redacted": True}
+    def bounded(value):
+        if isinstance(value, str):
+            return value[:200]
+        if isinstance(value, dict):
+            return {str(key)[:200]: bounded(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [bounded(item) for item in value[:50]]
+        return value
+    safe_args = bounded(args) if isinstance(args, dict) else {}
     db.add(AgentStep(id=f"step_{uuid.uuid4().hex}", run_id=run_id, step_no=number, kind=kind,
         tool_name=tool, args=safe_args, result_summary=str(summary)[:2000], evidence_ids=list(evidence or []),
         ok=bool(ok), duration_ms=max(0, int(duration_ms))))
@@ -62,6 +71,7 @@ def run_agent(run_id, incident_id, requested_by, manifest, llm, tools, limits, d
     final, step_no, repair_attempted, baseline_called = None, 0, False, False
     trace_no = 0
     injection_flags = 0
+    budget_exhausted = False
     schemas = tools.schemas_for(manifest.needs)
 
     def check_limits():
@@ -70,11 +80,20 @@ def run_agent(run_id, incident_id, requested_by, manifest, llm, tools, limits, d
         if time.monotonic() - started_monotonic >= limits.wall_seconds:
             raise RunLimitReached("wall clock limit reached")
 
+    def chat_with_remaining(request_messages, request_tools):
+        check_limits()
+        remaining = max(0.001, limits.wall_seconds - (time.monotonic() - started_monotonic))
+        try:
+            return llm.chat(request_messages, request_tools, timeout=min(45.0, remaining))
+        except Exception:
+            check_limits()
+            raise
+
     while step_no < limits.max_steps:
         check_limits()
         step_no += 1
         llm_started = time.monotonic()
-        turn = llm.chat(messages, schemas)
+        turn = chat_with_remaining(messages, schemas)
         check_limits()
         usage["llm_calls"] += 1
         for key in ("prompt_tokens", "completion_tokens"):
@@ -93,7 +112,14 @@ def run_agent(run_id, incident_id, requested_by, manifest, llm, tools, limits, d
             check_limits()
             usage["tool_calls"] += 1
             if usage["tool_calls"] > limits.max_tool_calls:
-                raise RunLimitReached("tool call limit reached")
+                budget_exhausted = True
+                call_id = call.call_id or f"call_{uuid.uuid4().hex}"
+                assistant_calls.append({"id": call_id, "type": "function", "function": {
+                    "name": call.name, "arguments": "{}"}})
+                tool_messages.append({"role": "tool", "tool_call_id": call_id, "name": call.name,
+                    "content": _untrusted("untrusted_tool_result", json.dumps({"ok": False,
+                        "error": "tool budget exhausted; no further tools will run"}))})
+                break
             try:
                 canonical = json.dumps(call.arguments, sort_keys=True, separators=(",", ":"))
             except TypeError:
@@ -124,10 +150,10 @@ def run_agent(run_id, incident_id, requested_by, manifest, llm, tools, limits, d
                     allowed_techniques.update(data.get("allowed_techniques", []))
             serialized_data = json.dumps(result.data if result.ok else {"error": result.error},
                                          ensure_ascii=False, default=str)
-            injection_flags += detect_injection(serialized_data)
+            injection_flags += detect_injection(getattr(result, "scan_text", None) or "")
             trace_no += 1
             _persist_step(db, run_id, trace_no, "tool", call.name,
-                          call.arguments if isinstance(call.arguments, dict) else {},
+                          getattr(result, "validated_args", None),
                           serialized_data, result.evidence_ids, result.ok, duration_ms)
             assistant_calls.append({"id": call.call_id or f"call_{uuid.uuid4().hex}", "type": "function",
                 "function": {"name": call.name, "arguments": canonical}})
@@ -143,9 +169,32 @@ def run_agent(run_id, incident_id, requested_by, manifest, llm, tools, limits, d
             assistant_message = {"role": "assistant", "tool_calls": assistant_calls}
         messages.append(assistant_message)
         messages.extend(tool_messages)
+        if budget_exhausted:
+            break
 
     if final is None:
-        raise RunLimitReached("maximum step limit reached")
+        if time.monotonic() - started_monotonic >= limits.wall_seconds:
+            raise RunLimitReached("wall clock limit reached")
+        try:
+            reason = "tool budget exhausted" if budget_exhausted else "step limit reached"
+            messages.append({"role": "user", "content":
+                f"{reason.capitalize()}. Return the final JSON report now using only evidence already retrieved."})
+            turn = chat_with_remaining(messages, [])
+            check_limits()
+            usage["llm_calls"] += 1
+            usage["finalized_by_limit"] = True
+            for key in ("prompt_tokens", "completion_tokens"):
+                usage[key] += int((turn.usage or {}).get(key, 0) or 0)
+            final = turn.content if not turn.tool_calls else None
+            if final is None:
+                raise ValueError("finalization requested additional tools")
+            trace_no += 1
+            _persist_step(db, run_id, trace_no, "llm", summary="Assistant returned a limit finalization report.",
+                          duration_ms=0)
+        except InterruptedError:
+            raise
+        except Exception as exc:
+            raise RunLimitReached(f"{reason}; finalization failed ({type(exc).__name__})") from exc
     while True:
         try:
             raw_report = _parse_report(final)
@@ -163,16 +212,20 @@ def run_agent(run_id, incident_id, requested_by, manifest, llm, tools, limits, d
                     limitations = []
                 limitations.append("Tool data contained instruction-like text and was treated as untrusted.")
                 raw_report["limitations"] = limitations[:30]
+            pre_validation_report = copy.deepcopy(raw_report)
             report, validation = validate_report(raw_report, seen_ids, allowed_techniques, validation_injections)
             break
         except Exception as exc:
+            if usage.get("finalized_by_limit"):
+                raise RunLimitReached(f"step/tool limit reached; finalization report invalid ({type(exc).__name__})") from exc
             if repair_attempted or step_no >= limits.max_steps:
                 raise ValueError(f"report validation failed: {type(exc).__name__}") from exc
             repair_attempted = True
             step_no += 1
-            messages.append({"role": "user", "content": "Repair the report JSON to match the schema. "
-                "Use only evidence IDs already returned by tools. Return JSON only."})
-            turn = llm.chat(messages, [])
+            messages.append({"role": "assistant", "content": str(final)[:6000]})
+            messages.append({"role": "user", "content": f"The previous report failed validation ({type(exc).__name__}). "
+                "Repair the report JSON to match the schema. Use only evidence IDs already returned by tools. Return JSON only."})
+            turn = chat_with_remaining(messages, [])
             check_limits()
             usage["llm_calls"] += 1
             final = turn.content
@@ -184,8 +237,10 @@ def run_agent(run_id, incident_id, requested_by, manifest, llm, tools, limits, d
     _persist_step(db, run_id, trace_no, "validator", summary=json.dumps(validation),
                   evidence=seen_ids, ok=True)
     note = InvestigationNote(note_id=f"agent_note_{uuid.uuid4().hex}", incident_id=incident_id,
-        author="cyberguard-agent", content=json.dumps(report, ensure_ascii=False, indent=2),
+        author="cyberguard-agent", content=render_report_markdown(report),
         is_ai_generated=True, citations=sorted(seen_ids))
     db.add(note)
     db.commit()
-    return {"report": report, "validation": validation, "usage": usage}
+    return {"report": report, "validation": validation, "usage": usage,
+            "staged_actions": list(getattr(tools, "staged_actions", [])),
+            "evidence_ids": sorted(seen_ids), "pre_validation_report": pre_validation_report}

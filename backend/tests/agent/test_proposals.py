@@ -62,6 +62,19 @@ def test_proposal_validates_action_targets_confidence_and_run_evidence(db_pair):
             _action(evidence=["evt:fake"]), {f"evt:{events[1]}"})
 
 
+def test_propose_action_stages_without_persisting_until_run_finishes(db_pair):
+    from app.agent.tools import ToolRegistry
+    db, _ = db_pair
+    incident, events = _scope(db)
+    tools = ToolRegistry()
+    result = tools.run("propose_action", _action(evidence=[f"evt:{events[0]}"], target="192.0.2.1"),
+        db, incident, "run-proposals", "requester", {f"evt:{events[0]}"})
+    assert result.ok
+    assert result.data["staged"] is True
+    assert len(tools.staged_actions) == 1
+    assert db.query(ActionProposal).filter_by(run_id="run-proposals").count() == 0
+
+
 def test_proposal_scope_types_four_eyes_and_maximum(db_pair):
     db, _ = db_pair
     incident, event_ids = _scope(db, n=6)
@@ -117,9 +130,10 @@ def test_approval_four_eyes_viewer_reject_and_simulation_audit(db_pair, monkeypa
     with pytest.raises(HTTPException) as duplicate_decision:
         reject_agent_proposal(proposal.proposal_id, ProposalDecisionRequest(note="again"), _analyst("peer2"), db)
     assert duplicate_decision.value.status_code == 409
+    assert db.query(AnalystActivity).filter_by(action_type="agent_action_simulated").count() == 1
 
 
-def test_admin_can_approve_own_proposal(db_pair, monkeypatch):
+def test_admin_self_approval_requires_explicit_opt_in(db_pair, monkeypatch):
     from app.agent import api
     monkeypatch.setattr(api.settings, "AGENT_ENABLED", True)
     monkeypatch.setattr(api, "_reap_stale_runs", lambda: None)
@@ -127,6 +141,29 @@ def test_admin_can_approve_own_proposal(db_pair, monkeypatch):
     incident, event_ids = _scope(db)
     proposal = create_pending_proposal(db, "run-proposals", incident, "requester",
         _action(evidence=[f"evt:{event_ids[0]}"], target="192.0.2.1"), {f"evt:{event_ids[0]}"})
+    with pytest.raises(HTTPException) as blocked:
+        approve_agent_proposal(proposal.proposal_id, ProposalDecisionRequest(note="admin review"),
+            _analyst("requester", "admin"), db)
+    assert blocked.value.status_code == 403
+    monkeypatch.setattr(api.settings, "AGENT_ALLOW_SELF_APPROVAL", True, raising=False)
     approved = approve_agent_proposal(proposal.proposal_id, ProposalDecisionRequest(note="admin review"),
         _analyst("requester", "admin"), db)
     assert approved.execution_state == "simulated"
+
+
+def test_concurrent_proposal_decision_is_atomic_and_does_not_simulate_twice(db_pair):
+    from sqlalchemy import update
+    from app.agent.models import ActionProposal
+    from app.agent.proposals import decide_proposal
+    db, factory = db_pair
+    incident, event_ids = _scope(db)
+    proposal = create_pending_proposal(db, "run-proposals", incident, "requester",
+        _action(evidence=[f"evt:{event_ids[0]}"], target="192.0.2.1"), {f"evt:{event_ids[0]}"})
+    stale = db.get(ActionProposal, proposal.proposal_id)
+    with factory() as other:
+        other.execute(update(ActionProposal).where(ActionProposal.proposal_id == proposal.proposal_id,
+            ActionProposal.status == "pending").values(status="rejected"))
+        other.commit()
+    with pytest.raises(ValueError, match="pending"):
+        decide_proposal(db, stale, _analyst("peer"), "approved", "race")
+    assert db.query(AnalystActivity).filter_by(action_type="agent_action_simulated").count() == 0

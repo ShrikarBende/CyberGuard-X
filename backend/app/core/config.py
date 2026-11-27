@@ -2,6 +2,7 @@
 Enterprise CyberGuard X - Application Settings & Configuration
 """
 from pathlib import Path
+import ipaddress
 import logging
 import secrets
 from typing import List, Literal
@@ -51,14 +52,14 @@ class Settings(BaseSettings):
     MAX_UPLOAD_SIZE_MB: int = 50
     INCIDENT_WINDOW_MINUTES: int = 5
 
-    # SQLAlchemy URL: SQLite is the dev/CI default; production Compose uses
-    # postgresql+psycopg2:// with the psycopg2 driver from requirements.txt.
+    # The application supports SQLite only.
     DATABASE_URL: str = "sqlite:///./cyberguardx.db"
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ]
+    TRUSTED_PROXY_CIDRS: List[str] = Field(default_factory=list)
 
     LLM_PROVIDER: str = "template_fallback"
     LLM_API_KEY: str = ""
@@ -74,7 +75,10 @@ class Settings(BaseSettings):
     AGENT_WALL_SECONDS: int = Field(default=90, ge=1, le=300)
     AGENT_RESULT_CHARS: int = Field(default=6000, ge=256, le=20000)
     AGENT_MAX_CONCURRENT_RUNS: int = Field(default=2, ge=1, le=4)
+    AGENT_MAX_OUTPUT_TOKENS: int = Field(default=1500, ge=1, le=20000)
     AGENT_EXECUTION_MODE: Literal["dry_run"] = "dry_run"
+    AGENT_ALLOW_SELF_APPROVAL: bool = False
+    AGENT_PROPOSAL_TTL_HOURS: int = Field(default=24, ge=1, le=8760)
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"
     RAG_TOP_K: int = 4
     RAG_BACKEND: Literal["auto", "numpy", "faiss"] = "auto"
@@ -89,8 +93,23 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=str(PROJECT_ROOT / ".env"),
         env_file_encoding="utf-8",
-        extra="ignore"
+        extra="ignore",
+        hide_input_in_errors=True,
     )
+
+    @field_validator("TRUSTED_PROXY_CIDRS")
+    @classmethod
+    def validate_trusted_proxy_cidrs(cls, values):
+        networks = []
+        for value in values:
+            try:
+                network = ipaddress.ip_network(value, strict=False)
+            except (TypeError, ValueError) as exc:
+                raise ValueError("TRUSTED_PROXY_CIDRS entries must be valid IP networks") from exc
+            if network.prefixlen == 0:
+                raise ValueError("TRUSTED_PROXY_CIDRS cannot contain universal trust ranges")
+            networks.append(str(network))
+        return networks
 
     @field_validator("MODEL_BUNDLE_PATH", mode="before")
     @classmethod

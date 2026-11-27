@@ -201,11 +201,18 @@ The frontend serves the UI and proxies `/api` and `/ws` to the backend. The back
 
 The generated report is available at [docs/RESULTS.md](docs/RESULTS.md).
 
-The evaluation JSONs contain different split protocols and label sources. Read [docs/RESULTS.md](docs/RESULTS.md) for saved-artifact status, label provenance, and the stratified-versus-session-disjoint comparison. The generated section below remains the three-seed stratified baseline. Regenerate it after adding evaluation runs with:
+The network baseline uses a frozen session-disjoint holdout. The one-time manifest at `backend/ml/evaluation/holdout_manifest.json` reserves the complete Monday CICIDS2017 capture; the baseline runner verifies its hash but does not load or score its rows. The development run uses seeds `42, 101, 202, 303, 404` and reserves complete capture sessions by attack family. Do not recreate or edit the manifest for an ablation; create a separately versioned holdout only when deliberately starting a new evaluation program.
+
+Run the reproducible development baseline from the repository root and render `docs/RESULTS.md` from its completed JSON artifact:
 
 ```powershell
+python scripts/run_network_eval.py
 python scripts/make_results_md.py
 ```
+
+The JSON artifact in `backend/ml/evaluation/results/` records the source hashes, split assignments, seed metrics, bootstrap intervals, and holdout manifest hash. `make_results_md.py` reads the latest complete network-baseline artifact and does not run evaluation. Keep the final holdout locked until all planned ablations are complete.
+
+The historical tables below describe earlier split protocols and saved reports; they are context, not the generated five-seed baseline. Read [docs/RESULTS.md](docs/RESULTS.md) for the current artifact-backed development metrics and split limitations.
 
 ### Latest CICIDS open-set run
 

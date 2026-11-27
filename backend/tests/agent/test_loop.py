@@ -4,9 +4,9 @@ from app.agent.limits import clamp_to_ceilings, RunLimitReached
 from app.agent.llm import AssistantTurn, FakeLLM, ToolCall
 from app.agent.loop import run_agent
 from app.agent.manifest import AgentManifest
-from app.agent.tools import ToolResult
+from app.agent.tools import ToolRegistry, ToolResult, attacker_text
 from app.agent.models import AgentStep
-from app.models.entities import Incident
+from app.models.entities import Incident, InvestigationNote
 
 
 def _report():
@@ -29,7 +29,8 @@ class PayloadTools(ScriptTools):
     def __init__(self, payload): self.payload = payload
     def run(self, name, arguments, db, incident, run_id, requested_by, seen_ids):
         if name == "run_baseline_investigation":
-            return ToolResult({"allowed_chunks": [], "allowed_techniques": [], "event": self.payload}, ["inc:i1", "evt:e1"])
+            return ToolResult({"allowed_chunks": [], "allowed_techniques": [], "event": self.payload},
+                ["inc:i1", "evt:e1"], scan_text=attacker_text(self.payload))
         return ToolResult({}, [], False, "host target must be incident device or host in run evidence")
 
 
@@ -56,6 +57,34 @@ def test_loop_refuses_duplicate_calls_and_wraps_tool_output(db_pair):
     assert "&lt;/untrusted_tool_result&gt;" in tool_messages[0]
 
 
+def test_loop_finalizes_with_evidence_only_call_when_step_limit_is_reached(db_pair):
+    db, _ = db_pair
+    _incident(db)
+    baseline = ToolCall("run_baseline_investigation", {"incident_id": "i1"})
+    llm = FakeLLM([AssistantTurn(tool_calls=[baseline]), AssistantTurn(content=_report())])
+    manifest = AgentManifest(id="test_agent", description="test", needs=["run_baseline_investigation"],
+        limits={}, system="safe", conclusion="json")
+    limits = clamp_to_ceilings({"max_steps": 1})
+    result = run_agent("limit-finalize", "i1", "analyst", manifest, llm, ScriptTools(), limits, db)
+    assert result["usage"]["finalized_by_limit"] is True
+    assert llm.calls[-1]["tools"] == []
+    assert "using only evidence already retrieved" in llm.calls[-1]["messages"][-1]["content"]
+
+
+def test_loop_refuses_over_budget_tool_and_finalizes(db_pair):
+    db, _ = db_pair
+    _incident(db)
+    baseline = ToolCall("run_baseline_investigation", {"incident_id": "i1"})
+    llm = FakeLLM([AssistantTurn(tool_calls=[baseline, baseline]), AssistantTurn(content=_report())])
+    manifest = AgentManifest(id="test_agent", description="test", needs=["run_baseline_investigation"],
+        limits={}, system="safe", conclusion="json")
+    result = run_agent("tool-limit-finalize", "i1", "analyst", manifest, llm, ScriptTools(),
+        clamp_to_ceilings({"max_tool_calls": 1}), db)
+    assert result["usage"]["finalized_by_limit"] is True
+    assert "tool budget exhausted" in llm.calls[-1]["messages"][-2]["content"]
+    assert llm.calls[-1]["tools"] == []
+
+
 def test_loop_preserves_provider_assistant_message_between_tool_rounds(db_pair):
     db, _ = db_pair
     _incident(db)
@@ -73,6 +102,42 @@ def test_loop_preserves_provider_assistant_message_between_tool_rounds(db_pair):
     tool = next(message for message in messages if message.get("role") == "tool")
     assert assistant["reasoning"] == "provider metadata"
     assert tool["name"] == "run_baseline_investigation"
+
+
+def test_trace_persists_validated_tool_argument_values(db_pair):
+    db, _ = db_pair
+    _incident(db)
+    long_query = "q" * 250
+    baseline = ToolCall("run_baseline_investigation", {"incident_id": "i1"})
+    search = ToolCall("search_knowledge", {"query": long_query, "source_types": ["mitre"], "top_k": 2})
+    llm = FakeLLM([AssistantTurn(tool_calls=[baseline]), AssistantTurn(tool_calls=[search]),
+                   AssistantTurn(content=_report())])
+    manifest = AgentManifest(id="test_agent", description="test",
+        needs=["run_baseline_investigation", "search_knowledge"], limits={}, system="safe", conclusion="json")
+    tools = ToolRegistry()
+    tools.handlers["run_baseline_investigation"] = lambda args, *_: ToolResult({}, ["inc:i1", "evt:e1"])
+    tools.handlers["search_knowledge"] = lambda args, *_: ToolResult({"query": args.query}, ["evt:e1"])
+    run_agent("trace-args", "i1", "analyst", manifest, llm, tools, clamp_to_ceilings(), db)
+    rows = {row.tool_name: row.args for row in db.query(AgentStep).filter_by(run_id="trace-args", kind="tool").all()}
+    assert rows["run_baseline_investigation"]["incident_id"] == "i1"
+    assert rows["search_knowledge"]["query"] == long_query[:200]
+    assert "values_redacted" not in rows["search_knowledge"]
+
+
+def test_report_repair_context_includes_invalid_assistant_candidate(db_pair):
+    db, _ = db_pair
+    incident = _incident(db)
+    valid = json.loads(_report())
+    llm = FakeLLM([AssistantTurn(content="not-json"), AssistantTurn(content=json.dumps(valid))])
+    manifest = AgentManifest(id="test_agent", description="test", needs=["run_baseline_investigation"],
+        limits={}, system="safe", conclusion="json")
+    run_agent("repair-context", incident.incident_id, "analyst", manifest, llm, ScriptTools(), clamp_to_ceilings(), db)
+    repair_messages = llm.calls[1]["messages"]
+    assert {"role": "assistant", "content": "not-json"} in repair_messages
+    assert any(message.get("role") == "user" and "JSONDecodeError" in message.get("content", "")
+               for message in repair_messages)
+    note = db.query(InvestigationNote).filter_by(incident_id=incident.incident_id).one()
+    assert note.content.startswith("# Agent Investigation") and not note.content.startswith("{")
 
 
 def test_loop_rejects_out_of_manifest_tool_and_requires_baseline_first(db_pair):

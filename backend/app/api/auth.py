@@ -14,7 +14,7 @@ from app.audit import record_analyst_activity
 from app.auth import (
     clear_login_failures, create_access_token, get_current_analyst, hash_password,
     login_is_limited, login_ip_is_limited, normalize_username, password_hash_needs_upgrade,
-    record_failed_login, require_roles,
+    record_failed_login, require_roles, resolve_client_ip,
     verify_password,
 )
 from app.database.session import get_db
@@ -42,8 +42,7 @@ def current_analyst(account: AnalystAccount = Depends(get_current_analyst)):
 @router.post("/login")
 def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)):
     username = normalize_username(payload.username)
-    forwarded_for = request.headers.get("x-forwarded-for", "")
-    client_ip = forwarded_for.split(",", 1)[0].strip() or (request.client.host if request.client else None)
+    client_ip = resolve_client_ip(request)
     if login_ip_is_limited(client_ip):
         raise HTTPException(status_code=429, detail="Too many sign-in attempts from this network. Try again later.")
     if login_is_limited(username, client_ip):

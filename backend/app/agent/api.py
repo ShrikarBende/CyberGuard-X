@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 from app.agent.config import public_config
 from app.agent.models import AgentRun, AgentStep, ActionProposal
-from app.agent.proposals import decide_proposal
+from app.agent.proposals import decide_proposal, expire_stale_proposals
 from app.agent.service import RunConflict, _reap_stale_runs, request_cancel, start_run
 from app.auth import get_current_analyst
 from app.core.config import settings
@@ -22,6 +22,8 @@ class AgentConfigResponse(BaseModel):
     model: str
     limits: dict[str, int]
     execution_mode: str
+    max_output_tokens: int
+    allow_self_approval: bool
 
 
 class RunAccepted(BaseModel):
@@ -60,6 +62,24 @@ class AgentRunResponse(BaseModel):
     validation: dict[str, Any]
     error: str | None
     steps: list[AgentStepResponse] = Field(default_factory=list)
+
+
+class AgentRunSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    run_id: str
+    incident_id: str
+    requested_by: str
+    status: str
+    agent_id: str
+    mode: str
+    model_name: str
+    started_at: datetime | None
+    finished_at: datetime | None
+    limits: dict[str, Any]
+    usage: dict[str, Any]
+    report: dict[str, Any] | None
+    validation: dict[str, Any]
+    error: str | None
 
 
 class ProposalResponse(BaseModel):
@@ -135,15 +155,15 @@ def start_agent_investigation(incident_id: str, analyst: AnalystAccount = Depend
     return {"run_id": run.run_id}
 
 
-@router.get("/api/agent/runs", response_model=list[AgentRunResponse])
+@router.get("/api/agent/runs", response_model=list[AgentRunSummary])
 def list_agent_runs(incident_id: str | None = None, limit: int = Query(50, ge=1, le=200),
                     _analyst: AnalystAccount = Depends(get_current_analyst), db: Session = Depends(get_db)):
-    _require_enabled(); _reap_stale_runs()
+    _require_enabled()
     query = db.query(AgentRun)
     if incident_id:
         query = query.filter(AgentRun.incident_id == incident_id)
     runs = query.order_by(AgentRun.started_at.desc().nullslast()).limit(limit).all()
-    return [_to_response(run, db) for run in runs]
+    return [AgentRunSummary.model_validate(run) for run in runs]
 
 
 @router.get("/api/agent/runs/{run_id}", response_model=AgentRunResponse)
@@ -160,7 +180,7 @@ def get_agent_run(run_id: str, _analyst: AnalystAccount = Depends(get_current_an
              dependencies=[Depends(require_agent_analyst)])
 def cancel_agent_run(run_id: str, _analyst: AnalystAccount = Depends(get_current_analyst),
                      db: Session = Depends(get_db)):
-    _require_enabled(); _reap_stale_runs()
+    _require_enabled()
     run = db.query(AgentRun).filter(AgentRun.run_id == run_id).first()
     if run is None:
         raise HTTPException(status_code=404, detail="Agent run not found")
@@ -175,7 +195,8 @@ def list_agent_proposals(status_filter: str | None = Query(None, alias="status")
                          incident_id: str | None = None,
                          _analyst: AnalystAccount = Depends(get_current_analyst),
                          db: Session = Depends(get_db)):
-    _require_enabled(); _reap_stale_runs()
+    _require_enabled()
+    expire_stale_proposals(db)
     query = db.query(ActionProposal)
     if status_filter:
         if status_filter not in {"pending", "approved", "rejected", "expired"}:
@@ -187,7 +208,7 @@ def list_agent_proposals(status_filter: str | None = Query(None, alias="status")
 
 
 def _decide(proposal_id, body, analyst, db, decision):
-    _require_enabled(); _reap_stale_runs()
+    _require_enabled()
     proposal = db.query(ActionProposal).filter(ActionProposal.proposal_id == proposal_id).first()
     if proposal is None:
         raise HTTPException(status_code=404, detail="Action proposal not found")

@@ -1,6 +1,9 @@
 """OpenAI-compatible tool-calling client and deterministic test double."""
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import json
+import random
 import time
 import httpx
 from app.core.config import settings
@@ -30,40 +33,100 @@ class AgentLLM:
         self.model = model or settings.AGENT_LLM_MODEL
         self.mode = mode or settings.AGENT_TOOL_MODE
         self.client_factory = client_factory
+        self._native_unsupported = False
 
-    def chat(self, messages: list[dict], tools: list[dict]) -> AssistantTurn:
-        if not self.api_url or not self.api_key:
+    def chat(self, messages: list[dict], tools: list[dict], timeout=None) -> AssistantTurn:
+        if not self.api_url:
             raise RuntimeError("Agent LLM is not configured")
+        timeout = 45.0 if timeout is None else max(0.001, float(timeout))
         mode = self.mode
-        if mode == "native":
+        if mode == "native" and not self._native_unsupported:
             try:
-                return self._request(messages, tools, native=True)
+                return self._request(messages, tools, native=True, timeout=timeout)
             except httpx.HTTPStatusError as exc:
                 if exc.response.status_code != 400:
                     raise
+                self._native_unsupported = True
                 mode = "json"
-        return self._request(messages, tools, native=False)
+        return self._request(messages, tools, native=False, timeout=timeout)
 
-    def _request(self, messages, tools, native):
-        body = {"model": self.model, "messages": messages, "temperature": 0}
-        if native:
-            body.update({"tools": tools, "tool_choice": "auto"})
-        else:
-            tool_names = [item["function"]["name"] for item in tools]
-            body["messages"] = [*messages, {"role": "system", "content":
-                "If a tool is needed, respond with exactly {\"tool\": name, \"args\": object}. "
-                "Otherwise respond with exactly {\"final\": report_object}. Available tools: "
-                + json.dumps(tool_names)}]
-            body["response_format"] = {"type": "json_object"}
-        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
-        last_error = None
-        for attempt in range(2):
+    @staticmethod
+    def _retry_after(response):
+        value = response.headers.get("Retry-After") if response is not None else None
+        if not value:
+            return None
+        try:
+            return min(20.0, max(0.0, float(value)))
+        except (TypeError, ValueError):
             try:
-                with self.client_factory(timeout=45.0) as client:
+                when = parsedate_to_datetime(value)
+                if when.tzinfo is None:
+                    when = when.replace(tzinfo=timezone.utc)
+                return min(20.0, max(0.0, (when - datetime.now(timezone.utc)).total_seconds()))
+            except (TypeError, ValueError, OverflowError):
+                return None
+
+    @staticmethod
+    def _json_messages(messages):
+        converted = []
+        for message in messages:
+            role = message.get("role")
+            if role == "assistant" and message.get("tool_calls"):
+                for call in message["tool_calls"]:
+                    function = call.get("function") or {}
+                    try:
+                        args = json.loads(function.get("arguments", "{}"))
+                    except (TypeError, json.JSONDecodeError):
+                        args = {}
+                    converted.append({"role": "assistant", "content": json.dumps({
+                        "tool": function.get("name", ""), "args": args}, ensure_ascii=False)})
+            elif role == "tool":
+                content = str(message.get("content", ""))
+                if "<untrusted_tool_result>" not in content:
+                    content = content.replace("</untrusted_tool_result>", "&lt;/untrusted_tool_result&gt;")
+                    content = f"<untrusted_tool_result>{content}</untrusted_tool_result>"
+                converted.append({"role": "user", "content": content})
+            else:
+                converted.append({key: message[key] for key in ("role", "content") if key in message})
+        return converted
+
+    def _request(self, messages, tools, native, timeout=45.0):
+        body = {"model": self.model, "messages": messages, "temperature": 0,
+                "max_tokens": settings.AGENT_MAX_OUTPUT_TOKENS}
+        if native:
+            if tools:
+                body.update({"tools": tools, "tool_choice": "auto"})
+        else:
+            tool_definitions = [{"name": item["function"]["name"],
+                "description": item["function"].get("description", ""),
+                "parameters": item["function"].get("parameters", {})} for item in tools]
+            body["messages"] = [*self._json_messages(messages), {"role": "system", "content":
+                "If a tool is needed, respond with exactly {\"tool\": name, \"args\": object}. "
+                "Otherwise respond with exactly {\"final\": report_object}. Tool definitions and argument schemas: "
+                + json.dumps(tool_definitions, ensure_ascii=False)}]
+            body["response_format"] = {"type": "json_object"}
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        started = time.monotonic()
+        last_error = None
+        for attempt in range(3):
+            remaining = timeout - (time.monotonic() - started)
+            if remaining <= 0:
+                raise httpx.TimeoutException("Agent LLM retry budget exhausted")
+            try:
+                with self.client_factory(timeout=min(45.0, remaining)) as client:
                     response = client.post(self.api_url, headers=headers, json=body)
-                if response.status_code in {429, 500, 502, 503, 504} and attempt == 0:
-                    time.sleep(0.15)
-                    continue
+                if response.status_code == 429 or 500 <= response.status_code <= 599:
+                    if attempt < 2:
+                        delay = self._retry_after(response)
+                        if delay is None:
+                            delay = 0.5 * (2 ** attempt) * random.uniform(0.8, 1.2)
+                        remaining = timeout - (time.monotonic() - started)
+                        if delay >= remaining:
+                            raise httpx.TimeoutException("Agent LLM retry budget exhausted")
+                        time.sleep(min(20.0, delay))
+                        continue
                 response.raise_for_status()
                 payload = response.json()
                 message = payload["choices"][0]["message"]
@@ -93,8 +156,12 @@ class AgentLLM:
                 return AssistantTurn(str(content), [], usage)
             except (httpx.TimeoutException, httpx.TransportError) as exc:
                 last_error = exc
-                if attempt == 0:
-                    time.sleep(0.15)
+                if attempt < 2:
+                    delay = 0.5 * (2 ** attempt) * random.uniform(0.8, 1.2)
+                    remaining = timeout - (time.monotonic() - started)
+                    if delay >= remaining:
+                        raise httpx.TimeoutException("Agent LLM retry budget exhausted") from exc
+                    time.sleep(delay)
                     continue
                 raise
         if last_error:
@@ -108,8 +175,8 @@ class FakeLLM:
         self.script = list(script)
         self.calls = []
 
-    def chat(self, messages, tools):
-        self.calls.append({"messages": messages, "tools": tools})
+    def chat(self, messages, tools, timeout=None):
+        self.calls.append({"messages": messages, "tools": tools, "timeout": timeout})
         if not self.script:
             raise RuntimeError("FakeLLM script exhausted")
         turn = self.script.pop(0)

@@ -1,22 +1,4 @@
 services:
-  postgres:
-    image: postgres:16-alpine
-    container_name: cyberguardx-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: cyberguard
-      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env before starting Docker Compose}"
-      POSTGRES_DB: cyberguardx
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U cyberguard -d cyberguardx"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   backend:
     build:
       context: .
@@ -24,20 +6,22 @@ services:
     container_name: cyberguardx-backend
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
+    networks:
+      frontend_backend:
+        gw_priority: 1
     environment:
-      DATABASE_URL: "postgresql+psycopg2://cyberguard:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env before starting Docker Compose}@postgres:5432/cyberguardx"
+      DATABASE_URL: "sqlite:////app/data/cyberguardx.db"
       APP_ENV: production
       DEBUG: "False"
       SECRET_KEY: "${SECRET_KEY:?Set SECRET_KEY in .env before starting Docker Compose}"
       ADMIN_USERNAME: "${ADMIN_USERNAME:-}"
       ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
       LLM_PROVIDER: template_fallback
-    depends_on:
-      postgres:
-        condition: service_healthy
+      TRUSTED_PROXY_CIDRS: '${TRUSTED_PROXY_CIDRS:-[]}'
     volumes:
       - ./backend/saved_models:/app/backend/saved_models
+      - cyberguardx_sqlite_data:/app/data
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8000/api/health || exit 1"]
       interval: 10s
@@ -53,10 +37,22 @@ services:
     restart: unless-stopped
     ports:
       - "3000:80"
+    networks:
+      frontend_backend:
+        ipv4_address: 10.254.254.2
     depends_on:
       backend:
         condition: service_healthy
 
 volumes:
-  pgdata:
+  cyberguardx_sqlite_data:
+    name: cyberguardx_demo_sqlite_data
+
+networks:
+  frontend_backend:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.254.254.0/28
+          gateway: 10.254.254.1
 

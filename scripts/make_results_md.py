@@ -9,6 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "backend" / "ml" / "evaluation" / "results"
 OUTPUT = ROOT / "docs" / "RESULTS.md"
+AGENT_OUTPUT = ROOT / "docs" / "agent" / "RESULTS.md"
 SEEDS = (42, 43, 44)
 
 
@@ -289,44 +290,111 @@ def render_agent_section(result: dict) -> str:
     injection = result["injection_suite"]
     lines = [
         "## Agent investigation evaluation (generated)", "",
-        f"Model: `{result['model_name']}`; date: `{result['date_utc']}`; seed: `{result['seed']}`; sample size: {result['sample_size']}.",
+        f"Model: `{result['model_name']}`; date: `{result['date_utc']}`; seed: `{result['seed']}`; sample size: {result['sample_size']}; used FakeLLM: `{str(bool(result.get('used_fake_llm', True))).lower()}`.",
         f"Inputs: {result['source_counts'].get('held_out_cicids_replay', 0)} held-out CICIDS replay rows and {result['synthetic_demo_sample_count']} synthetic demo rows. Demo-derived values are synthetic.",
         "FakeLLM scripted evaluation validates plumbing only. It does not measure real-model quality or support an improvement claim.", "",
-        "| Arm | Valid citation rate before validator | Unsupported technique rate | ATT&CK precision (expected classes) | ATT&CK recall (expected classes) | Mean steps | Mean tool calls | Mean latency seconds | Fallback rate |",
-        "|---|---:|---:|---:|---:|---:|---:|---:|---:|",
+        "| Arm | Valid citation rate before validator | Unsupported technique rate | ATT&CK precision (expected classes) | ATT&CK recall (expected classes) | Mean steps | Mean tool calls | Mean latency seconds | Fallback rate | Limit reached rate |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
     for name, row in (("Deterministic baseline", baseline), ("Agent (FakeLLM)", agent)):
         lines.append("| " + name + " | " + " | ".join(_metric(row.get(key)) for key in (
             "valid_citation_rate_before_validator", "unsupported_technique_rate",
             "attack_mapping_precision_macro_expected_classes", "attack_mapping_recall_macro_expected_classes",
-            "mean_steps", "mean_tool_calls", "mean_latency_seconds", "fallback_rate")) + " |")
+            "mean_steps", "mean_tool_calls", "mean_latency_seconds", "fallback_rate", "limit_reached_rate")) + " |")
     lines += ["", f"Injection guard suite: {injection['passed_count']}/{injection['payload_count']} passed with FakeLLM; scope is scripted guard verification only.",
+              f"Regression suite F1–F5: {'passed' if result.get('regression_suite', {}).get('all_passed') else 'failed'}; {result.get('regression_suite', {}).get('scope', 'not recorded').rstrip('.')}.",
               "Expected ATT&CK techniques are versioned in `backend/ml/evaluation/expected_techniques.json`; precision and recall include only listed classes.", ""]
     return "\n".join(lines)
 
 
 def update_agent_section(result: dict) -> Path:
     section = render_agent_section(result)
-    existing = OUTPUT.read_text(encoding="utf-8") if OUTPUT.is_file() else "# Evaluation results\n"
-    block = f"{AGENT_START}\n{section}\n{AGENT_END}"
-    if AGENT_START in existing and AGENT_END in existing:
-        before, rest = existing.split(AGENT_START, 1)
-        _old, after = rest.split(AGENT_END, 1)
-        updated = before.rstrip() + "\n\n" + block + after
-    else:
-        marker = "<!-- GENERATED RESULTS: END -->"
-        if marker in existing:
-            before, after = existing.split(marker, 1)
-            updated = before + marker + "\n\n" + block + after
-        else:
-            updated = existing.rstrip() + "\n\n" + block + "\n"
-    OUTPUT.write_text(updated, encoding="utf-8")
-    return OUTPUT
+    AGENT_OUTPUT.parent.mkdir(parents=True, exist_ok=True)
+    AGENT_OUTPUT.write_text("# Agent investigation results\n\n" + section + "\n", encoding="utf-8")
+    return AGENT_OUTPUT
+
+
+def _metric_cell(family: dict, name: str) -> str:
+    metric = family.get("metrics", {}).get(name, {})
+    mean, interval = metric.get("mean"), metric.get("95CI_across_seeds", [None, None])
+    if mean is None or not interval or interval[0] is None or interval[1] is None:
+        return "n/a"
+    return f"{float(mean):.4f} ({float(interval[0]):.4f}–{float(interval[1]):.4f})"
+
+
+def render_network_baseline(artifact_path: Path) -> str:
+    """Render every network-baseline metric from one complete saved JSON artifact."""
+    artifact_path = artifact_path.resolve()
+    results_root = RESULTS.resolve()
+    if results_root not in artifact_path.parents or artifact_path.suffix.lower() != ".json":
+        raise ValueError("Network baseline artifact must be a JSON file under backend/ml/evaluation/results")
+    payload = read(artifact_path)
+    if payload.get("run_status") != "complete" or payload.get("artifact_schema_version") != 1:
+        raise ValueError("Refusing to render an incomplete or unsupported network baseline artifact")
+    required = ("dataset", "holdout", "split_rules", "seeds", "families", "model_and_decision_policy")
+    if any(key not in payload for key in required):
+        raise ValueError("Network baseline artifact is missing required provenance")
+    expected_families = {"DosDDoS", "PortScan", "BruteForce", "WebAttack", "Bot"}
+    if {row.get("family") for row in payload["families"]} != expected_families:
+        raise ValueError("Network baseline artifact does not contain every expected family")
+    dataset = payload["dataset"]
+    holdout = payload["holdout"]
+    model = payload["model_and_decision_policy"]
+    relative_artifact = Path("../backend/ml/evaluation/results") / artifact_path.name
+    lines = [
+        "# Network evaluation results", "",
+        "This report is generated from one saved network-baseline JSON artifact. It does not run model evaluation.", "",
+        f"Artifact: [`{artifact_path.name}`]({relative_artifact.as_posix()}) (run `{payload['run_id']}`).",
+        f"Dataset: `{dataset['version']}`; raw source-file SHA-256 fingerprint: `{dataset['sha256']}`; processed development sample SHA-256: `{dataset['processed_development_sample_sha256']}`.",
+        f"Frozen holdout: `{', '.join(holdout['source_sessions'])}`; manifest SHA-256: `{holdout['manifest_sha256']}`; status: {holdout['status']}.",
+        f"Session split: {payload['split_rules']['session_unit']}. {payload['split_rules']['development_test']}. {payload['split_rules']['development_validation']}.",
+        f"Seeds: `{', '.join(str(seed) for seed in payload['seeds'])}`. Development sampling: {dataset['sample_method']}.",
+        f"Decision policy: {model['classifier']}; {model['detector']}; threshold is the {model['threshold']}.",
+        f"Confidence intervals: {model['bootstrap']['across_seeds']} ({model['bootstrap']['across_seed_resamples']:,} resamples). Each seed’s interval uses {model['bootstrap']['per_seed']} ({model['bootstrap']['per_seed_resamples']:,} resamples).", "",
+        "## Per-family unknown-review metrics", "",
+        "Values are the mean across seed runs with the 95% bootstrap interval across those seed-level estimates. The unknown class is the named family in the row; other test labels are treated as known only when that class was present in training.", "",
+        "| Attack family | Test sessions | Unknown support by seed | Precision | Recall | F1 | Known FPR | Benign replay false-alert rate |",
+        "|---|---|---|---:|---:|---:|---:|---:|",
+    ]
+    for family in payload["families"]:
+        supports = "; ".join(
+            f"{row['seed']}: {row['support']['unknown_positive']}" for row in family["seed_runs"]
+        )
+        sessions = ", ".join(f"`{name}`" for name in family["test_source_sessions"])
+        lines.append(
+            f"| {family['family']} | {sessions} | {supports} | "
+            f"{_metric_cell(family, 'precision')} | {_metric_cell(family, 'recall')} | "
+            f"{_metric_cell(family, 'f1')} | {_metric_cell(family, 'fpr')} | "
+            f"{_metric_cell(family, 'benign_replay_false_alert_rate')} |"
+        )
+    lines += [
+        "", "## Interpretation and split audit", "",
+        f"{payload['split_integrity']}. The final holdout was excluded from row loading, model fitting, threshold selection, and scoring; only raw file checksums were read to verify the frozen dataset identity.",
+        f"The benign replay false-alert rate is measured on BENIGN rows in the development test capture sessions: {payload['metric_definitions']['benign_replay_false_alert_rate']}.",
+        f"Unknown review semantics: {payload['metric_definitions']['unknown_review_semantics']}.",
+        "The bootstrap interval resamples the five seed-level estimates on fixed development test sessions. It reflects seed variability, not uncertainty across a large sample of independent capture sessions.",
+        "CICIDS2017 source files contain no timestamps. Host-window features therefore remain zero in this baseline, and the final holdout consists of one complete source-file session.",
+        "Per-seed supports, session assignments, thresholds, excluded unseen test labels, and row-bootstrap intervals are recorded in the linked JSON artifact.", "",
+    ]
+    return "\n".join(lines)
+
+
+def latest_network_baseline() -> Path:
+    candidates = sorted(RESULTS.glob("network_baseline_*.json"), reverse=True)
+    for path in candidates:
+        try:
+            if read(path).get("run_status") == "complete":
+                return path
+        except (OSError, json.JSONDecodeError):
+            continue
+    raise FileNotFoundError("No complete network_baseline_*.json artifact exists; run scripts/run_network_eval.py first")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--agent-only", action="store_true", help="update only the generated agent evaluation section from the latest agent_eval JSON")
+    parser.add_argument("--legacy-open-set", action="store_true", help="regenerate the historical FINAL.json report instead of the frozen-holdout baseline")
+    parser.add_argument("--network-baseline", type=Path, help="render a specific saved network baseline JSON artifact")
     args = parser.parse_args()
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     if args.agent_only:
@@ -335,9 +403,10 @@ if __name__ == "__main__":
             raise SystemExit("No agent_eval_*.json result exists")
         result = read(agent_files[-1])
         print(f"Updated generated agent section in {update_agent_section(result)} from {agent_files[-1]}")
-    else:
+    elif args.legacy_open_set:
         OUTPUT.write_text(render(), encoding="utf-8")
-        print(f"Wrote {OUTPUT}")
-        print("Read JSON files:")
-        for entry in manifest_entries()[1]:
-            print(f"- {entry['file']}")
+        print(f"Wrote historical report to {OUTPUT}")
+    else:
+        artifact = args.network_baseline or latest_network_baseline()
+        OUTPUT.write_text(render_network_baseline(artifact), encoding="utf-8")
+        print(f"Wrote {OUTPUT} from saved artifact {artifact}")

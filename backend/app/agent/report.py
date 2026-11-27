@@ -6,6 +6,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 ASSESSMENTS = {"unconfirmed_suspicious", "likely_benign", "insufficient_evidence", "unknown_needs_review"}
 TECHNIQUE_RE = re.compile(r"^T\d{4}(?:\.\d{3})?$")
+CONFIRMATION_LANGUAGE_RE = re.compile(
+    r"\b(?:is|was|were|are|been|has\s+been|have\s+been)\s+(?:a\s+)?confirmed\b",
+    re.IGNORECASE,
+)
+CONFIRMATION_LANGUAGE_LIMITATION = (
+    "Report text used confirmation language; the assessment field is authoritative and no incident status was changed."
+)
 
 
 class Finding(BaseModel):
@@ -54,12 +61,44 @@ def _safe_ids(values, allowed):
     return [item for item in values if isinstance(item, str) and item in allowed]
 
 
+def render_report_markdown(report: dict) -> str:
+    """Render either a validated agent report or deterministic baseline as readable Markdown."""
+    if "assessment" not in report and "trace" in report:
+        lines = ["# Deterministic Investigation", "", f"Incident: `{report.get('incident_id', 'unknown')}`", ""]
+        for step in report.get("trace", []):
+            label = str(step.get("step", "Investigation step")).replace("_", " ").title()
+            lines.extend([f"## {label}", "", f"```json\n{__import__('json').dumps(step, ensure_ascii=False, indent=2, default=str)}\n```", ""])
+        return "\n".join(lines).strip()
+    lines = ["# Agent Investigation", "", f"**Assessment:** {report.get('assessment', 'not recorded')}", "",
+             "## Summary", "", str(report.get("summary", "No summary recorded.")), ""]
+    for key, title, field, label in (
+        ("key_findings", "Key findings", "claim", "Evidence"),
+        ("attack_mapping", "ATT&CK mapping", "technique_id", "Rationale"),
+        ("hypotheses", "Hypotheses", "statement", "Supports"),
+        ("recommended_actions", "Recommended actions", "action_type", "Target"),
+    ):
+        values = report.get(key) or []
+        if values:
+            lines.extend([f"## {title}", ""])
+            for item in values:
+                lines.append(f"- **{item.get(field, 'Item')}:** {item.get('claim') or item.get('statement') or item.get('rationale') or ''}")
+                ids = item.get("evidence_ids") or item.get("supports") or []
+                if ids:
+                    lines.append(f"  - {label}: {', '.join(f'`{value}`' for value in ids)}")
+            lines.append("")
+    for key, title in (("missing_evidence", "Missing evidence"), ("limitations", "Limitations")):
+        values = report.get(key) or []
+        if values:
+            lines.extend([f"## {title}", "", *[f"- {value}" for value in values], ""])
+    return "\n".join(lines).strip()
+
+
 _INJECTION_PATTERNS = (
     r"ignore\s+(?:all\s+)?(?:previous|prior|earlier)\s+instructions",
-    r"false\s+positive",
-    r"propose.{0,80}(?:isolate_host|block_ip)",
+    r"(?:mark|set|classify|label|treat|close|resolve)\b.{0,40}\bfalse\s+positive",
+    r"propose.{0,80}(?:isolate\s+host|block\s+ip)",
     r"(?:reveal|print|repeat|show).{0,50}(?:system\s+)?prompt",
-    r"</\s*untrusted_tool_result\s*>",
+    r"</\s*untrusted\s+tool\s+result\s*>",
     r"(?:call|invoke|run)\s+(?:the\s+)?tool",
     r"tool\s*name\s*[:=]",
     r'"tool"\s*:\s*"',
@@ -110,9 +149,17 @@ def validate_report(value, seen_ids: set[str], allowed_techniques: set[str], inj
         value = re.sub(r"^```(?:json)?\s*|\s*```$", "", value.strip(), flags=re.I)
         value = __import__("json").loads(value)
     report = AgentReport.model_validate(value).model_dump()
-    report["summary"] = report["summary"].replace("confirmed", "unconfirmed")
-    stats["injection_flags"] = sum(1 for term in ("ignore previous", "system prompt", "false positive", "reveal this prompt")
-                                   if term in report["summary"].lower() or any(term in str(x).lower() for x in report["limitations"]))
+    report_texts = [report["summary"]]
+    report_texts.extend(finding["claim"] for finding in report["key_findings"])
+    report_texts.extend(hypothesis["statement"] for hypothesis in report["hypotheses"])
+    stats["confirmation_language_flags"] = sum(
+        len(CONFIRMATION_LANGUAGE_RE.findall(text)) for text in report_texts
+    )
+    if stats["confirmation_language_flags"]:
+        report["limitations"] = report["limitations"][:29] + [CONFIRMATION_LANGUAGE_LIMITATION]
+    report_text_flags = sum(1 for term in ("ignore previous", "system prompt", "false positive", "reveal this prompt")
+                            if term in report["summary"].lower() or any(term in str(x).lower() for x in report["limitations"]))
+    stats["injection_flags"] += report_text_flags
     findings = []
     stats["claims_total"] += len(report["key_findings"])
     for finding in report["key_findings"]:
