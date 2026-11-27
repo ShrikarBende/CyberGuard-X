@@ -89,7 +89,7 @@ def test_cse_adapter_drops_nonfinite_rate_rows_and_logs_exact_count(tmp_path, ca
     assert result["Flow Packets/s"].dtype == np.float32
     assert np.isfinite(result[["Flow Bytes/s", "Flow Packets/s"]].to_numpy()).all()
     assert caplog.text
-    assert "dropped exactly 3 rows" in caplog.text
+    assert "dropped_nonfinite_rows=3 source_rows=7" in caplog.text
 
 
 def test_cse_adapter_sampling_is_deterministic_and_retains_all_attacks(tmp_path):

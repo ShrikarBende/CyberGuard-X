@@ -225,11 +225,10 @@ class CSECICIDS2018Adapter:
         result = pd.concat([attacks, benign_reservoir], ignore_index=True)
         result = result.sort_values("_source_row", kind="stable").drop(columns=["_source_row"]).reset_index(drop=True)
 
-        if dropped_nonfinite_rows:
-            logger.warning(
-                "CSE capture %s: dropped exactly %d rows with NaN or non-finite required numeric features",
-                path.name, dropped_nonfinite_rows,
-            )
+        logger.info(
+            "CSE capture %s: dropped_nonfinite_rows=%d source_rows=%d",
+            path.name, dropped_nonfinite_rows, source_rows,
+        )
         if sampled_out_benign:
             logger.info(
                 "CSE capture %s: retained all %d attack rows and sampled %d/%d BENIGN rows (seed=%d, target cap=%d)",
